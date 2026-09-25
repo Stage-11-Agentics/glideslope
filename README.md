@@ -1,49 +1,25 @@
 # Glideslope
 
-<p align="center"><b><i>Every flat-fee coding plan you pay for, on one glide path.</i></b></p>
+<p align="center"><b><i>Token subscription optimization for the modern hyperengineer</i></b></p>
 
 <p align="center"><img src="docs/screenshots/hero.png" width="720" alt="the Glideslope popup: every window of every account on one approach plot, with the register beneath naming each marker"></p>
-<p align="center"><sub><i>six accounts. four providers. three kinds of window. one frame. every marker is one window of one account: the letter is the account, the shape is the window. ○ seven-day budget · △ five-hour session · ◇ weekly Fable · ✳ the Claude pool · Σ everything. the dashed beam is even burn. the register beneath names every marker. a real week.</i></sub></p>
+<p align="center"><sub><i>Understand your various subscriptions, and understand where they all are, in both 5 and 7 hour usage, to optimize your utilization of the most valuable resource: intelligence</i></sub></p>
 
 ---
 
 listen.
 
-you are running coding agents on two or three Claude Max accounts, a Codex plan, Kimi, and Grok, because one subscription was never going to hold the work and a second one costs less than the API. that is six meters. six reset clocks. six pages, each with its own idea of a percent. you check them in the gaps between the work, and the one number you actually need, *am I ahead or behind, and where is there room*, is on none of them.
+you are running coding agents on many accounts: Claude Max accounts, Codex plans, Kimi, and Grok, because one subscription is no where near enough to get build all of your in flight projects. Many meters. reset clocks. six pages, each with its own idea of a percent. you check them in the gaps between the work, and the one answer you actually need, *am I ahead or behind, and can i kick off this large job now?*, is on none of them.
 
-the problem is not the limit. the problem is. position.
+## What is the Glidesloop
 
-**Glideslope reads every flat-fee plan you fly into one frame and puts one mark on every meter: the ◆ glide slope, where an even burn to the reset would have you right now.** above it, you are hot, and you will hit the ceiling early. below it, you are banking capacity that expires at the reset. one comparison, the same in every cell, for every provider, on every window.
+The Glidesloop is the path towards optimum usage: you are on the 7d glidesloop if, 3.5 days into your 7 day usage period, you have used exactly 50% of your tokens. You are ahead of the 5h glidesloop if, 1 hour into your 5 hour limit, you have used 33% of your tokens. We are mapping two different times into the same graph, which takes some getting used to, but once you wrap your head around this paragraph you will find it immensely information dense and effective. 
+
+**Glideslope reads every subscription plan you fly into one single interface and puts one mark on every meter: usage is relative to the  ◆ glide slope.** above it, you are hot, and you will hit the ceiling early. below it, you are banking capacity that expires at the reset. one comparison, the same in every cell, for every provider, on every window.
 
 this is built for the hyperengineer flying several subscriptions at once, on purpose, for maximum effect. it asks you to learn one idea and one picture. the idea takes a minute. the picture takes three looks. after that, a single percentage on a single page will feel like flying with one instrument covered.
 
 ---
-
-## the glide slope.
-
-a flat-fee plan is a fixed budget on a fixed window: 100% of a weekly quota, gone at the reset. the glide slope is the straight line from 0% at the window's start to 100% at its reset. at any moment it tells you where you *would* be if you were spending evenly.
-
-```
-100% ┤                                      ╱ reset
-     │                                  ╱
-     │                             ╱  ◆ 62%   ← where even burn puts you now
-     │                        ╱
-     │  used 78% ──────●───╱─────── above the line: ahead, you will run out early
-     │              ╱
-     │  used 41% ──╱───●─────────── below the line: banking, you will leave budget unused
-     │         ╱
-  0% ┼────╱───────────────────────────────────
-     start                    now           reset
-```
-
-every metered cell reads `used (◆ slope)`. that one comparison answers the only two questions that matter on a flat-fee plan:
-
-- **above the line, you will hit the ceiling before the reset.** slow down, or switch to an account with room.
-- **below the line, you are leaving paid capacity on the table.** capacity does not roll over. at the reset it is gone.
-
-most usage tools only warn about the first. on a subscription both sides cost money, so Glideslope treats both as news, for every provider, in the same column. a ceiling is a wall: it tells you where you stopped. a glide slope is a path: it tells you how to arrive.
-
-every mind in the room is on a window. the model's resets by the hour and the week. yours resets when you sleep. neither rolls over.
 
 ## one frame. every window.
 
