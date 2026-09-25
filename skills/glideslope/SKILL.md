@@ -44,13 +44,15 @@ Output order: login banner, Weekly status, All windows, OpenRouter, API-equivale
 
 ## The views
 
-Built HTML pages in the clone. Offer them when the user wants to see the position rather than read it.
+Offer a view when the user wants to see the position rather than read it. One command rebuilds the page from the position it just read and opens it in the default browser:
 
-- `views/deck.html`: the Detail view. Weekly status, all windows, the approach plot with sampler history, reset horizon, switch log.
-- `views/popup.html`: a compact approach plot.
-- `views/history.html`: the approach plot on a real clock, from the sample store only.
+```bash
+glideslope --open            # the Detail view: weekly status, all windows, the approach plot with sampler history, reset horizon, switch log
+glideslope --open popup      # the approach plot and register alone
+glideslope --open history    # the approach plot on a real clock, from the sample store only
+```
 
-Rebuild before showing, with no provider token activity: `bash tools/refresh.sh --no-gauge`. Then open the file locally (`open views/deck.html` on macOS). Never upload or host it.
+The pages are self-contained HTML files under `views/` in the clone, so `--open` needs the clone, not a tool install. They reload themselves every minute. Never upload or host one.
 
 ## When a row looks wrong
 

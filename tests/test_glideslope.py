@@ -1662,3 +1662,94 @@ class AuditGuardTests(unittest.TestCase):
             self.assertIn("3.1×", text)
             with mock.patch.object(glideslope, "STORE_DIR", Path(tmp) / "absent"):
                 self.assertEqual(glideslope.render_api_equivalent(NOW), "")
+
+
+class OpenViewTests(unittest.TestCase):
+    """`--open` rebuilds one view from the position in hand and opens the file.
+
+    The builders are real scripts beside the module; these tests never run
+    them. A fake builder writes the page, and the browser is a mock, so the
+    seam (which script, which flag, which file) is what is asserted.
+    """
+
+    def _payload(self):
+        return {"accounts": [], "generated_at": "2026-07-20T04:00:00Z"}
+
+    def test_deck_is_built_from_the_position_on_stdin_and_opened(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "views" / "deck-src").mkdir(parents=True)
+            (root / "views" / "deck-src" / "build.py").write_text("")
+            seen = {}
+
+            def fake_run(cmd, **kwargs):
+                seen["cmd"] = cmd
+                seen["stdin"] = kwargs.get("input")
+                (root / "views" / "deck.html").write_text("<html></html>")
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch.object(glideslope, "ROOT", root), \
+                 mock.patch.object(glideslope.subprocess, "run", fake_run), \
+                 mock.patch("webbrowser.open", return_value=True) as opened:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = glideslope.open_view("deck", self._payload())
+            self.assertEqual(code, 0)
+            self.assertEqual(seen["cmd"][-1], "--position-stdin")
+            self.assertEqual(json.loads(seen["stdin"]), self._payload())
+            opened.assert_called_once_with((root / "views" / "deck.html").resolve().as_uri())
+            self.assertIn("deck.html", out.getvalue())
+
+    def test_history_builds_from_the_store_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "views" / "history-src").mkdir(parents=True)
+            (root / "views" / "history-src" / "build.py").write_text("")
+            seen = {}
+
+            def fake_run(cmd, **kwargs):
+                seen["cmd"] = cmd
+                seen["stdin"] = kwargs.get("input")
+                (root / "views" / "history.html").write_text("<html></html>")
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch.object(glideslope, "ROOT", root), \
+                 mock.patch.object(glideslope.subprocess, "run", fake_run), \
+                 mock.patch("webbrowser.open", return_value=True):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = glideslope.open_view("history", self._payload())
+            self.assertEqual(code, 0)
+            self.assertNotIn("--position-stdin", seen["cmd"])
+            self.assertIsNone(seen["stdin"])
+
+    def test_tool_install_without_views_says_so_and_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with mock.patch.object(glideslope, "ROOT", Path(tmp)), \
+                 mock.patch("webbrowser.open") as opened, \
+                 contextlib.redirect_stderr(err):
+                code = glideslope.open_view("deck", self._payload())
+            self.assertEqual(code, 1)
+            self.assertIn("git clone", err.getvalue())
+            opened.assert_not_called()
+
+    def test_failed_build_is_reported_not_opened(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "views" / "deck-src").mkdir(parents=True)
+            (root / "views" / "deck-src" / "build.py").write_text("")
+            failed = mock.Mock(returncode=1, stdout="", stderr="boom")
+            err = io.StringIO()
+            with mock.patch.object(glideslope, "ROOT", root), \
+                 mock.patch.object(glideslope.subprocess, "run", return_value=failed), \
+                 mock.patch("webbrowser.open") as opened, \
+                 contextlib.redirect_stderr(err):
+                code = glideslope.open_view("popup", self._payload())
+            self.assertEqual(code, 1)
+            self.assertIn("boom", err.getvalue())
+            opened.assert_not_called()
+
+    def test_open_defaults_to_the_deck_and_rejects_unknown_views(self):
+        parser_args = glideslope.main.__globals__  # the parser is built inside main
+        self.assertIn("VIEW_FILES", parser_args)
+        self.assertEqual(set(glideslope.VIEW_FILES), {"deck", "popup", "history"})

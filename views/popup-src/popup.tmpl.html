@@ -2111,7 +2111,7 @@ let refreshTimer = null;
 // The host bridge. A menu-bar host that embeds this page in a WKWebView registers a
 // message handler under this name to receive the Refresh action and reports results
 // back through window.gregorovichSurface.actionResult. Without a host, the page is
-// simply a page: the button does nothing and says so.
+// simply a page: Refresh reloads it from disk, where the sampler rewrites it every minute.
 const postSurface = message => {
   try {
     const handler = window.webkit?.messageHandlers?.gregorovichSurface;
@@ -2155,7 +2155,8 @@ async function waitForRefresh() {
 function requestRefresh() {
   if (refreshBusy) return;
   if (!postSurface({ action: "runAction", label: "Refresh" })) {
-    finishRefresh("error", "REFRESH UNAVAILABLE — USE THE HOST");
+    // No host: the page is a file the sampler rewrites, so a refresh is a reload.
+    location.replace(freshSnapshotURL());
     return;
   }
   refreshBusy = true;

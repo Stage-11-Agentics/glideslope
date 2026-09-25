@@ -59,22 +59,23 @@ Python 3.11+, standard library only. macOS for the Claude read and the backgroun
 ```bash
 git clone https://github.com/Stage-11-Agentics/glideslope.git
 cd glideslope
-python3 glideslope.py                 # the position, now
-bash tools/install-sampler.sh         # every 60s: journal the position, rebuild the views
-open views/deck.html
+python3 glideslope.py                 # the position, in the terminal
+python3 glideslope.py --open          # the position, in the browser
+bash tools/install-sampler.sh         # every 60s: journal the position, keep the browser tab live
 ```
 
 or `uv tool install git+https://github.com/Stage-11-Agentics/glideslope` for the `glideslope` and `claude-account` commands alone.
 
 `glideslope` prints the position as relay-ready markdown; `--json` gives the same position as one snapshot. configuration is one optional file, `~/.glideslope/config.toml`, and every key has a default: [`config.example.toml`](config.example.toml).
 
-## the views.
+## seeing it.
 
-self-contained HTML, opened from disk, rebuilt by the sampler every sixty seconds. nothing hosted.
+two surfaces ship. both are the same position.
 
-- **Detail view** (`views/deck.html`): every window on the plot with its trail, the deviation register, the full ledger, the reset horizon, the switch log.
-- **Popup** (`views/popup.html`): the plot and the register alone, sized for a menu bar or a side panel.
-- **History** (`views/history.html`): the same plot on a real clock. weeks stacked behind you.
+- **the terminal.** `glideslope` is the position as a table, and the only terminal interface. `--watch` keeps it redrawing in a pane.
+- **the browser.** `glideslope --open` rebuilds the Detail view and opens it as a tab. the page is one self-contained HTML file on disk, nothing hosted, and it reloads itself every minute, so with the sampler installed the tab is a live instrument. `--open popup` is the plot and register alone, `--open history` the same plot on a real clock, weeks stacked behind you.
+
+a menu bar, a side panel, a dashboard cell: not shipped. the popup was drawn for one. it expects a host that embeds it in a web view and rewrites the file every minute, and the sampler already does the rewriting. that wrapper is a short job for your agent, in whatever your platform calls a status item, and we would take the pull request.
 
 <p align="center"><img src="docs/screenshots/deck-ledger.png" alt="the Detail view ledger: every window of every account as a burn clock, with state, reset and freshness"></p>
 <p align="center"><sub><i>the ledger. every window of every account as a burn clock: used against the ◆ mark, its state, its reset, and how fresh the read is. the footer prices every token at list, never money spent: on the afternoon this page was written the Claude line read $14,885 API-equivalent on $600/mo of plans. 24.8×.</i></sub></p>

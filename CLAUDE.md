@@ -39,6 +39,7 @@ There is no `data/` directory. All state lives in the store.
 ```bash
 python3 glideslope.py                     # the position, as markdown
 python3 glideslope.py --json              # the normalized snapshot
+python3 glideslope.py --open [deck|popup|history]   # rebuild one view from this run and open it in the browser
 python3 glideslope.py --help              # read-only
 python3 glideslope.py --skip-claude --codex-snapshot saved.json     # offline, from a saved payload
 ```

@@ -3375,6 +3375,74 @@ def _draw(out: Any, frame: str) -> None:
     out.flush()
 
 
+def snapshot_payload(accounts: list[dict[str, Any]], openrouter: dict[str, Any] | None,
+                     harness_spend: Any, switches: Any, now: dt.datetime,
+                     warnings: list[str], satellites: list[dict[str, Any]]) -> dict[str, Any]:
+    """The whole position as one object: what `--json` prints and what the views are built from."""
+    payload = json_ready(accounts, now, warnings)
+    payload["openrouter"] = openrouter and json_ready([openrouter], now, [])["accounts"][0]
+    payload["harness_spend"] = json_convert(harness_spend)
+    payload["switches"] = json_convert(switches)
+    payload["pool"] = json_convert(claude_pool(accounts, now))
+    payload["pool_fable"] = json_convert(claude_pool(accounts, now, meter_id="weekly_fable"))
+    payload["pool_total"] = json_convert(total_pool(accounts, now))
+    # The fleet's own roster: who is logged in where, and how fresh each
+    # satellite's word is. Surfaces render the login marks from this.
+    payload["satellites"] = json_convert(
+        [{"name": LOCAL_SATELLITE, "local": True, "age_seconds": 0.0}]
+        + [{"name": s["name"], "local": False, "age_seconds": round(s["age_seconds"], 1),
+            "observed_at": s["observed_at"]} for s in satellites])
+    return payload
+
+
+VIEW_FILES = {"deck": "deck.html", "popup": "popup.html", "history": "history.html"}
+
+
+def build_views(payload: dict[str, Any], view: str) -> Path:
+    """Rebuild the requested view from a position already in hand and return its path.
+
+    The deck builder writes deck.html and popup.html from the position on stdin,
+    so no provider is read a second time. The history builder reads only the
+    sample store. Both live beside this file in the clone: a tool install carries
+    the CLI alone, and says so instead of opening a stale or missing page.
+    """
+    views = ROOT / "views"
+    builder = views / ("history-src" if view == "history" else "deck-src") / "build.py"
+    if not builder.exists():
+        raise PositionError(
+            "the views ship with the clone, not the tool install: "
+            "git clone https://github.com/Stage-11-Agentics/glideslope && cd glideslope && "
+            f"python3 glideslope.py --open {view}")
+    cmd = [sys.executable, str(builder)] + ([] if view == "history" else ["--position-stdin"])
+    result = subprocess.run(cmd, input=None if view == "history" else json.dumps(payload),
+                            capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+        raise PositionError(f"{view} view did not build: {detail[:400]}")
+    return views / VIEW_FILES[view]
+
+
+def open_view(view: str, payload: dict[str, Any]) -> int:
+    """`--open`: rebuild one view from this run's position and open it in the default browser.
+
+    The page reloads itself from disk every minute, so with the sampler installed
+    the tab stays live; without it, the tab shows this run's position until the
+    next `--open`.
+    """
+    import webbrowser
+    try:
+        page = build_views(payload, view)
+    except PositionError as exc:
+        print(f"glideslope: {exc}", file=sys.stderr)
+        return 1
+    url = page.resolve().as_uri()
+    if not webbrowser.open(url):
+        print(f"glideslope: could not open a browser; the page is at {page}", file=sys.stderr)
+        return 1
+    print(f"opened {page}")
+    return 0
+
+
 def run_watch(args: argparse.Namespace) -> int:
     """Live display for a dedicated pane/workspace. Fetch slow, redraw fast."""
     color = args.color != "never"  # a live display is colored unless explicitly refused
@@ -3447,6 +3515,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-switches", action="store_true", help="omit the recent-switch history")
     parser.add_argument("--color", choices=("auto", "always", "never"), default="auto",
                         help="ANSI color: auto (TTY only, default), always, or never")
+    parser.add_argument("--open", nargs="?", const="deck", choices=sorted(VIEW_FILES),
+                        metavar="VIEW",
+                        help="rebuild a view from this run's position and open it in the browser: "
+                             "deck (default), popup or history")
     parser.add_argument("--watch", action="store_true",
                         help="live-updating display for a dedicated pane/workspace")
     parser.add_argument("--interval", type=float, default=10.0,
@@ -3486,21 +3558,13 @@ def main(argv: list[str] | None = None) -> int:
               f"{pick['display'] or '—'} · {'stay' if pick['stay'] else 'switch'} · {pick['reason']}")
         return 0 if pick["email"] else 1
 
+    if args.open:
+        return open_view(args.open, snapshot_payload(accounts, openrouter, harness_spend,
+                                                     switches, now, warnings, satellites))
+
     if args.json:
-        payload = json_ready(accounts, now, warnings)
-        payload["openrouter"] = openrouter and json_ready([openrouter], now, [])["accounts"][0]
-        payload["harness_spend"] = json_convert(harness_spend)
-        payload["switches"] = json_convert(switches)
-        payload["pool"] = json_convert(claude_pool(accounts, now))
-        payload["pool_fable"] = json_convert(claude_pool(accounts, now, meter_id="weekly_fable"))
-        payload["pool_total"] = json_convert(total_pool(accounts, now))
-        # The fleet's own roster: who is logged in where, and how fresh each
-        # satellite's word is. Surfaces render the login marks from this.
-        payload["satellites"] = json_convert(
-            [{"name": LOCAL_SATELLITE, "local": True, "age_seconds": 0.0}]
-            + [{"name": s["name"], "local": False, "age_seconds": round(s["age_seconds"], 1),
-                "observed_at": s["observed_at"]} for s in satellites])
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(snapshot_payload(accounts, openrouter, harness_spend, switches,
+                                          now, warnings, satellites), indent=2))
     else:
         print(render_report(accounts, openrouter, harness_spend, switches, now, warnings,
                             color=color_enabled(args.color)))
