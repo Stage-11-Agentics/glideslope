@@ -118,10 +118,6 @@ running sessions never move, and nothing here stores a token. `claude-account --
 
 one honest gap: we only jump between Claude accounts, so `claude-account` only knows Claude. multi-account switching for Codex is not built. it is the same shape, one login home per account, and it should be a short job for your agent. we would welcome that pull request.
 
-## license.
-
-[MIT](LICENSE). Stage 11 Agentics Corporation.
-
 ---
 
 *we believe in the deployment of intelligence. more of it, in more hands, on real work. not waited for. not hoarded. used.*
@@ -134,4 +130,4 @@ one honest gap: we only jump between Claude accounts, so `claude-account` only k
 
 ---
 
-Glideslope is a [Stage 11 Agentics](https://stage11.ai) project.
+Glideslope is a [Stage 11 Agentics](https://stage11.ai) project, released under the [MIT license](LICENSE).
