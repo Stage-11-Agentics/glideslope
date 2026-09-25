@@ -1,0 +1,17 @@
+# The configuration every test runs under. Pinned so rendered times, satellite
+# names and call-signs are the same on every machine and in CI.
+timezone = "America/New_York"
+
+[satellite]
+name = "laptop"
+
+[[satellites]]
+name = "studio"
+host = "studio"
+
+[claude]
+call_signs = { work = "Alpha", personal = "Bravo", lab = "Charlie", team = "Delta" }
+
+[notify]
+sink = "url"
+url = "http://127.0.0.1:1/notify"

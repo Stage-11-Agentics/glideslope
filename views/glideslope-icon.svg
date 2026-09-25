@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Glideslope">
+  <!-- Glideslope's mark: the approach beam corner to corner, and the ◆ even-burn
+       diamond riding it dead centre. Drawn to survive 16px — one diagonal, one
+       diamond, and nothing else load-bearing. -->
+  <defs>
+    <linearGradient id="gs-beam" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#7a5d20"/>
+      <stop offset=".5" stop-color="#e8bd57"/>
+      <stop offset="1" stop-color="#fff1c2"/>
+    </linearGradient>
+    <radialGradient id="gs-glow" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#ffd76a" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#ffd76a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="32" height="32" rx="7.5" fill="#0a0e14"/>
+  <rect x=".7" y=".7" width="30.6" height="30.6" rx="6.9" fill="none"
+        stroke="#33445a" stroke-width="1.1"/>
+
+  <!-- instrument grid: texture at size, gone by 16px -->
+  <path d="M10.5 6.5V25.5M21.5 6.5V25.5M6.5 10.5H25.5M6.5 21.5H25.5"
+        stroke="#1b2532" stroke-width="1"/>
+
+  <circle cx="16" cy="16" r="10" fill="url(#gs-glow)"/>
+
+  <!-- the beam: window open at 0%, reset at 100% -->
+  <path d="M6.6 25.4 25.4 6.6" stroke="url(#gs-beam)" stroke-width="2.5"
+        stroke-linecap="round" fill="none"/>
+
+  <!-- the diamond rides it — where even burn would put you -->
+  <g transform="rotate(45 16 16)">
+    <rect x="11.7" y="11.7" width="8.6" height="8.6" rx="1.2" fill="#0a0e14"/>
+    <rect x="12.6" y="12.6" width="6.8" height="6.8" rx=".9" fill="#ffd76a"/>
+  </g>
+</svg>

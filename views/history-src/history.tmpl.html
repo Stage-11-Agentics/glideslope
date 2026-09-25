@@ -1,0 +1,1081 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glideslope — History</title>
+<link rel="icon" type="image/svg+xml" href="__GLIDESLOPE_ICON__">
+<style>
+  /* Design tokens are the deck's, unchanged — this is the same instrument on a
+     different clock, so it must not look like a different product. */
+  :root {
+    color-scheme: dark;
+    --void: #05070b;
+    --surface: #0a0e14;
+    --panel: #0d1219;
+    --panel-2: #111826;
+    --bezel: #1d2836;
+    --bezel-bright: #33445a;
+    --ink: #e8eef6;
+    --ink-2: #b6c2d1;
+    --muted: #7d8a9c;
+    --muted-2: #4d5a6b;
+    --grid: #182230;
+
+    --alpha:   #d97757;  --alpha-hot:   #f0a086;
+    --bravo:   #d4a27f;  --bravo-hot:   #ecc3a6;
+    --charlie: #b0503c;  --charlie-hot: #d9765f;
+    --delta:   #c28b2c;  --delta-hot:   #e3b35c;   /* ochre */
+    --codex: #1ba576;    --codex-hot: #4cd9a8;
+    --kimi: #d1568f;     --kimi-hot: #f28cba;
+    --grok: #5b9cff;     --grok-hot: #8eb8ff;
+    --router: #8d68e8;   --router-hot: #b499f5;
+
+    --window-week:    #a78bfa;
+    --window-session: #f5b74e;
+
+    --pace: #e8eef6;
+    --status-hot: #ff8a5b;      /* ahead of glideslope */
+    --status-capped: #ff5167;
+    --status-bank: #43b7cf;     /* trailing the glideslope */
+    --status-even: #7d8a9c;
+
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "SF Pro Display", Inter, ui-sans-serif, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background:
+      radial-gradient(1200px 500px at 72% -14%, rgba(217,119,87,.075), transparent 60%),
+      radial-gradient(900px 420px at 6% 112%, rgba(27,165,118,.05), transparent 55%),
+      var(--void);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    min-width: 1060px;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  .nil { color: var(--muted); }
+
+  .app { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 22px; }
+
+  .module {
+    position: relative;
+    background: linear-gradient(180deg, rgba(255,255,255,.022), transparent 32%), var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: 10px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.045) inset, 0 18px 40px -30px rgba(0,0,0,.9);
+    padding: 10px 12px 8px;
+  }
+
+  .kicker {
+    font: 640 10.5px/1 var(--mono); letter-spacing: .19em; text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ── masthead ── */
+  .masthead {
+    display: flex; align-items: center; gap: 16px;
+    padding: 2px 4px 0;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 { margin: 0; font: 700 17px/1 var(--sans); letter-spacing: .01em; }
+  .brand .sub { font: 640 10.5px/1 var(--mono); letter-spacing: .19em;
+                text-transform: uppercase; color: var(--muted); }
+  .spanread {
+    font: 500 12.5px/1 var(--mono); color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+    /* fixed so the row never breathes as the viewport changes width in time */
+    min-width: 330px;
+  }
+  .spanread b { color: var(--ink); font-weight: 660; }
+  .grow { flex: 1; }
+
+  /* ── controls: every button is the same box forever ── */
+  .ctrls { display: flex; align-items: center; gap: 6px; }
+  .ctrl-group { display: flex; gap: 4px; padding: 3px; border-radius: 8px;
+                background: var(--surface); border: 1px solid var(--bezel); }
+  button.ctrl {
+    min-width: 46px; height: 24px; padding: 0 8px;
+    border: 1px solid transparent; border-radius: 5px; background: transparent;
+    color: var(--muted); font: 660 10.5px/22px var(--mono); letter-spacing: .1em;
+    text-transform: uppercase; cursor: pointer; white-space: nowrap;
+  }
+  button.ctrl:hover { color: var(--ink-2); background: var(--panel-2); }
+  button.ctrl[aria-pressed="true"] {
+    color: var(--ink); background: var(--panel-2); border-color: var(--bezel-bright);
+  }
+  button.ctrl.wide { min-width: 86px; }
+
+  /* ── plots ── */
+  .plot-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  svg { display: block; width: 100%; overflow: visible; }
+  #hero { height: 300px; }
+  #brush { height: 58px; }
+
+  .frame { fill: none; stroke: var(--bezel); stroke-width: 1; }
+  .grid  { stroke: var(--grid); stroke-width: 1; }
+  .grid.day { stroke: var(--bezel); }
+  .weekend { fill: rgba(255,255,255,.018); }
+  .axis { font: 600 9.5px var(--mono); fill: var(--muted-2); letter-spacing: .1em; }
+  .axis.day { fill: var(--muted); }
+  .nowline { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 3; opacity: .55; }
+  .nowcap  { font: 700 9px var(--mono); fill: var(--ink); letter-spacing: .12em; }
+
+  /* the beam: one diagonal per window instance, 0% at its start to 100% at its
+     reset. The deck's single glide slope, unrolled onto a real clock. */
+  .beam { stroke: var(--pace); stroke-width: 1; opacity: .3; fill: none; }
+  .beam.future { stroke-dasharray: 3 3; opacity: .22; }
+  .reset-tick { stroke: var(--window-week); stroke-width: 1; opacity: .5; }
+  .reset-tick.session { stroke: var(--window-session); opacity: .34; }
+
+  .track { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+  .track.session { stroke-width: 1.1; opacity: .85; }
+  .unread { fill: none; stroke-width: 1; stroke-dasharray: 1.5 3.5; opacity: .45; }
+
+  .band-hot  { fill: var(--status-hot);  opacity: .17; }
+  .band-bank { fill: var(--status-bank); opacity: .13; }
+
+  .lane-rule { stroke: var(--bezel); stroke-width: 1; opacity: .8; }
+  .lane-name { font: 660 11px var(--mono); letter-spacing: .04em; }
+  .lane-meta { font: 600 9px var(--mono); fill: var(--muted); letter-spacing: .09em; }
+  .lane-val  { font: 700 12px var(--mono); font-variant-numeric: tabular-nums; }
+  .lane-peak { font: 600 9.5px var(--mono); fill: var(--muted-2); font-variant-numeric: tabular-nums; }
+  .lane-zero { stroke: var(--bezel); stroke-width: 1; opacity: .55; }
+  .lane-mid  { stroke: var(--grid); stroke-width: 1; stroke-dasharray: 2 4; }
+  .lane-idle .lane-name, .lane-idle .lane-val { opacity: .45; }
+
+  /* The strip is how you travel, so it is never scrolled away from — the lane
+     stack is taller than any screen once every meter is showing. */
+  .brushbar {
+    position: sticky; bottom: 8px; z-index: 10;
+    padding: 6px 12px 2px;
+    background: linear-gradient(180deg, rgba(255,255,255,.022), transparent 32%),
+                color-mix(in oklab, var(--panel) 92%, black);
+    border-color: var(--bezel-bright);
+    box-shadow: 0 -6px 26px -12px rgba(0,0,0,.95), 0 18px 40px -30px rgba(0,0,0,.9);
+  }
+  .brush-veil { fill: rgba(5,7,11,.66); }
+  .brush-win  { fill: rgba(167,139,250,.09); stroke: var(--window-week); stroke-width: 1; }
+  .brush-handle { fill: var(--window-week); opacity: .55; cursor: ew-resize; }
+  .brush-track { fill: none; stroke-width: 1; opacity: .55; }
+
+  .cross { stroke: var(--ink); stroke-width: 1; opacity: .35; }
+
+  .plotsurface { cursor: grab; }
+  .plotsurface.dragging { cursor: grabbing; }
+
+  /* ── key + legend ── */
+  .key { display: flex; align-items: center; gap: 14px; margin-left: auto;
+         font: 600 10px var(--mono); letter-spacing: .09em; color: var(--muted);
+         text-transform: uppercase; }
+  .key i { display: inline-block; width: 16px; height: 0; vertical-align: 3px;
+           margin-right: 5px; border-top: 2px solid currentColor; }
+  .key .swatch { display: inline-block; width: 14px; height: 9px; vertical-align: -1px;
+                 margin-right: 5px; border-radius: 2px; }
+  .key .beamkey { color: var(--pace); opacity: .55; }
+  .key .hotkey  { color: var(--status-hot); }
+  .key .bankkey { color: var(--status-bank); }
+
+  /* ── hover readout ── */
+  #tip {
+    position: fixed; z-index: 40; pointer-events: none; opacity: 0;
+    /* horizontal only — the vertical side is chosen per position, in script,
+       against the room the viewport actually has */
+    transform: translateX(-50%);
+    background: var(--panel-2); border: 1px solid var(--bezel-bright); border-radius: 8px;
+    padding: 8px 10px; min-width: 230px;
+    box-shadow: 0 20px 48px -22px rgba(0,0,0,.95);
+    font: 500 12px/1.45 var(--mono); color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+  #tip.on { opacity: 1; }
+  #tip .tip-when { color: var(--ink); font-weight: 660; letter-spacing: .04em;
+                   display: block; margin-bottom: 5px; }
+  #tip .row { display: grid; grid-template-columns: 9px 1fr auto auto; gap: 7px;
+              align-items: baseline; }
+  #tip .row i { width: 9px; height: 9px; border-radius: 2px; }
+  #tip .row .who { color: var(--ink-2); }
+  #tip .row .used { color: var(--ink); font-weight: 660; }
+  #tip .row .dev { width: 58px; text-align: right; }
+  #tip .dev.hot { color: var(--status-hot); }
+  #tip .dev.bank { color: var(--status-bank); }
+  #tip .dev.nil { color: var(--muted-2); }
+
+  footer {
+    display: flex; gap: 20px; align-items: baseline; padding: 0 4px;
+    font: 500 10.5px/1.2 var(--mono); color: var(--muted-2); letter-spacing: .03em;
+    white-space: nowrap;
+  }
+  footer b { color: var(--muted); font-weight: 600; }
+  footer .hint { margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="masthead">
+    <div class="brand">
+      <h1>Glideslope</h1>
+      <span class="sub">History</span>
+    </div>
+    <div class="spanread" id="spanread"></div>
+    <div class="grow"></div>
+    <div class="ctrls">
+      <div class="ctrl-group" id="ranges"></div>
+      <div class="ctrl-group"><button class="ctrl wide" id="tonow" type="button">Now</button></div>
+    </div>
+  </header>
+
+  <section class="module">
+    <div class="plot-head">
+      <span class="kicker">Approach — real clock</span>
+      <div class="ctrl-group" id="lenses"></div>
+      <div class="key">
+        <span class="beamkey"><i></i>even-burn beam</span>
+        <span class="hotkey"><span class="swatch" style="background:var(--status-hot);opacity:.55"></span>ahead</span>
+        <span class="bankkey"><span class="swatch" style="background:var(--status-bank);opacity:.5"></span>trailing</span>
+      </div>
+    </div>
+    <svg id="hero" class="plotsurface"></svg>
+  </section>
+
+  <section class="module">
+    <div class="plot-head">
+      <span class="kicker">Every meter, own beam</span>
+      <div class="ctrl-group" id="lanefilters"></div>
+    </div>
+    <svg id="lanes" class="plotsurface"></svg>
+  </section>
+
+  <section class="module brushbar">
+    <svg id="brush"></svg>
+  </section>
+
+  <footer>
+    <span>store <b id="foot-span"></b></span>
+    <span>built <b id="foot-built"></b></span>
+    <span><b id="foot-points"></b></span>
+    <span class="hint">drag to pan · pinch or ⌘-scroll to zoom · ←/→ · 0 fits all · N jumps to now</span>
+  </footer>
+</div>
+<div id="tip"></div>
+
+<script>
+const SNAP = /*__SNAPSHOT__*/null/*__END_SNAPSHOT__*/;
+/* Every snapshot string that lands in markup goes through esc(): series names
+   and labels come from config files and provider responses, and none of them is
+   markup. Numbers formatted here need none. */
+const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+})[char]);
+
+const MIN = 60_000, HOUR = 3_600_000, DAY = 24 * HOUR;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ── time, in the configured zone ─────────────────────────────────────────────
+   `timezone` is the IANA name the config sets. A zone with no IANA name arrives
+   as null, and undefined hands Intl the viewer's own local zone; so does a name
+   this browser does not know. */
+const TZ = (() => {
+  const zone = (SNAP && SNAP.timezone) || undefined;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); return zone; }
+  catch { return undefined; }
+})();
+const TZfields = new Intl.DateTimeFormat("en-US", { timeZone: TZ,
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+const TZday = new Intl.DateTimeFormat("en-US", { timeZone: TZ,
+  weekday: "short", month: "short", day: "numeric" });
+const TZshort = new Intl.DateTimeFormat("en-US", { timeZone: TZ,
+  month: "short", day: "numeric" });
+const TZclock = new Intl.DateTimeFormat("en-US", { timeZone: TZ,
+  hour: "numeric", minute: "2-digit" });
+const TZfull = new Intl.DateTimeFormat("en-US", { timeZone: TZ,
+  weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+/* ms to add to an instant so that treating it as UTC reads as the zone's wall clock */
+function zoneOffset(t) {
+  const p = {};
+  for (const part of TZfields.formatToParts(t)) if (part.type !== "literal") p[part.type] = +part.value;
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) - Math.floor(t / 1000) * 1000;
+}
+/* Midnight, in the zone, of the day containing t. Corrected once for the two days a
+   year when the offset on the guess differs from the offset at t. */
+function zoneMidnight(t) {
+  let offset = zoneOffset(t);
+  let guess = Math.floor((t + offset) / DAY) * DAY - offset;
+  const corrected = zoneOffset(guess);
+  if (corrected !== offset) guess = Math.floor((t + corrected) / DAY) * DAY - corrected;
+  return guess;
+}
+function zoneWeekend(t) {
+  const day = new Date(t + zoneOffset(t)).getUTCDay();
+  return day === 0 || day === 6;
+}
+const fmtSpan = ms => {
+  const hours = ms / HOUR;
+  if (hours < 48) return `${hours.toFixed(hours < 6 ? 1 : 0)}h`;
+  return `${(ms / DAY).toFixed(ms / DAY < 10 ? 1 : 0)}d`;
+};
+
+/* ── the model ────────────────────────────────────────────────────────────── */
+const EXTENT = { from: SNAP.extent[0], to: SNAP.extent[1] };
+/* a little air past the last sample so the newest mark is never on the frame */
+EXTENT.to += Math.max(HOUR, (EXTENT.to - EXTENT.from) * .01);
+const MIN_SPAN = 2 * HOUR;
+
+const series = SNAP.series.map(s => {
+  /* Each point gets the instance that owned it, so a track can be drawn window
+     by window against that window's own beam — the whole point of the page. */
+  const owner = new Array(s.points.length).fill(-1);
+  let cursor = 0;
+  for (let i = 0; i < s.points.length; i++) {
+    const t = s.points[i][0];
+    while (cursor + 1 < s.instances.length && t >= s.instances[cursor + 1].span[0]) cursor++;
+    owner[i] = cursor;
+  }
+  return { ...s, owner, hidden: false };
+});
+const byKey = new Map(series.map(s => [s.key, s]));
+const weekly = series.filter(s => s.class === "week");
+
+/* beam(instance, t) — the even-burn percentage that window is asking for at t */
+function beamAt(instance, t) {
+  if (!instance || !instance.beam) return null;
+  const [start, end] = instance.beam;
+  if (t < start || t > end) return null;
+  return (t - start) / (end - start) * 100;
+}
+
+/* ── view state ───────────────────────────────────────────────────────────── */
+const LENSES = [
+  { id: "all",     label: "All models", pick: s => s.class === "week" && s.scope === "all models" },
+  { id: "fable",   label: "Fable",      pick: s => s.class === "week" && s.scope === "Fable" },
+  { id: "session", label: "5 hour",     pick: s => s.class === "session" },
+  { id: "every",   label: "Everything", pick: s => !s.idle },
+];
+const RANGES = [
+  { id: "12h", label: "12H", span: 12 * HOUR },
+  { id: "24h", label: "24H", span: DAY },
+  { id: "3d",  label: "3D",  span: 3 * DAY },
+  { id: "7d",  label: "7D",  span: 7 * DAY },
+  { id: "14d", label: "14D", span: 14 * DAY },
+  { id: "all", label: "All", span: null },
+];
+const LANE_FILTERS = [
+  { id: "week",    label: "7 day",  test: s => s.class === "week" && !s.idle },
+  { id: "session", label: "5 hour", test: s => s.class === "session" && !s.idle },
+  { id: "idle",    label: "Idle",   test: s => s.idle },
+];
+
+const store = {
+  get(key, fallback) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch { /* view still holds */ } },
+};
+let lens = LENSES.some(l => l.id === store.get("glideslope.history.lens"))
+  ? store.get("glideslope.history.lens") : "all";
+let laneOn = new Set((store.get("glideslope.history.lanes", "week,session") || "").split(",").filter(Boolean));
+if (!laneOn.size) laneOn = new Set(["week", "session"]);
+
+let view = { from: EXTENT.to - 7 * DAY, to: EXTENT.to };
+let hover = null;
+
+function clampView(next) {
+  const total = EXTENT.to - EXTENT.from;
+  let span = clamp(next.to - next.from, MIN_SPAN, total);
+  let from = clamp(next.from, EXTENT.from, EXTENT.to - span);
+  return { from, to: from + span };
+}
+function setView(next, remember = true) {
+  view = clampView(next);
+  if (remember) store.set("glideslope.history.view", `${view.from},${view.to}`);
+  draw();
+}
+{
+  const saved = (store.get("glideslope.history.view", "") || "").split(",").map(Number);
+  if (saved.length === 2 && saved.every(Number.isFinite)) view = clampView({ from: saved[0], to: saved[1] });
+  else view = clampView(view);
+}
+
+/* ── svg plumbing ─────────────────────────────────────────────────────────── */
+const NSVG = "http://www.w3.org/2000/svg";
+function mk(parent, tag, attrs, text) {
+  const node = document.createElementNS(NSVG, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v != null) node.setAttribute(k, v);
+  if (text != null) node.textContent = text;
+  parent.appendChild(node);
+  return node;
+}
+const clear = node => { while (node.firstChild) node.removeChild(node.firstChild); };
+const px = v => Math.round(v * 10) / 10;
+
+/* ── x ticks ──────────────────────────────────────────────────────────────── */
+const TICK_STEPS = [HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR,
+                    DAY, 2 * DAY, 3 * DAY, 4 * DAY, 7 * DAY];
+function ticks(from, to, width) {
+  const want = Math.max(3, Math.floor(width / 104));
+  const step = TICK_STEPS.find(s => (to - from) / s <= want) || 7 * DAY;
+  const out = [];
+  if (step >= DAY) {
+    const every = Math.round(step / DAY);
+    for (let t = zoneMidnight(from); t <= to + DAY; t = zoneMidnight(t + DAY * 1.5)) {
+      if (t < from - DAY) continue;
+      const index = Math.round((t - zoneMidnight(EXTENT.from)) / DAY);
+      if (index % every) continue;
+      out.push({ t, label: TZday.format(t), major: true });
+    }
+  } else {
+    const offset = zoneOffset(from);
+    for (let t = Math.ceil((from + offset) / step) * step - offset; t <= to; t += step) {
+      const midnight = zoneMidnight(t);
+      out.push({ t, label: Math.abs(t - midnight) < MIN ? TZday.format(t) : TZclock.format(t),
+                 major: Math.abs(t - midnight) < MIN });
+    }
+  }
+  return out;
+}
+
+/* ── the two drawings that matter: track, and the band against its beam ───── */
+
+/* Track paths, split at sampling gaps. A gap is a break in knowledge, so the
+   line breaks too and a dotted stub says the reading is missing, not flat. */
+/* Does a reset fall inside this stretch? If one does, equal readings at each end
+   prove nothing: the meter could have climbed, rolled to zero and climbed back. */
+function spansReset(s, a, b) {
+  return s.instances.some(instance => instance.beam
+    && instance.beam[1] > a && instance.beam[1] < b);
+}
+
+/* ── a gap between two EQUAL readings is not a gap in knowledge ──
+   These meters only climb. So if the gauge read 18% before an unobserved stretch
+   and 18% after it, it was 18% for every instant in between — not because we
+   watched, but because there is nowhere else it could have been. That is a proof,
+   not a guess, and it is the one case where drawing straight through unobserved
+   time claims nothing.
+   Without this a flat account reads as absent: an account that sat at one
+   reading for a day across a sleeping laptop's sampling gaps drew as three short
+   ticks in a field of dots, when the honest picture is one flat line.
+   A reset inside the stretch voids the proof — the meter could have climbed,
+   rolled and climbed back — so those stay dotted and keep routing through the
+   reset in gapPath(). */
+function provenFlat(s, a, b) {
+  return a[1] === b[1] && !spansReset(s, a[0], b[0]);
+}
+
+function trackSegments(s, from, to) {
+  const solid = [], dotted = [];
+  const gaps = s.gaps.filter(g => g[1] > from && g[0] < to);
+  const isGap = (a, b) => gaps.some(g => g[0] === a && g[1] === b);
+  let run = [];
+  for (let i = 0; i < s.points.length; i++) {
+    const point = s.points[i];
+    if (point[0] < from - HOUR || point[0] > to + HOUR) {
+      /* keep one point outside each edge so a line entering the frame is drawn */
+      const before = i + 1 < s.points.length && s.points[i + 1][0] >= from - HOUR;
+      const after = i > 0 && s.points[i - 1][0] <= to + HOUR;
+      if (!before && !after) { if (run.length) { solid.push(run); run = []; } continue; }
+    }
+    if (run.length && isGap(run[run.length - 1][0], point[0])
+        && !provenFlat(s, run[run.length - 1], point)) {
+      dotted.push([run[run.length - 1], point]);
+      solid.push(run);
+      run = [];
+    }
+    run.push(point);
+  }
+  if (run.length) solid.push(run);
+  /* A lone reading between two gaps used to be filtered away entirely, so the one
+     thing actually observed in that stretch was the one thing not drawn. Doubled
+     into a zero-length segment it renders as a dot under `stroke-linecap: round`
+     — small, but present, which is the whole difference. */
+  return { solid: solid.filter(r => r.length).map(r => r.length > 1 ? r : [r[0], r[0]]),
+           dotted: dotted.map(([a, b]) => gapPath(s, a, b)) };
+}
+
+/* Route the unread stretch through any reset it contains. A straight dotted
+   line from 100% down to the next known 2% draws a gradual decline that never
+   happened — the meter sat where it was, the window rolled, and it started
+   again. Both legs are the smallest claim available: a window's percent can
+   only climb, so holding the last known level to the reset is a floor, and the
+   drop at the reset is not a guess at all. */
+function gapPath(s, a, b) {
+  let reset = null;
+  for (const instance of s.instances)
+    if (instance.beam && instance.beam[1] > a[0] && instance.beam[1] < b[0]) { reset = instance.beam[1]; break; }
+  return reset == null ? [a, b] : [a, [reset, a[1]], [reset, 0], b];
+}
+
+/* Signed bands between the track and its own beam. Above the beam and below it
+   are different states with different meanings, so they are different colours
+   and the crossing is cut exactly where it happens, not at the next sample. */
+function bands(s, instance, from, to) {
+  if (!instance.beam) return [];
+  const out = [];
+  let current = null, previous = null;
+  const push = () => { if (current && current.pts.length > 1) out.push(current); current = null; };
+  for (let i = 0; i < s.points.length; i++) {
+    if (s.owner[i] !== instance.index) continue;
+    const [t, u] = s.points[i];
+    if (t < from - DAY || t > to + DAY) { push(); previous = null; continue; }
+    const b = beamAt(instance, t);
+    if (b == null) { push(); previous = null; continue; }
+    const d = u - b, sign = d > 0 ? 1 : d < 0 ? -1 : 0;
+    if (previous && sign && previous.sign && sign !== previous.sign) {
+      const f = previous.d / (previous.d - d);
+      const tc = previous.t + (t - previous.t) * f, bc = beamAt(instance, tc);
+      current.pts.push([tc, bc, bc]);
+      push();
+      current = { sign, pts: [[tc, bc, bc]] };
+    }
+    if (!current) current = { sign: sign || (previous ? previous.sign : 1), pts: [] };
+    if (sign) current.sign = current.pts.length <= 1 ? sign : current.sign;
+    current.pts.push([t, u, b]);
+    previous = { t, u, b, d, sign };
+  }
+  push();
+  return out;
+}
+
+/* ── the plots ────────────────────────────────────────────────────────────── */
+const heroSvg = document.getElementById("hero");
+const laneSvg = document.getElementById("lanes");
+const brushSvg = document.getElementById("brush");
+
+/* Everything that carries data is drawn into a clipped group. A track entering
+   the frame needs its off-frame neighbour to know which way it came from, so
+   points just outside the view are kept — and without a clip they draw straight
+   across the axis gutter, which reads as data where there is none. */
+function clippedPlot(svg, id, M, W, H) {
+  const defs = mk(svg, "defs", {});
+  const clip = mk(defs, "clipPath", { id });
+  mk(clip, "rect", { x: M.l, y: M.t, width: W, height: H });
+  return mk(svg, "g", { "clip-path": `url(#${id})` });
+}
+
+function drawFrameFurniture(svg, M, W, H, opts = {}) {
+  const x = t => M.l + (t - view.from) / (view.to - view.from) * W;
+  /* weekend shading first — it is ground, and everything else stands on it.
+     The day rule is drawn on EVERY day the frame has room for, independently of
+     how often a day is named: at three weeks the labels have to thin out, but
+     the daily grid is what lets the eye count back from now, and losing it turns
+     a legible three weeks into a smear. */
+  const dayPx = DAY / (view.to - view.from) * W;
+  for (let t = zoneMidnight(view.from); t < view.to; t = zoneMidnight(t + DAY * 1.5)) {
+    if (zoneWeekend(t)) {
+      const x0 = Math.max(M.l, x(t)), x1 = Math.min(M.l + W, x(t + DAY));
+      if (x1 > x0) mk(svg, "rect", { x: px(x0), y: M.t, width: px(x1 - x0), height: H, class: "weekend" });
+    }
+    if (dayPx >= 11 && x(t) > M.l && x(t) < M.l + W)
+      mk(svg, "line", { x1: px(x(t)), x2: px(x(t)), y1: M.t, y2: M.t + H, class: "grid" });
+  }
+  for (const tick of ticks(view.from, view.to, W)) {
+    const tx = x(tick.t);
+    if (tx < M.l - 1 || tx > M.l + W + 1) continue;
+    mk(svg, "line", { x1: px(tx), x2: px(tx), y1: M.t, y2: M.t + H,
+                      class: `grid${tick.major ? " day" : ""}` });
+    if (opts.labels !== false)
+      mk(svg, "text", { x: px(tx), y: M.t + H + 13, "text-anchor": "middle",
+                        class: `axis${tick.major ? " day" : ""}` }, tick.label);
+  }
+  mk(svg, "rect", { x: M.l, y: M.t, width: W, height: H, rx: 5, class: "frame" });
+  return x;
+}
+
+function drawNow(svg, x, M, H, cap = true) {
+  const nx = x(SNAP.now);
+  if (nx < M.l || nx > M.l + parseFloat(svg.dataset.plotWidth)) return;
+  mk(svg, "line", { x1: px(nx), x2: px(nx), y1: M.t, y2: M.t + H, class: "nowline" });
+  if (cap) mk(svg, "text", { x: px(nx) - 4, y: M.t + 10, "text-anchor": "end", class: "nowcap" }, "NOW");
+}
+
+function drawHero() {
+  const svg = heroSvg;
+  clear(svg);
+  const rect = svg.getBoundingClientRect();
+  const VW = Math.max(720, Math.round(rect.width)), VH = Math.round(rect.height) || 300;
+  svg.setAttribute("viewBox", `0 0 ${VW} ${VH}`);
+  const M = { l: 44, r: 88, t: 10, b: 20 };
+  const W = VW - M.l - M.r, H = VH - M.t - M.b;
+  svg.dataset.plotWidth = W;
+  svg.dataset.plotLeft = M.l;
+  const x = drawFrameFurniture(svg, M, W, H);
+  const y = u => M.t + (100 - clamp(u, 0, 100)) / 100 * H;
+  for (const v of [25, 50, 75, 100]) {
+    if (v < 100) mk(svg, "line", { x1: M.l, x2: M.l + W, y1: px(y(v)), y2: px(y(v)), class: "grid" });
+    mk(svg, "text", { x: M.l - 6, y: px(y(v)) + 3, "text-anchor": "end", class: "axis" }, `${v}%`);
+  }
+  mk(svg, "text", { x: M.l - 6, y: px(y(0)) + 3, "text-anchor": "end", class: "axis" }, "0%");
+
+  const shown = series.filter(LENSES.find(l => l.id === lens).pick);
+  const pxPerMs = W / (view.to - view.from);
+  const plot = clippedPlot(svg, "clip-hero", M, W, H);
+
+  /* beams and bands under every track, so no reading is ever obscured by ground */
+  for (const s of shown) {
+    for (let i = 0; i < s.instances.length; i++) {
+      const instance = { ...s.instances[i], index: i };
+      const [sf, st] = instance.span;
+      if (st < view.from || sf > view.to) continue;
+      if ((st - sf) * pxPerMs < 6) continue;
+      if (instance.beam) {
+        const [b0, b1] = instance.beam;
+        const from = Math.max(b0, sf), to = Math.min(b1, st);
+        if (to > from) {
+          mk(plot, "line", { x1: px(x(from)), y1: px(y(beamAt(instance, from))),
+                             x2: px(x(to)), y2: px(y(beamAt(instance, to))), class: "beam" });
+        }
+        /* the part of the open window still ahead of you */
+        if (instance.open && b1 > SNAP.now) {
+          const from2 = Math.max(b0, SNAP.now);
+          mk(plot, "line", { x1: px(x(from2)), y1: px(y(beamAt(instance, from2))),
+                             x2: px(x(b1)), y2: px(y(100)), class: "beam future" });
+        }
+        mk(plot, "line", { x1: px(x(b1)), x2: px(x(b1)), y1: M.t, y2: M.t + H,
+                           class: `reset-tick${s.class === "session" ? " session" : ""}` });
+      }
+      for (const band of bands(s, instance, view.from, view.to)) {
+        const up = band.pts.map(p => `${px(x(p[0]))},${px(y(p[1]))}`).join(" ");
+        const back = band.pts.slice().reverse().map(p => `${px(x(p[0]))},${px(y(p[2]))}`).join(" ");
+        mk(plot, "polygon", { points: `${up} ${back}`,
+                              class: band.sign > 0 ? "band-hot" : "band-bank" });
+      }
+    }
+  }
+  const endLabels = [];
+  for (const s of shown) {
+    const { solid, dotted } = trackSegments(s, view.from, view.to);
+    for (const run of solid)
+      mk(plot, "path", { d: run.map((p, i) => `${i ? "L" : "M"}${px(x(p[0]))},${px(y(p[1]))}`).join(""),
+                         class: `track${s.class === "session" ? " session" : ""}`,
+                         stroke: `var(--${s.color})` });
+    for (const run of dotted)
+      mk(plot, "path", { d: run.map((p, i) => `${i ? "L" : "M"}${px(x(p[0]))},${px(y(p[1]))}`).join(""),
+                         class: "unread", stroke: `var(--${s.color})` });
+    /* the right gutter names each track where it ends, so no legend is needed */
+    const last = s.points[s.points.length - 1];
+    if (last[0] >= view.from && last[0] <= view.to) {
+      mk(plot, "circle", { cx: px(x(last[0])), cy: px(y(last[1])), r: 2.6,
+                           fill: `var(--${s.color}-hot)` });
+      endLabels.push({ s, at: y(last[1]), ty: y(last[1]) });
+    }
+  }
+  /* names never sit on top of each other: they slide, the marks do not — and a
+     leader runs back to the mark, because a name that has moved off its value
+     is a name pointing at the wrong line */
+  endLabels.sort((a, b) => a.ty - b.ty);
+  for (let i = 1; i < endLabels.length; i++)
+    if (endLabels[i].ty - endLabels[i - 1].ty < 13) endLabels[i].ty = endLabels[i - 1].ty + 13;
+  for (const label of endLabels) {
+    const ty = clamp(label.ty, M.t + 8, M.t + H);
+    mk(svg, "line", { x1: M.l + W, y1: px(label.at), x2: M.l + W + 4, y2: px(ty),
+                      stroke: "var(--bezel-bright)", "stroke-width": .7, opacity: .6 });
+    mk(svg, "text", { x: M.l + W + 7, y: px(ty) + 3,
+                      class: "lane-name", fill: `var(--${label.s.color}-hot)` },
+       `${label.s.display} ${Math.round(label.s.last[1])}%`);
+  }
+  drawNow(svg, x, M, H);
+  return { x, y, M, W, H };
+}
+
+const LANE_H = 46;
+function laneSet() {
+  return series.filter(s => LANE_FILTERS.some(f => laneOn.has(f.id) && f.test(s)));
+}
+function drawLanes() {
+  const svg = laneSvg;
+  clear(svg);
+  const lanes = laneSet();
+  const rect = svg.getBoundingClientRect();
+  const VW = Math.max(720, Math.round(rect.width));
+  /* the gutter holds two lines beside each other on both sides — who/what on the
+     left, standing/peak on the right — so it is sized for the widest pair the
+     data actually produces, not for the shortest one */
+  const M = { l: 208, r: 58, t: 8, b: 20 };
+  const VH = M.t + lanes.length * LANE_H + M.b;
+  svg.setAttribute("viewBox", `0 0 ${VW} ${VH}`);
+  svg.style.height = `${VH}px`;
+  const W = VW - M.l - M.r, H = lanes.length * LANE_H;
+  svg.dataset.plotWidth = W;
+  svg.dataset.plotLeft = M.l;
+  if (!lanes.length) return null;
+  const x = drawFrameFurniture(svg, M, W, H);
+  const pxPerMs = W / (view.to - view.from);
+  const plot = clippedPlot(svg, "clip-lanes", M, W, H);
+
+  lanes.forEach((s, index) => {
+    const top = M.t + index * LANE_H, bottom = top + LANE_H;
+    const pad = 5;
+    const y = u => bottom - pad - clamp(u, 0, 100) / 100 * (LANE_H - pad * 2);
+    if (index) mk(svg, "line", { x1: 2, x2: M.l + W, y1: top, y2: top, class: "lane-rule" });
+    mk(svg, "line", { x1: M.l, x2: M.l + W, y1: px(y(50)), y2: px(y(50)), class: "lane-mid" });
+
+    /* the gutter: who, which meter, and where it stands right now */
+    const g = mk(svg, "g", { class: s.idle ? "lane-idle" : null });
+    mk(g, "rect", { x: 2, y: top + 10, width: 3, height: LANE_H - 20, rx: 1.5,
+                    fill: `var(--${s.color})` });
+    mk(g, "text", { x: 12, y: top + 19, class: "lane-name", fill: `var(--${s.color}-hot)` },
+       s.display);
+    mk(g, "text", { x: 12, y: top + 33, class: "lane-meta" },
+       `${s.label}${s.scope ? " · " + s.scope.toUpperCase() : ""}`);
+    mk(g, "text", { x: M.l - 12, y: top + 21, "text-anchor": "end", class: "lane-val",
+                    fill: s.last[1] >= 99.5 ? "var(--status-capped)" : `var(--${s.color}-hot)` },
+       `${Math.round(s.last[1])}%`);
+    mk(g, "text", { x: M.l - 12, y: top + 33, "text-anchor": "end", class: "lane-peak" },
+       `peak ${Math.round(s.peak)}%`);
+
+    for (let i = 0; i < s.instances.length; i++) {
+      const instance = { ...s.instances[i], index: i };
+      const [sf, st] = instance.span;
+      if (st < view.from || sf > view.to) continue;
+      const wide = (st - sf) * pxPerMs >= 7;
+      if (instance.beam && wide) {
+        const [b0, b1] = instance.beam;
+        const from = Math.max(b0, sf), to = Math.min(b1, st);
+        if (to > from)
+          mk(plot, "line", { x1: px(x(from)), y1: px(y(beamAt(instance, from))),
+                             x2: px(x(to)), y2: px(y(beamAt(instance, to))), class: "beam" });
+        if (instance.open && b1 > SNAP.now) {
+          const from2 = Math.max(b0, SNAP.now);
+          mk(plot, "line", { x1: px(x(from2)), y1: px(y(beamAt(instance, from2))),
+                             x2: px(x(b1)), y2: px(y(100)), class: "beam future" });
+        }
+        mk(plot, "line", { x1: px(x(b1)), x2: px(x(b1)), y1: top + 3, y2: bottom - 2,
+                           class: `reset-tick${s.class === "session" ? " session" : ""}` });
+      }
+      if (!wide) continue;
+      for (const band of bands(s, instance, view.from, view.to)) {
+        const up = band.pts.map(p => `${px(x(p[0]))},${px(y(p[1]))}`).join(" ");
+        const back = band.pts.slice().reverse().map(p => `${px(x(p[0]))},${px(y(p[2]))}`).join(" ");
+        mk(plot, "polygon", { points: `${up} ${back}`,
+                              class: band.sign > 0 ? "band-hot" : "band-bank" });
+      }
+    }
+    const { solid, dotted } = trackSegments(s, view.from, view.to);
+    for (const run of solid)
+      mk(plot, "path", { d: run.map((p, i) => `${i ? "L" : "M"}${px(x(p[0]))},${px(y(p[1]))}`).join(""),
+                         class: "track", stroke: `var(--${s.color})`, "stroke-width": 1.3 });
+    for (const run of dotted)
+      mk(plot, "path", { d: run.map((p, i) => `${i ? "L" : "M"}${px(x(p[0]))},${px(y(p[1]))}`).join(""),
+                         class: "unread", stroke: `var(--${s.color})` });
+    mk(svg, "line", { x1: M.l, x2: M.l + W, y1: px(y(0)), y2: px(y(0)), class: "lane-zero" });
+  });
+  drawNow(svg, x, M, H, false);
+  return { x, M, W, H };
+}
+
+function drawBrush() {
+  const svg = brushSvg;
+  clear(svg);
+  const rect = svg.getBoundingClientRect();
+  const VW = Math.max(720, Math.round(rect.width)), VH = 58;
+  svg.setAttribute("viewBox", `0 0 ${VW} ${VH}`);
+  const M = { l: 8, r: 8, t: 6, b: 14 };
+  const W = VW - M.l - M.r, H = VH - M.t - M.b;
+  const x = t => M.l + (t - EXTENT.from) / (EXTENT.to - EXTENT.from) * W;
+  const y = u => M.t + H - clamp(u, 0, 100) / 100 * H;
+  svg.dataset.plotWidth = W;
+  svg.dataset.plotLeft = M.l;
+
+  for (let t = zoneMidnight(EXTENT.from); t < EXTENT.to; t = zoneMidnight(t + DAY * 1.5)) {
+    if (!zoneWeekend(t)) continue;
+    const x0 = Math.max(M.l, x(t)), x1 = Math.min(M.l + W, x(t + DAY));
+    if (x1 > x0) mk(svg, "rect", { x: px(x0), y: M.t, width: px(x1 - x0), height: H, class: "weekend" });
+  }
+  for (const s of weekly) {
+    const d = s.points.map((p, i) => `${i ? "L" : "M"}${px(x(p[0]))},${px(y(p[1]))}`).join("");
+    mk(svg, "path", { d, class: "brush-track", stroke: `var(--${s.color})` });
+  }
+  mk(svg, "rect", { x: M.l, y: M.t, width: W, height: H, rx: 4, class: "frame" });
+  for (const tick of ticks(EXTENT.from, EXTENT.to, W)) {
+    /* a date that only half fits reads as a different, wrong date ("24") */
+    if (!tick.major || x(tick.t) < M.l + 22 || x(tick.t) > M.l + W - 22) continue;
+    mk(svg, "text", { x: px(x(tick.t)), y: VH - 3, "text-anchor": "middle", class: "axis" },
+       TZshort.format(tick.t));
+  }
+  const x0 = x(view.from), x1 = x(view.to);
+  mk(svg, "rect", { x: M.l, y: M.t, width: Math.max(0, px(x0 - M.l)), height: H, class: "brush-veil" });
+  mk(svg, "rect", { x: px(x1), y: M.t, width: Math.max(0, px(M.l + W - x1)), height: H, class: "brush-veil" });
+  mk(svg, "rect", { x: px(x0), y: M.t, width: Math.max(2, px(x1 - x0)), height: H, class: "brush-win",
+                    "data-brush": "move" });
+  for (const [edge, at] of [["from", x0], ["to", x1]])
+    mk(svg, "rect", { x: px(at - 3), y: M.t + 4, width: 6, height: H - 8, rx: 2,
+                      class: "brush-handle", "data-brush": edge });
+  return { x, M, W };
+}
+
+/* ── the readout ──────────────────────────────────────────────────────────── */
+const tip = document.getElementById("tip");
+function instanceAt(s, t) {
+  for (let i = s.instances.length - 1; i >= 0; i--)
+    if (t >= s.instances[i].span[0] && t <= s.instances[i].span[1]) return { ...s.instances[i], index: i };
+  return null;
+}
+function valueAt(s, t) {
+  /* the gauge is a staircase — the value at t is the last reading at or before
+     t, never an interpolation between two treads */
+  let lo = 0, hi = s.points.length - 1, found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (s.points[mid][0] <= t) { found = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  if (found < 0) return null;
+  const point = s.points[found];
+  if (t - point[0] > 6 * HOUR) return null;
+  const gap = s.gaps.find(g => g[0] <= t && t <= g[1]);
+  return { u: point[1], stale: Boolean(gap), at: point[0] };
+}
+function showTip(clientX, plotRect, t, shown) {
+  const rows = shown.map(s => {
+    const value = valueAt(s, t);
+    const instance = instanceAt(s, t);
+    const beam = instance ? beamAt(instance, t) : null;
+    /* A deviation computed from a reading we have already called unknown is a
+       number with no reading under it. Both cells go quiet together. */
+    const dev = value && !value.stale && beam != null ? value.u - beam : null;
+    const devClass = dev == null ? "nil" : dev > 0 ? "hot" : "bank";
+    const devText = dev == null ? "—" : `${dev > 0 ? "+" : "−"}${Math.abs(dev).toFixed(0)}%`;
+    return `<div class="row">
+      <i style="background:var(--${esc(s.color)})"></i>
+      <span class="who">${esc(s.display)} <span class="nil">${esc(s.scope || s.label)}</span></span>
+      <span class="used">${value ? (value.stale ? "?" : Math.round(value.u) + "%") : "—"}</span>
+      <span class="dev ${devClass}">${devText}</span></div>`;
+  }).join("");
+  tip.innerHTML = `<span class="tip-when">${TZfull.format(t)}</span>${rows}`;
+  tip.classList.add("on");
+  const box = tip.getBoundingClientRect();
+  tip.style.left = `${clamp(clientX, box.width / 2 + 8, innerWidth - box.width / 2 - 8)}px`;
+  /* The readout rides clear of the plot it reads — above by preference, since
+     that is out of the way of the marks and of the hand. But "above the plot" is
+     only somewhere to be if the plot is not already against the top of the
+     screen, and the hero is exactly that whenever the page is scrolled to the
+     top. So the side is chosen against the room the viewport actually has: above
+     if it fits, below if it does not, and clamped into view if neither does.
+     A readout half off the screen is worse than one on the other side of the
+     pointer, and it fails precisely when you are reading the newest week. */
+  const top = Math.max(plotRect.top, 0), bottom = Math.min(plotRect.bottom, innerHeight);
+  const fits = at => at >= 8 && at + box.height <= innerHeight - 8;
+  const above = top - box.height - 12, below = bottom + 12;
+  tip.style.top = `${fits(above) ? above : fits(below) ? below
+    : clamp(above, 8, Math.max(8, innerHeight - box.height - 8))}px`;
+}
+const hideTip = () => tip.classList.remove("on");
+
+/* ── interaction ──────────────────────────────────────────────────────────── */
+function timeAtClient(svg, clientX) {
+  const rect = svg.getBoundingClientRect();
+  const scale = rect.width / svg.viewBox.baseVal.width;
+  const left = Number(svg.dataset.plotLeft), width = Number(svg.dataset.plotWidth);
+  const at = (clientX - rect.left) / scale - left;
+  return view.from + clamp(at / width, 0, 1) * (view.to - view.from);
+}
+function bindPan(svg, laneAware) {
+  let drag = null;
+  svg.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    svg.setPointerCapture(event.pointerId);
+    svg.classList.add("dragging");
+    drag = { x: event.clientX, from: view.from, to: view.to, moved: false };
+  });
+  svg.addEventListener("pointermove", event => {
+    if (drag) {
+      const rect = svg.getBoundingClientRect();
+      const scale = rect.width / svg.viewBox.baseVal.width;
+      const width = Number(svg.dataset.plotWidth);
+      const shift = (event.clientX - drag.x) / scale / width * (drag.to - drag.from);
+      if (Math.abs(event.clientX - drag.x) > 2) drag.moved = true;
+      setView({ from: drag.from - shift, to: drag.to - shift }, false);
+      hideTip();
+      return;
+    }
+    const t = timeAtClient(svg, event.clientX);
+    const shown = laneAware ? laneSet() : series.filter(LENSES.find(l => l.id === lens).pick);
+    showTip(event.clientX, svg.getBoundingClientRect(), t, shown);
+  });
+  const end = event => {
+    if (!drag) return;
+    drag = null;
+    svg.classList.remove("dragging");
+    svg.releasePointerCapture?.(event.pointerId);
+    store.set("glideslope.history.view", `${view.from},${view.to}`);
+  };
+  svg.addEventListener("pointerup", end);
+  svg.addEventListener("pointercancel", end);
+  svg.addEventListener("pointerleave", () => hideTip());
+  svg.addEventListener("wheel", event => {
+    /* Vertical scroll belongs to the page. Zoom is the pinch (which arrives as
+       ctrlKey) or an explicit modifier; a horizontal gesture pans. Fighting the
+       operating system's own scroll for a chart is how a page becomes unusable
+       on a trackpad. */
+    const zooming = event.ctrlKey || event.metaKey;
+    const panning = !zooming && Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    if (!zooming && !panning) return;
+    event.preventDefault();
+    if (panning) {
+      const width = Number(svg.dataset.plotWidth);
+      const shift = event.deltaX / width * (view.to - view.from);
+      setView({ from: view.from + shift, to: view.to + shift });
+      return;
+    }
+    const anchor = timeAtClient(svg, event.clientX);
+    const factor = Math.exp(event.deltaY * .01);
+    setView({ from: anchor - (anchor - view.from) * factor,
+              to: anchor + (view.to - anchor) * factor });
+  }, { passive: false });
+}
+bindPan(heroSvg, false);
+bindPan(laneSvg, true);
+
+/* the strip: grab the window to travel, grab an edge to change how much you see */
+{
+  let drag = null;
+  brushSvg.addEventListener("pointerdown", event => {
+    const mode = event.target.dataset?.brush;
+    brushSvg.setPointerCapture(event.pointerId);
+    const rect = brushSvg.getBoundingClientRect();
+    const scale = rect.width / brushSvg.viewBox.baseVal.width;
+    const left = Number(brushSvg.dataset.plotLeft), width = Number(brushSvg.dataset.plotWidth);
+    const at = EXTENT.from + clamp(((event.clientX - rect.left) / scale - left) / width, 0, 1)
+                            * (EXTENT.to - EXTENT.from);
+    if (!mode) {                       /* a click on open ground centres the view there */
+      const span = view.to - view.from;
+      setView({ from: at - span / 2, to: at + span / 2 });
+      drag = { mode: "move", at, from: view.from, to: view.to };
+      return;
+    }
+    drag = { mode, at, from: view.from, to: view.to };
+  });
+  brushSvg.addEventListener("pointermove", event => {
+    if (!drag) return;
+    const rect = brushSvg.getBoundingClientRect();
+    const scale = rect.width / brushSvg.viewBox.baseVal.width;
+    const left = Number(brushSvg.dataset.plotLeft), width = Number(brushSvg.dataset.plotWidth);
+    const at = EXTENT.from + clamp(((event.clientX - rect.left) / scale - left) / width, 0, 1)
+                            * (EXTENT.to - EXTENT.from);
+    const shift = at - drag.at;
+    if (drag.mode === "move") setView({ from: drag.from + shift, to: drag.to + shift });
+    else if (drag.mode === "from") setView({ from: Math.min(drag.from + shift, drag.to - MIN_SPAN), to: drag.to });
+    else setView({ from: drag.from, to: Math.max(drag.to + shift, drag.from + MIN_SPAN) });
+  });
+  const end = () => { drag = null; };
+  brushSvg.addEventListener("pointerup", end);
+  brushSvg.addEventListener("pointercancel", end);
+}
+
+addEventListener("keydown", event => {
+  const span = view.to - view.from;
+  if (event.key === "ArrowLeft") setView({ from: view.from - span / 4, to: view.to - span / 4 });
+  else if (event.key === "ArrowRight") setView({ from: view.from + span / 4, to: view.to + span / 4 });
+  else if (event.key === "-" || event.key === "_") setView({ from: view.from - span / 2, to: view.to + span / 2 });
+  else if (event.key === "+" || event.key === "=") setView({ from: view.from + span / 4, to: view.to - span / 4 });
+  else if (event.key === "0") setView({ from: EXTENT.from, to: EXTENT.to });
+  else if (event.key.toLowerCase() === "n") toNow();
+  else return;
+  event.preventDefault();
+});
+
+function toNow(span = view.to - view.from) {
+  setView({ from: EXTENT.to - span, to: EXTENT.to });
+}
+
+/* ── chrome ───────────────────────────────────────────────────────────────── */
+function buildControls() {
+  const ranges = document.getElementById("ranges");
+  for (const range of RANGES) {
+    const button = document.createElement("button");
+    button.className = "ctrl";
+    button.type = "button";
+    button.textContent = range.label;
+    button.dataset.range = range.id;
+    button.addEventListener("click", () => {
+      if (range.span == null) setView({ from: EXTENT.from, to: EXTENT.to });
+      else toNow(range.span);
+    });
+    ranges.appendChild(button);
+  }
+  document.getElementById("tonow").addEventListener("click", () => toNow());
+
+  const lenses = document.getElementById("lenses");
+  for (const item of LENSES) {
+    const button = document.createElement("button");
+    button.className = "ctrl wide";
+    button.type = "button";
+    button.textContent = item.label;
+    button.dataset.lens = item.id;
+    button.addEventListener("click", () => {
+      lens = item.id;
+      store.set("glideslope.history.lens", lens);
+      draw();
+    });
+    lenses.appendChild(button);
+  }
+
+  const filters = document.getElementById("lanefilters");
+  for (const item of LANE_FILTERS) {
+    const button = document.createElement("button");
+    button.className = "ctrl wide";
+    button.type = "button";
+    button.textContent = item.label;
+    button.dataset.filter = item.id;
+    button.addEventListener("click", () => {
+      if (laneOn.has(item.id)) laneOn.delete(item.id); else laneOn.add(item.id);
+      if (!laneOn.size) laneOn.add(item.id);
+      store.set("glideslope.history.lanes", [...laneOn].join(","));
+      draw();
+    });
+    filters.appendChild(button);
+  }
+}
+function syncControls() {
+  const span = view.to - view.from;
+  const atNow = Math.abs(view.to - EXTENT.to) < span * .02;
+  for (const button of document.querySelectorAll("[data-range]")) {
+    const range = RANGES.find(r => r.id === button.dataset.range);
+    const on = range.span == null
+      ? Math.abs(view.from - EXTENT.from) < HOUR && atNow
+      : atNow && Math.abs(span - range.span) < range.span * .02;
+    button.setAttribute("aria-pressed", String(on));
+  }
+  for (const button of document.querySelectorAll("[data-lens]"))
+    button.setAttribute("aria-pressed", String(button.dataset.lens === lens));
+  for (const button of document.querySelectorAll("[data-filter]"))
+    button.setAttribute("aria-pressed", String(laneOn.has(button.dataset.filter)));
+
+  document.getElementById("spanread").innerHTML =
+    `<b>${TZfull.format(view.from)}</b> → <b>${TZfull.format(view.to)}</b> · ${fmtSpan(span)}`;
+}
+
+/* Coalesce redraws onto the next frame — but never DEPEND on that frame
+   arriving. A webview whose pane is not the focused one throttles
+   requestAnimationFrame, and a page whose only render path is rAF opens blank
+   and stays blank until you click it. The timer is the floor under the frame. */
+let pending = false, fallback = null;
+function draw() {
+  if (pending) return;
+  pending = true;
+  const run = () => {
+    if (!pending) return;
+    pending = false;
+    clearTimeout(fallback);
+    drawHero();
+    drawLanes();
+    drawBrush();
+    syncControls();
+  };
+  requestAnimationFrame(run);
+  fallback = setTimeout(run, 120);
+}
+
+document.getElementById("foot-span").textContent =
+  `${TZshort.format(EXTENT.from)} → ${TZshort.format(SNAP.now)} · ${fmtSpan(EXTENT.to - EXTENT.from)}`;
+document.getElementById("foot-built").textContent = TZfull.format(Date.parse(SNAP.built_at));
+document.getElementById("foot-points").textContent =
+  `${SNAP.sample_count.toLocaleString()} observations · ${SNAP.point_count.toLocaleString()} drawn`;
+
+buildControls();
+draw();
+addEventListener("resize", draw);
+</script>
+</body>
+</html>

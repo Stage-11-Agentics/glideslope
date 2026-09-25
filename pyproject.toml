@@ -1,0 +1,59 @@
+# Glideslope: one cross-provider position for flat-fee coding-agent subscriptions.
+# Built by Stage 11 Agentics. Standard library only.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "glideslope"
+version = "0.1.0"
+description = "Every flat-fee coding plan you pay for, on one glide path: Claude, Codex, Kimi, Grok and OpenRouter usage in one table."
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+authors = [
+    { name = "Stage 11 Agentics", email = "hello@stage11.ai" },
+]
+keywords = ["claude-code", "codex", "usage", "rate-limits", "agents", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# Pillow only draws the alert image; notify runs text-only without it.
+images = [
+    "pillow>=10",
+]
+dev = [
+    "pytest>=8.0",
+    "pillow>=10",  # tests/test_notify.py draws a real PNG
+]
+
+[project.scripts]
+glideslope = "glideslope:main"
+glideslope-sampler = "sampler:main"
+glideslope-notify = "notify:main"
+claude-account = "claude_account:main"
+
+[project.urls]
+Homepage = "https://github.com/Stage-11-Agentics/glideslope"
+Repository = "https://github.com/Stage-11-Agentics/glideslope"
+Issues = "https://github.com/Stage-11-Agentics/glideslope/issues"
+
+[tool.setuptools]
+py-modules = ["glideslope", "sampler", "notify", "claude_account"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

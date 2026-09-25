@@ -1,0 +1,65 @@
+# Glideslope configuration.
+#
+# Copy to ~/.glideslope/config.toml, or point GLIDESLOPE_CONFIG at another path.
+# GLIDESLOPE_HOME overrides the store directory.
+#
+# Every key is optional. Delete what you do not need; the defaults are noted.
+# This file holds no secrets. Static API keys go in keys_file, never here.
+
+# Time zone for reset clocks and switch times, as an IANA name.
+# Default: the system's local zone.
+# timezone = "Europe/Berlin"
+
+# The store: samples.db, spend.json, alerts/, and the state files.
+# Default: ~/.glideslope
+store = "~/.glideslope"
+
+# Static API keys, one KEY=value per line, mode 0600.
+# Read only for KIMI_API_KEY and OPENROUTER_API_KEY, and only when the
+# environment does not already set them. It exists because a launchd job
+# carries no shell environment. Never put an OAuth token here.
+keys_file = "~/.glideslope/keys.txt"
+
+# This machine.
+[satellite]
+# Display name in every table. Default: the short hostname.
+name = "laptop"
+
+# Other machines that hold a Claude Code login. Each runs the beacon
+# (tools/install-satellite.sh) and is read over ssh from its own
+# ~/.glideslope/satellite.json. Repeat the block per machine.
+#
+# `host` is a plain ssh host name or alias this machine can reach
+# non-interactively: letters, digits, dots, dashes and underscores, optionally
+# prefixed user@. No ssh options; put ports and keys in ~/.ssh/config under the
+# alias. The first connection accepts and pins the host key
+# (StrictHostKeyChecking=accept-new), so make it on a network you trust.
+[[satellites]]
+name = "studio"
+host = "studio"
+
+[claude]
+# Roster alias -> display name. Unlisted accounts get the next NATO letter
+# (Alpha, Bravo, Charlie...) in roster order.
+call_signs = { work = "Alpha", personal = "Bravo" }
+
+# Plan labels. Operator-declared: the providers' APIs do not name the plan.
+# Claude's plan is not set here; it comes from the tier in claude-account's roster.
+[codex]
+plan = "20x"
+
+[kimi]
+plan = "Coding 15x"
+
+[grok]
+plan = "SuperGrok"
+
+# Threshold alerts for the Claude account this machine is logged into.
+[notify]
+# macos: a banner via osascript (default)
+# url:   POST the alert as JSON to `url`
+# none:  no alerts
+sink = "macos"
+url = ""              # url sink only
+# The line past which a window is worth interrupting for. Default: 90.
+percent = 90

@@ -1,0 +1,2973 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glideslope — Detail View</title>
+<link rel="icon" type="image/svg+xml" href="__GLIDESLOPE_ICON__">
+<style>
+  /* ── Glideslope design tokens ─────────────────────────────────────────────
+     Codex, Kimi and OpenRouter are categorically separated marks — different
+     hues, told apart at a glance. The three Anthropic accounts are NOT: they
+     are one clay family by design, because they are one provider, and a reader
+     should see that before they read which. Inside the family the difference
+     is luminance, plus the direct label that is always beside the mark — and
+     the account you are logged into wears an ink ring, not a hue of its own.
+     The -hot variants are glow/numeral accents only. */
+  :root {
+    color-scheme: dark;
+    --void: #05070b;
+    --surface: #0a0e14;
+    --panel: #0d1219;
+    --panel-2: #111826;
+    --bezel: #1d2836;
+    --bezel-bright: #33445a;
+    --ink: #e8eef6;
+    --ink-2: #b6c2d1;
+    --muted: #7d8a9c;
+    --muted-2: #4d5a6b;
+    --grid: #182230;
+
+    --alpha:   #d97757;  --alpha-hot:   #f0a086;   /* clay  */
+    --bravo:   #d4a27f;  --bravo-hot:   #ecc3a6;   /* kraft */
+    --charlie: #b0503c;  --charlie-hot: #d9765f;   /* brick */
+    --delta:   #c28b2c;  --delta-hot:   #e3b35c;   /* ochre */
+    --codex: #1ba576;   --codex-hot: #4cd9a8;
+    --kimi: #d1568f;    --kimi-hot: #f28cba;
+    --grok: #5b9cff;    --grok-hot: #8eb8ff;
+    --router: #8d68e8;  --router-hot: #b499f5;
+
+    /* the window class is its own axis — neither identity nor alarm — so both
+       hues belong to no account and no status. Violet never meets OpenRouter's
+       purple: OpenRouter carries no window class and never enters the register.
+       Neither hue is cyan (TRAILING GLIDESLOPE) or the -hot orange (AHEAD),
+       which are the words these very rows say about a position. */
+    --window-week:    #a78bfa;   /* violet — the 7 DAY budget    */
+    --window-session: #f5b74e;   /* amber  — the 5 HOUR throttle */
+
+    --fable-ink: #f3c98b;       /* Fable dollars — warm gold, never an account hue */
+    --pace: #e8eef6;            /* the ◆ — neutral ink, never a series color */
+    /* the pooled read wears the ◆ ink rather than a hue, so it needs the -hot
+       companion every series has: without one it falls through COLOR_KEYS to
+       OpenRouter's purple and quietly impersonates a provider */
+    --pace-hot: #ffffff;
+    --status-hot: #ff8a5b;      /* ahead of glideslope */
+    --status-capped: #ff5167;   /* capacity — the ceiling */
+    --status-bank: #43b7cf;     /* trailing the glideslope */
+    --status-even: #7d8a9c;     /* on glideslope = quiet */
+
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "SF Pro Display", Inter, ui-sans-serif, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background:
+      radial-gradient(1200px 500px at 72% -14%, rgba(217,119,87,.075), transparent 60%),
+      radial-gradient(900px 420px at 6% 112%, rgba(27,165,118,.05), transparent 55%),
+      var(--void);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    min-width: 1280px;
+  }
+  b, strong { font-weight: 660; }
+  .num { font-variant-numeric: tabular-nums; }
+  /* ── the mark for a value nobody could find ──
+     An empty cell reads as "nothing to say here"; a dash reads as "there is a
+     reading here and it is missing", which is the truth. It is always muted and
+     never the colour the value itself would have worn — a dash the eye can
+     mistake for a read is worse than the gap it replaced. Reserved for absent
+     values only: a clause that does not apply stays silent. */
+  .nil { color: var(--muted); }
+
+  /* bezel: the one panel treatment, used everywhere */
+  .module {
+    position: relative;
+    background: linear-gradient(180deg, rgba(255,255,255,.022), transparent 32%), var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: 10px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.045) inset, 0 18px 40px -30px rgba(0,0,0,.9);
+  }
+  .module.live { border-color: color-mix(in oklab, var(--acc, var(--bezel-bright)) 55%, var(--bezel)); }
+  .module.live::after {              /* corner index marks — the milled bezel */
+    content: ""; position: absolute; inset: 5px; border-radius: 6px; pointer-events: none;
+    background:
+      linear-gradient(90deg, var(--acc) 0 10px, transparent 0) top left,
+      linear-gradient(90deg, transparent calc(100% - 10px), var(--acc) 0) top right,
+      linear-gradient(90deg, var(--acc) 0 10px, transparent 0) bottom left,
+      linear-gradient(90deg, transparent calc(100% - 10px), var(--acc) 0) bottom right;
+    background-size: 100% 1px; background-repeat: no-repeat; opacity: .5;
+  }
+
+  .kicker {
+    font: 640 10.5px/1 var(--mono); letter-spacing: .19em; text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ── the window class, wherever it is named ──
+     7 DAY and 5 HOUR read alike in running text, and the operator has to sort
+     them apart constantly — so the two chips differ on both axes at once. A
+     budget is a filled violet; a throttle is an outlined amber. Hue answers
+     from the corner of the eye, fill answers in a glance, and neither depends
+     on reading the words. Both chips are the same box to the pixel — only fill
+     and hue change — so a row never moves when the class does. The box is sized to fit inside
+     a 13.5px line box, which is every row it lands in; in the 10.5px kicker and
+     table-head contexts it is the tallest thing on the line and sets it. Only
+     the class word wears the chip: a scope suffix stays plain text beside it. */
+  .wclass {
+    display: inline-block; height: 15px; padding: 0 5px;
+    border: 1px solid transparent; border-radius: 3px; vertical-align: 1px;
+    font: 680 9.5px/13px var(--mono); letter-spacing: .07em; white-space: nowrap;
+  }
+  .wclass--week {
+    background: color-mix(in oklab, var(--window-week) 18%, transparent);
+    border-color: color-mix(in oklab, var(--window-week) 45%, transparent);
+    color: var(--window-week);
+  }
+  .wclass--session {
+    background: transparent;
+    border-color: color-mix(in oklab, var(--window-session) 55%, transparent);
+    color: var(--window-session);
+  }
+
+  /* ── masthead ── */
+  .masthead {
+    display: flex; align-items: center; gap: 16px;
+    padding: 13px 22px; border-bottom: 1px solid var(--bezel);
+    background: rgba(5,7,11,.85); backdrop-filter: blur(14px);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto;
+    color: var(--pace); font: 700 20px/1 var(--mono);
+    text-shadow: 0 0 12px rgba(232,238,246,.35);
+  }
+  .brand-name { font-size: 17px; font-weight: 700; letter-spacing: -.015em; }
+  .brand-sub { margin-top: 2px; }
+  .mast-spacer { flex: 1; }
+  .badge {
+    font: 700 10px/1 var(--mono); letter-spacing: .13em; padding: 5px 8px;
+    border-radius: 5px; border: 1px solid rgba(255,138,91,.5); color: var(--status-hot);
+    background: rgba(255,138,91,.07);
+  }
+  .data-age { text-align: right; font: 11px/1.35 var(--mono); color: var(--muted); }
+  .data-age b { display: block; margin-top: 2px; color: var(--ink); font-size: 12px; font-weight: 650; }
+  .reload-block { display: flex; align-items: center; gap: 8px; }
+  .reload-control {
+    width: 76px; padding: 6px 8px; border: 1px solid var(--bezel-bright); border-radius: 5px;
+    background: var(--surface); color: var(--ink-2); cursor: pointer;
+    font: 700 9px/1 var(--mono); letter-spacing: .08em;
+  }
+  .reload-control:hover { color: var(--ink); background: var(--panel-2); }
+  /* The way out to the history view. Same box as RELOAD to the pixel, because a
+     row of controls that changes size when one of them is a link is a row that
+     moves. */
+  a.reload-control { display: inline-block; text-align: center; text-decoration: none; }
+  .reload-note { color: var(--muted-2); font: 9px/1.25 var(--mono); letter-spacing: .04em; white-space: nowrap; }
+
+  /* ── weekly status ── */
+  .weekly-summary { grid-column: 3; grid-row: 1; overflow: hidden; }
+  .section-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    padding: 12px 18px 10px; border-bottom: 1px solid var(--bezel);
+  }
+  .section-note { color: var(--muted-2); font: 10px/1.4 var(--mono); }
+  /* this head carries the chip too, and pays for it the same way the table
+     head does — a pixel of padding back, so the band keeps its height */
+  .weekly-summary .section-head { padding-bottom: 9px; }
+  .weekly-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .weekly-table th, .weekly-table td { padding: 10px 18px; text-align: left; }
+  .weekly-table th {
+    color: var(--muted); font: 640 10.5px/1 var(--mono);
+    letter-spacing: .16em; text-transform: uppercase;
+  }
+  .weekly-table tbody tr { border-top: 1px solid rgba(29,40,54,.55); }
+  .weekly-table tbody tr:hover { background: var(--panel-2); }
+  .weekly-table th:first-child, .weekly-table td:first-child { width: 40%; }
+  .weekly-table th:nth-child(2), .weekly-table td:nth-child(2) { width: 27%; }
+  .weekly-table th, .weekly-table td { padding: 10px 14px; }
+  /* the head now carries the 7 DAY chip, which is taller than the bare word it
+     replaced. The row gives the difference back in padding, so the table below
+     it starts exactly where it always did. */
+  .weekly-table th { padding-top: 7.75px; padding-bottom: 7.75px; }
+  .weekly-account { color: var(--ink); font-size: 13.5px; font-weight: 650; }
+  .weekly-login { color: var(--status-bank); font: 700 9px/1 var(--mono); margin-left: 6px; }
+  .weekly-login.remote { color: var(--muted); font-weight: 620; }
+  /* the same two gutters the ledger uses — one vocabulary in both tables */
+  .weekly-table tbody tr[data-here="true"] { box-shadow: inset 3px 0 0 var(--ink); }
+  .weekly-table tbody tr[data-there="true"] { box-shadow: inset -2px 0 0 var(--muted-2); }
+  .weekly-table tbody tr[data-here="true"][data-there="true"] {
+    box-shadow: inset 3px 0 0 var(--ink), inset -2px 0 0 var(--muted-2);
+  }
+  .weekly-table tbody tr[data-here="true"] .weekly-account { font-weight: 720; }
+  /* ── the pooled row ──
+     A sum, not a sibling: it sits under the accounts it is made of, set apart by
+     a rule above rather than by colour, so it never competes with a real gauge. */
+  .weekly-table tbody tr.pooled { border-top: 1px solid var(--bezel-bright); }
+  .weekly-table tbody tr.pooled .weekly-account { color: var(--ink-2); font-weight: 620; }
+  .weekly-table tbody tr.pooled .weekly-account small {
+    display: block; margin-top: 3px; color: var(--muted); font: 500 10px/1.3 var(--mono);
+  }
+  .pool-verdict { font: 650 10px/1 var(--mono); margin-left: 7px; letter-spacing: .05em; }
+  .pool-verdict.ahead { color: var(--status-hot); }
+  .pool-verdict.trailing { color: var(--status-bank); }
+  .pool-verdict.even { color: var(--status-even); }
+  .pool-verdict.indeterminate { color: var(--muted-2); }
+  /* the legend that teaches the two gutters, once, where they first appear */
+  .gutter-key { color: var(--muted-2); font: 620 9.5px/1 var(--mono); letter-spacing: .1em; }
+  .gutter-key b { color: var(--ink); font-weight: 700; }
+  /* the pooled ledger row is derived, so its key is not a provider swatch at
+     all — it is Claude's own mark, the same burst the plot puts on the pool */
+  .pool-glyph { stroke: var(--pace); stroke-width: 1.3; stroke-linecap: round; fill: none;
+                flex: 0 0 auto; overflow: visible; }
+  .pooled-row .lname.laccount { color: var(--ink-2); font-weight: 620; }
+  .weekly-read { color: var(--ink); font: 700 14px/1 var(--mono); }
+  .weekly-read .pace { color: var(--muted); font-size: 11px; font-weight: 650; margin-left: 7px; }
+  /* the marker on a value nobody read — deliberately not .pace, which belongs to
+     the ◆ mark alone and carries its own contract */
+  .weekly-read .qual { color: var(--muted); font-size: 10px; font-weight: 650;
+    margin-left: 7px; text-transform: uppercase; letter-spacing: .04em; }
+  .weekly-reset { color: var(--ink-2); font: 11.5px/1.4 var(--mono); }
+  .weekly-reset small { display: block; margin-top: 3px; color: var(--muted); }
+  .summary-warning {
+    padding: 9px 18px; border-top: 1px solid var(--bezel);
+    color: var(--status-hot); font: 11px/1.45 var(--mono);
+  }
+
+  /* ── deck grid ──
+     A wide monitor gets one band of three across the top — approach plot,
+     deviation register, weekly status — then the full ledger, then the two
+     time-ordered panels. Every band below the first spans the whole width. */
+  .deck {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px; padding: 16px 22px 10px;
+    min-height: calc(100vh - 150px);
+  }
+  .horizon-mod { grid-column: 1 / 4; grid-row: 4; }
+  .switch-mod  { grid-column: 1 / 4; grid-row: 5; }
+  /* expanded, the plot takes two thirds, the register keeps the third column,
+     and the weekly read steps down a band */
+  .deck.plot-expanded .plot-pane { grid-column: 1 / 3; }
+  .deck.plot-expanded .plot-side { grid-column: 3; }
+  .deck.plot-expanded .weekly-summary { grid-column: 1 / 4; grid-row: 2; }
+  .deck.plot-expanded .ledger { grid-row: 3; }
+  .deck.plot-expanded .horizon-mod { grid-row: 5; }
+  .deck.plot-expanded .switch-mod { grid-row: 6; }
+  /* ── API-equivalent spend ──
+     What the tokens behind the meters would cost at list API prices. A full-width
+     band under the ledger: totals, then who paid (per account, this window), then
+     the last sixty days as daily stacked bars. Dollars here are a valuation, not a
+     bill; the band says so in its own head. */
+  .spend-mod { grid-column: 1 / 4; grid-row: 3; overflow: hidden; }
+  .deck.plot-expanded .spend-mod { grid-row: 4; }
+  .spend-body { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 0; }
+  .spend-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-right: 1px solid var(--bezel); }
+  .spend-tile { padding: 14px 18px 12px; border-bottom: 1px solid rgba(29,40,54,.55); min-width: 0; }
+  .spend-tile + .spend-tile { border-left: 1px solid rgba(29,40,54,.55); }
+  .spend-tile .k { color: var(--muted); font: 640 9.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+  .spend-tile .v { color: var(--ink); font: 700 26px/1.1 var(--mono); margin-top: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .spend-tile .s { color: var(--muted); font: 10.5px/1.5 var(--mono); margin-top: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .spend-tile .s b { color: var(--fable-ink); font-weight: 650; }
+  .spend-tile.all .v { color: var(--pace-hot); text-shadow: 0 0 22px rgba(255,255,255,.12); }
+  .spend-lever { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .spend-lever > div { padding: 12px 18px; min-width: 0; }
+  .spend-lever > div + div { border-left: 1px solid rgba(29,40,54,.55); }
+  .spend-lever .x { font: 700 22px/1 var(--mono); color: var(--status-bank); font-variant-numeric: tabular-nums; }
+  .spend-lever .t { color: var(--muted); font: 10.5px/1.5 var(--mono); margin-top: 5px; }
+  .spend-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
+  .spend-table th, .spend-table td { padding: 8px 12px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spend-table th:first-child, .spend-table td:first-child { text-align: left; width: 21%; }
+  .spend-table th { color: var(--muted); font: 640 9.5px/1.2 var(--mono); letter-spacing: .13em; text-transform: uppercase; }
+  .spend-table td { font: 12.5px/1.2 var(--mono); color: var(--ink-2, var(--ink)); }
+  .spend-table tbody tr { border-top: 1px solid rgba(29,40,54,.55); }
+  .spend-table tbody tr:hover { background: var(--panel-2); }
+  .spend-table td.acct { font: 650 13px/1.2 var(--sans); color: var(--ink); }
+  .spend-table td.acct i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; background: var(--acc); vertical-align: 0; }
+  .spend-table td .f { color: var(--fable-ink); }
+  .spend-table td small { color: var(--muted); font-size: 10px; margin-left: 3px; }
+  .spend-table td.nil, .spend-table .nil { color: var(--muted-2); }
+  .spend-table tr.sum td { border-top: 1px solid var(--bezel-bright); color: var(--ink); font-weight: 700; }
+  .spend-chart { grid-column: 1 / -1; border-top: 1px solid var(--bezel); padding: 10px 18px 12px; }
+  .spend-chart .chart-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .spend-chart svg { display: block; width: 100%; height: 150px; margin-top: 8px; overflow: visible; }
+  .spend-chart .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font: 10px/1.4 var(--mono); }
+  .spend-chart .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .spend-foot { grid-column: 1 / -1; border-top: 1px solid var(--bezel); padding: 8px 18px; color: var(--muted-2); font: 10px/1.5 var(--mono); }
+  .spend-empty { padding: 18px; color: var(--muted); font: 11px/1.5 var(--mono); }
+  @media (max-width: 1650px) {
+    .spend-body { grid-template-columns: 1fr; }
+    .spend-tiles { border-right: 0; border-bottom: 1px solid var(--bezel); }
+    .spend-lever { grid-column: auto; grid-template-columns: 1fr; }
+    .spend-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.3fr); }
+    .spend-lever > div + div { border-left: 0; border-top: 1px solid rgba(29,40,54,.55); }
+    .spend-lever { border-left: 1px solid rgba(29,40,54,.55); }
+  }
+
+  /* ── the theater: the frame alone, filling the glass ──
+     One step past expanded — a scene, not a layout. The pane lifts onto a fixed
+     layer covering the viewport, so the deck beneath never visibly reflows and
+     handing the glass back returns exactly the frame that was left. The plot
+     keeps its own geometry and simply scales: every mark, tag and axis grows
+     together, which is the point — a plot readable across the room. The frame
+     itself is the way in and the way out (a click), and Escape is the way out
+     too. Below the tooltip layer (z 40): the readouts still ride on top. */
+  .deck.plot-theater .plot-pane {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; flex-direction: column;
+    border: none; border-radius: 0;
+    padding: 16px 26px 14px;
+    background: linear-gradient(180deg, rgba(255,255,255,.022), transparent 32%), var(--panel);
+  }
+  .deck.plot-theater #ils { flex: 1 1 auto; min-height: 0; height: 100%; }
+  /* the grid-expand control commands a frame that is not on the glass while the
+     theater holds, so it steps off rather than lie about what a click would do */
+  .deck.plot-theater .plot-expand { display: none; }
+  /* one box in both states — EXIT FULL SCREEN is the wider label */
+  .plot-fullscreen { min-width: 124px; }
+  /* the page under the theater must not scroll — the operator would hand the
+     glass back to a deck that had quietly moved */
+  html.plot-theater-lock { overflow: hidden; }
+
+  /* full-state ledger: one aligned row per provider/account/window. Login is
+     an attribute in the account column, never a separate hierarchy. */
+  .ledger { grid-column: 1 / 4; grid-row: 2; align-self: start; padding: 0 0 6px; overflow: hidden; }
+  .lrow {
+    display: grid;
+    grid-template-columns: 14px 72px 138px 166px minmax(190px, 1fr) 220px 178px 118px;
+    gap: 14px; align-items: center; padding: 10px 18px;
+  }
+  .lrow + .lrow { border-top: 1px solid rgba(29,40,54,.55); }
+  .lrow.lhead { padding: 11px 18px 8px; border-bottom: 1px solid var(--bezel); }
+  .key { width: 8px; height: 8px; border-radius: 2px; background: var(--acc);
+         box-shadow: 0 0 8px color-mix(in oklab, var(--acc) 55%, transparent); }
+  .lprovider { font: 650 11px/1.4 var(--mono); color: var(--ink-2); }
+  .lname { font-size: 13.5px; font-weight: 650; color: var(--ink);
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* ── which account am I on, and on which machine? ──
+     Two satellites hold Claude logins now, so this stopped being a boolean and
+     became a place. The answer is drawn in the row's own gutters, which cost no
+     hue (the Anthropic three are one clay family on purpose) and no layout:
+     a bright bar on the LEFT for the login governing THIS machine, a faint one
+     on the RIGHT for a login held elsewhere in the fleet. Deliberately unequal —
+     the local login decides what the next prompt costs; a remote one is context.
+
+     Both are inset shadows, so they are painted inside the existing box: no row
+     changes height or width when one appears, and nothing below it moves. */
+  .lname.laccount { color: var(--ink-2); }
+  .lrow[data-here="true"] .lname.laccount { color: var(--ink); font-weight: 720; }
+  .lrow[data-here="true"]  { box-shadow: inset 3px 0 0 var(--ink); }
+  .lrow[data-there="true"] { box-shadow: inset -2px 0 0 var(--muted-2); }
+  .lrow[data-here="true"][data-there="true"] {
+    box-shadow: inset 3px 0 0 var(--ink), inset -2px 0 0 var(--muted-2);
+  }
+  .lplan, .lwin { display: block; margin-top: 3px; color: var(--muted);
+                  font: 500 10.5px/1.3 var(--mono); }
+  .login-chip {
+    display: inline-flex; align-items: center; margin-left: 6px;
+    color: var(--hot); font: 680 9px/1 var(--mono); letter-spacing: .07em;
+    text-transform: uppercase; white-space: nowrap;
+  }
+  /* a login held on another satellite: the same fact, one rank quieter */
+  .login-chip.remote { color: var(--muted); font-weight: 600; }
+  .lposition { display: grid; grid-template-columns: minmax(96px, 1fr) auto;
+               gap: 11px; align-items: center; min-width: 0; }
+  .lbar { height: 9px; }
+  .lbar.idle { opacity: .4; }
+  .lbar .bar-pace::after { content: ""; }
+  .lread { font: 700 13px/1 var(--mono); text-align: right; white-space: nowrap; }
+  .lread small { font-size: .72em; color: var(--muted); font-weight: 600; }
+  .lread.cap { color: var(--status-capped); }
+  .lread.unknown { color: var(--muted); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+  .lpace { font: 650 11px/1 var(--mono); color: var(--muted); margin-left: 3px; }
+  .lreset, .lfresh { font: 11px/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
+  /* the countdown is the read; the exact date under it is the thing you plan
+     around, so it stays legible rather than fading into the bezel */
+  .lreset b { color: var(--ink); font-weight: 700; font-size: 12.5px; }
+  .lreset time { display: block; margin-top: 2px; color: var(--ink-2); font: 10.5px/1.45 var(--mono); }
+  .lreset small, .lfresh small { display: block; color: var(--muted-2); font: 10px/1.45 var(--mono); }
+  .lfresh.stale { color: var(--status-hot); }
+
+  /* ── instrument cluster ── */
+  .cluster { padding: 0; display: flex; flex-direction: column; }
+  .cluster-head {
+    display: flex; align-items: center; gap: 10px; padding: 13px 16px 11px;
+    border-bottom: 1px solid var(--bezel);
+  }
+  .provider-key {
+    width: 10px; height: 10px; background: var(--acc); flex: 0 0 auto;
+    border-radius: 50%;
+    box-shadow: 0 0 10px color-mix(in oklab, var(--acc) 60%, transparent);
+  }
+  .cluster-name { font-size: 15px; font-weight: 680; letter-spacing: .01em; }
+  .cluster-plan { font: 10.5px/1 var(--mono); color: var(--muted); letter-spacing: .1em; margin-top: 3px; }
+  .live-chip {
+    margin-left: auto; font: 700 10px/1 var(--mono); letter-spacing: .12em;
+    color: var(--hot, var(--ink)); padding: 5px 8px; border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--acc) 65%, transparent);
+    background: color-mix(in oklab, var(--acc) 14%, transparent);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .live-chip i {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--hot);
+    box-shadow: 0 0 8px var(--hot); animation: pulse 2.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .reset-chip { margin-left: auto; font: 11px/1.4 var(--mono); color: var(--muted); text-align: right; }
+  .reset-chip b { color: var(--ink-2); font-weight: 650; }
+
+  .cluster-body { padding: 14px 16px 15px; display: flex; flex-direction: column; gap: 15px; flex: 1; }
+
+  /* window instrument = numerals + burn-clock bar */
+  .win { display: flex; flex-direction: column; gap: 7px; }
+  .win-top { display: flex; align-items: baseline; gap: 10px; }
+  .win-label { flex: 1; }
+  .win-read { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .win-pct { font-weight: 720; letter-spacing: -.03em; line-height: 1; }
+  .win.primary .win-pct { font-size: 42px; }
+  .win.secondary .win-pct { font-size: 22px; }
+  .win-pct small { font-size: .5em; font-weight: 600; color: var(--muted); letter-spacing: 0; }
+  .win-pace { font: 650 12.5px/1 var(--mono); color: var(--muted); }
+  .win-pace b { color: var(--pace); font-weight: 700; }
+  .state-chip {
+    font: 680 9.5px/1.25 var(--mono); letter-spacing: .07em; padding: 4px 7px; border-radius: 4px;
+    border: 1px solid; text-align: center;
+  }
+  .state-quiet { font: 640 10px/1 var(--mono); letter-spacing: .12em; color: var(--muted-2); white-space: nowrap; }
+  .state-capped { color: var(--status-capped); border-color: rgba(255,81,103,.45); background: rgba(255,81,103,.08); }
+  .state-hot    { color: var(--status-hot);    border-color: rgba(255,138,91,.4);  background: rgba(255,138,91,.07); }
+  .state-even   { color: var(--ink-2);         border-color: var(--bezel-bright);  background: rgba(255,255,255,.03); }
+  .state-bank   { color: var(--status-bank);   border-color: rgba(67,183,207,.4);  background: rgba(67,183,207,.07); }
+  .state-idle   { color: var(--muted);         border-color: var(--bezel);         background: transparent; }
+
+  /* the burn-clock: x = the window's own span, fill = used, tick = NOW (= ◆ pace) */
+  .bar { position: relative; height: 14px; border-radius: 4px; background: var(--surface);
+         border: 1px solid var(--bezel); overflow: visible; }
+  .win.secondary .bar { height: 9px; }
+  .bar-fill {
+    position: absolute; inset: 1px auto 1px 1px; width: 0; border-radius: 3px;
+    background: linear-gradient(90deg, color-mix(in oklab, var(--acc) 72%, #0a0e14), var(--acc));
+    transition: width 1.1s cubic-bezier(.22,.9,.24,1);
+  }
+  .bar-fill::after {                       /* the glowing fill front — live data glows */
+    content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: 2px;
+    background: var(--hot); box-shadow: 0 0 9px var(--hot);
+  }
+  .bar.capped .bar-fill::after { background: var(--status-capped); box-shadow: 0 0 10px var(--status-capped); width: 3px; }
+  .bar-ticks { position: absolute; inset: 0; pointer-events: none; }
+  .bar-ticks i { position: absolute; top: 100%; width: 1px; height: 3px; background: var(--bezel-bright); }
+  .bar-pace {                              /* ◆ NOW tick on the window's own clock */
+    position: absolute; top: -4.5px; bottom: -4.5px; width: 0; border-left: 1px solid var(--pace);
+    opacity: .85;
+  }
+  .bar-pace::after {
+    content: "◆"; position: absolute; top: -12px; left: -5px;
+    font: 10px/1 var(--mono); color: var(--pace);
+    text-shadow: 0 0 6px rgba(232,238,246,.55);
+  }
+  .win.secondary .bar-pace::after { content: ""; }
+  .bar-idle-note { font: 11px/1.4 var(--mono); color: var(--muted-2); }
+  .win-foot { display: flex; justify-content: space-between; gap: 10px; font: 11px/1.45 var(--mono); color: var(--muted); }
+  .win-foot b { color: var(--ink-2); font-weight: 650; }
+  .win-foot .warn { color: var(--status-hot); }
+  .win-foot .cap  { color: var(--status-capped); }
+
+  .divider { height: 1px; background: var(--bezel); margin: 1px 0; }
+
+  /* ── rail modules ── */
+  .rail-mod { padding: 13px 16px 15px; }
+  .rail-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 11px; }
+  .spend-read { display: flex; align-items: baseline; gap: 9px; }
+  .spend-big { font-size: 30px; font-weight: 720; letter-spacing: -.03em; }
+  .spend-sub { font: 11.5px/1.5 var(--mono); color: var(--muted); }
+  .spend-sub b { color: var(--ink-2); }
+
+  .bank-slots { display: flex; gap: 7px; }
+  .bank-slot {
+    height: 24px; flex: 1; border: 1px solid var(--bezel); border-radius: 5px;
+    background: var(--surface); display: flex; align-items: center; justify-content: center;
+    font: 700 9.5px/1 var(--mono); letter-spacing: .12em; color: var(--muted-2);
+  }
+  .bank-slot.lit {
+    border-color: rgba(76,217,168,.45); color: var(--codex-hot);
+    background: rgba(27,165,118,.09); box-shadow: 0 0 14px rgba(27,165,118,.14);
+  }
+
+  /* a full-width band: the switches sit side by side, divided by a rule, rather
+     than stacking five short rows down an otherwise empty page */
+  #switch-log { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 2px 0; }
+  .sw-row { display: grid; grid-template-columns: 66px 1fr; gap: 10px; padding: 4px 18px; }
+  .sw-row + .sw-row { border-left: 1px solid rgba(29,40,54,.6); }
+  .sw-time { font: 11px/1.5 var(--mono); color: var(--muted-2); }
+  .sw-what { font: 12px/1.5 var(--mono); color: var(--ink-2); }
+  .sw-what b { font-weight: 680; }
+  .sw-note { font: 10.5px/1.5 var(--mono); color: var(--muted); margin-top: 1px; }
+
+  /* reset horizon */
+  .horizon { position: relative; height: 118px; margin-top: 4px; }
+  .horizon svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .hz-axis { stroke: var(--bezel-bright); stroke-width: 1; }
+  .hz-tick { stroke: var(--grid); }
+  .hz-day { fill: var(--muted-2); font: 9.5px var(--mono); }
+  .hz-label { font: 10.5px var(--mono); fill: var(--ink-2); }
+  .hz-when { font: 9.5px var(--mono); fill: var(--muted); }
+
+  /* ── approach plot ── */
+  /* the wrapper holds the two panes together in the DOM without taking a cell
+     of its own — the pane and the register are peers in the top band */
+  .plot-wrap { display: contents; }
+  .plot-pane { grid-column: 1; grid-row: 1; }
+  .plot-side { grid-column: 2; grid-row: 1; }
+  .plot-pane { padding: 14px 8px 12px 14px; min-width: 0; }
+  .plot-side { padding: 14px 18px 14px 16px; display: flex; flex-direction: column; min-width: 0; }
+  .plot-side .kicker { margin-bottom: 4px; }
+  .plot-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    min-height: 26px; margin: 0 8px 8px 0;
+  }
+  .plot-controls { display: flex; align-items: center; gap: 6px; }
+  .plot-control {
+    appearance: none; border: 1px solid var(--bezel); border-radius: 5px;
+    background: var(--surface); color: var(--muted); padding: 6px 8px;
+    font: 670 9.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+    cursor: pointer;
+  }
+  .plot-control:hover { color: var(--ink); border-color: var(--bezel-bright); }
+  .plot-control[aria-pressed="true"] {
+    color: var(--ink); border-color: var(--bezel-bright); background: var(--panel-2);
+    box-shadow: 0 0 10px rgba(232,238,246,.06) inset;
+  }
+  .plot-expand { margin-left: 5px; min-width: 90px; }
+  /* ── the switches under the frame ──
+     Every series class on the approach frame is a switch, and the three Anthropic
+     accounts are a fourth of a different kind (a provider hold, not a class), so a
+     rule separates them. Each switch is latched by click and PREVIEWED by hover:
+     resting on one shows that class alone for as long as you look and gives the
+     frame straight back, without disturbing what is latched. Nothing here
+     re-renders the plot — the frame always draws every class and the switches
+     decide what is on the glass — which is why a hover can reveal a class that is
+     switched off. Each switch keeps ONE size in both states (only colour and
+     border move), so latching one never nudges its neighbours. */
+  .plot-foot {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin: 10px 8px 0 0; min-height: 28px;
+  }
+  .plot-switches { display: flex; align-items: center; gap: 6px; }
+  .plot-switch {
+    appearance: none; border: 1px solid var(--bezel); border-radius: 5px;
+    background: var(--surface); color: var(--muted-2); padding: 7px 9px;
+    font: 670 9.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+    cursor: pointer; min-width: 64px; text-align: center;
+  }
+  .plot-switch:hover { color: var(--ink); border-color: var(--bezel-bright); }
+  .plot-switch:focus-visible { outline: 1px solid var(--bezel-bright); outline-offset: 1px; }
+  .plot-switch[aria-pressed="true"] {
+    color: var(--ink); background: var(--panel-2);
+    border-color: color-mix(in oklab, var(--sw, var(--bezel-bright)) 60%, var(--bezel));
+    box-shadow: 0 0 10px rgba(232,238,246,.06) inset;
+  }
+  /* the hold is a whole provider family stepping forward, so it says so in full */
+  .plot-switch-hold { min-width: 112px; }
+  .plot-switch-sep { width: 1px; height: 18px; background: var(--bezel); flex: 0 0 auto; }
+  .plot-key {
+    display: flex; align-items: center; gap: 14px; margin-left: auto;
+    font: 620 9.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted-2);
+  }
+  .plot-key span { display: flex; align-items: center; gap: 5px; }
+  .plot-key i {
+    width: 10px; height: 10px; background: var(--muted); flex: 0 0 auto;
+  }
+  .plot-key i.weekly-key { border-radius: 50%; }
+  .plot-key i.session-key { background: none; border-bottom: 9px solid var(--muted);
+    border-left: 5px solid transparent; border-right: 5px solid transparent; height: 0; width: 0; }
+  /* a named meter shares its account's 7 DAY clock and its account's hue, so
+     neither shape nor colour can tell the two apart — the code letter does, worn
+     knocked out of the disc on the frame and beside the chip in the register */
+  .plot-key i.named-key {
+    width: 12px; height: 12px; border-radius: 50%; background: var(--muted);
+    color: var(--void); font: 700 8px/12px var(--mono); text-align: center;
+    letter-spacing: 0;
+  }
+  /* the pool's own key is Claude's burst, inlined by claudeBurstSVG — it already
+     carries .pool-glyph and the ◆ ink with it, so the key spends nothing on it */
+  .register-family {
+    padding: 7px 8px 5px; border: 1px solid var(--bezel); border-radius: 7px;
+    background: rgba(5,7,11,.18); min-width: 0;
+  }
+  .register-family.family-anthropic { border-color: color-mix(in oklab, var(--alpha) 42%, var(--bezel)); }
+  .family-label {
+    margin: 0 0 3px; color: var(--muted); font: 700 8.5px/1.1 var(--mono);
+    letter-spacing: .15em; text-transform: uppercase;
+  }
+  .family-rows { display: flex; flex-direction: column; min-width: 0; }
+  .reg-axis { display: grid; grid-template-columns: 17px minmax(150px, 210px) 1fr 52px;
+              gap: 12px; align-items: center; padding: 4px 8px 8px; }
+  .reg-axis .reg-axis-scale { display: flex; justify-content: space-between; gap: 8px;
+              font: 620 9px/1 var(--mono); letter-spacing: .08em; color: var(--muted-2); }
+  .reg-axis .reg-axis-scale span { white-space: nowrap; }
+  /* a third of a narrow screen cannot hold the scale's wording; the ◆ centre
+     mark on every row says the same thing, so drop the ruler rather than clip it */
+  @media (max-width: 1560px) { .reg-axis { display: none; } }
+  .reg-row { display: grid; grid-template-columns: 17px minmax(150px, 210px) 1fr 52px;
+             gap: 12px; align-items: center; padding: 9px 8px; border-radius: 7px; }
+  .reg-row, .ils-trail, .ils-mark, .ils-pool-trail, .ils-pool-mark { transition: opacity .12s ease; }
+  .reg-row:hover { background: var(--panel-2); }
+  .reg-row.selection-dimmed, .ils-trail.selection-dimmed, .ils-mark.selection-dimmed,
+  .ils-pool-trail.selection-dimmed, .ils-pool-mark.selection-dimmed { opacity: .3; }
+  .reg-row.selection-selected, .ils-trail.selection-selected, .ils-mark.selection-selected,
+  .ils-pool-trail.selection-selected, .ils-pool-mark.selection-selected { opacity: 1; }
+  .reg-row + .reg-row { border-top: 1px solid rgba(29,40,54,.6); }
+  /* ── the register name, in three columns ──
+     As one text run the account name decided where everything after it landed,
+     and the names run 4 to 7 characters (Kimi … Charlie): every chip sat at its
+     own x, every countdown at another — the tab break. Three fixed columns
+     instead, so the register reads down as easily as across. Each width is the
+     widest thing that column holds in this data, measured in the page's own
+     type: "Charlie" 42.8px, the 5 HOUR chip 50.3px, "(3h 48m)" 54.0px.
+     60 + 8 + 68 + 8 leaves 66px for the countdown inside the 210px this column
+     is given at every viewport (minmax(150px, 210px) sits at its cap from 1280
+     up), so nothing is borrowed from the deviation bar and nothing is clipped.
+     The `·` is gone: the columns separate now, and the 11.3px it cost is most
+     of what pays for them. Both chips sit flush at the class column's origin —
+     ONE column of chips, at one x, whatever the class. The class is said in
+     hue and fill, which needs no indent to carry it, and the 68px keeps ~18px
+     of slack for a chip that ever grows. */
+  .reg-name { display: grid; grid-template-columns: 60px 68px 1fr; column-gap: 8px;
+              align-items: baseline; font-size: 13.5px; color: var(--ink-2);
+              white-space: nowrap; overflow: hidden; }
+  /* the same brightness answer the ledger gives — one bright name per fleet */
+  .reg-row[data-active="true"] .reg-name,
+  .reg-row[data-here="true"] .reg-name { color: var(--ink); }
+  /* the register is a dense column of thin rows, so the gutters are drawn a
+     shade narrower here — same two marks, same meaning, same order */
+  .reg-row[data-here="true"] { box-shadow: inset 2px 0 0 var(--ink); }
+  .reg-row[data-there="true"] { box-shadow: inset -2px 0 0 var(--muted-2); }
+  .reg-row[data-here="true"][data-there="true"] {
+    box-shadow: inset 2px 0 0 var(--ink), inset -2px 0 0 var(--muted-2);
+  }
+  .reg-clock { min-width: 0; }
+  /* the model code, plain text beside the class chip — the rule this column was
+     built on ("only the class word wears the chip: a scope suffix stays plain
+     text beside it"), spent on one letter instead of a word, because the 68px
+     column has ~18px of slack and "Fable" needs 30. The frame's own tag spells
+     the model out, and so does every tooltip; this is the tight-column spelling. */
+  .reg-code { font: 700 9.5px/1 var(--mono); font-style: normal; letter-spacing: .06em;
+              color: var(--ink-2); margin-left: 5px; }
+  /* ── the pooled row in the register ──
+     Not an account — the three Anthropic weeklies summed — so it sits last inside
+     the Anthropic box, under the rows it is made of, and its key is Claude's own
+     burst rather than a provider swatch: the same mark the plot puts on the pool. */
+  .reg-row.pooled { border-top: 1px solid var(--bezel-bright); }
+  .reg-row.pooled .reg-acct { color: var(--ink-2); font-weight: 620; }
+  .reg-row.pooled .provider-key {
+    display: flex; align-items: center; width: auto; height: auto;
+    background: none; box-shadow: none; border-radius: 0;
+  }
+  /* ── a dormant account ──
+     No active subscription: it never plots and never pools, and it keeps
+     exactly one row wherever this page would otherwise give it several — a
+     roll-call that dropped it would read as "forgot it exists," not as
+     "nothing left to say." Same dress-down family as a remote login, but its
+     own word rather than a mark, because a dormant account is not merely
+     elsewhere — it is not spendable from anywhere. */
+  .dormant-tag {
+    display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 3px;
+    background: rgba(139,148,158,.16); color: var(--muted); font: 700 9px/1.4 var(--mono);
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  .reg-row.dormant, .lrow.dormant-row, tr[data-dormant="true"] { opacity: .45; }
+  .reg-row.dormant .reg-acct, .lrow.dormant-row .lname, tr[data-dormant="true"] .weekly-account {
+    color: var(--muted);
+  }
+  .reg-row.dormant .reg-div, .lrow.dormant-row .lposition .bar { visibility: hidden; }
+  .reg-name small {
+    grid-column: 1 / -1;
+    display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis;
+    font: 650 8.5px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  }
+  .reg-div { position: relative; height: 12px; }
+  .reg-zero { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px;
+              background: var(--pace); opacity: .8; }
+  .reg-zero::after { content: "◆"; position: absolute; top: -10px; left: -4.5px;
+              font: 9px/1 var(--mono); color: var(--pace); }
+  .reg-track { position: absolute; inset: 2px 0; border-radius: 3px;
+              background: var(--surface); border: 1px solid var(--bezel); }
+  .reg-bar { position: absolute; top: 3px; bottom: 3px; border-radius: 2px; }
+  .reg-bar.side-hot { background: linear-gradient(90deg, color-mix(in oklab, var(--status-hot) 55%, transparent), var(--status-hot)); box-shadow: 0 0 8px rgba(255,138,91,.35); }
+  .reg-bar.side-cap { background: linear-gradient(90deg, color-mix(in oklab, var(--status-capped) 55%, transparent), var(--status-capped)); box-shadow: 0 0 8px rgba(255,81,103,.4); }
+  .reg-bar.side-bank { background: linear-gradient(270deg, color-mix(in oklab, var(--status-bank) 55%, transparent), var(--status-bank)); box-shadow: 0 0 8px rgba(67,183,207,.35); }
+  .reg-bar.side-even-r { background: var(--muted); opacity: .75; }
+  .reg-bar.side-even-l { background: var(--muted); opacity: .75; }
+  /* the deviation is percentage points, so it wears a % like every other read —
+     in the ledger's typography, the unit set back from the numeral */
+  .reg-val { font: 700 13px/1 var(--mono); text-align: right; white-space: nowrap; }
+  .reg-val small { font-size: .72em; color: var(--muted); font-weight: 600; }
+  .reg-row .state-chip { justify-self: end; }
+  /* the cursor says what a click on the frame does: in, then back out */
+  #ils { display: block; width: 100%; height: auto; overflow: visible; cursor: zoom-in; }
+  .deck.plot-theater #ils { cursor: zoom-out; }
+  .ils-frame { fill: var(--surface); stroke: var(--bezel); }
+  .ils-grid { stroke: var(--grid); stroke-width: 1; }
+  .ils-frame, .ils-grid, .ils-beam, .ils-beam-glow, .ils-axis, .ils-zone-label { pointer-events: none; }
+  /* The beam is the instrument's reference, not background decoration: make
+     its neutral gray read clearly underneath the colored series. */
+  .ils-beam-glow { stroke: var(--ink-2); stroke-width: 6; opacity: .13; filter: blur(3px); }
+  .ils-beam { stroke: var(--ink-2); stroke-width: 1.8; stroke-dasharray: 8 5; opacity: .95; }
+  .ils-zone-label { font: 620 10px var(--mono); letter-spacing: .16em; fill: var(--muted-2); }
+  .ils-axis { font: 10px var(--mono); fill: var(--muted-2); }
+  .ils-trail { fill: none; stroke-width: 1.6; opacity: .5; stroke-linecap: round; pointer-events: stroke; }
+  /* ── the source of the burn, said in the line art ──
+     A trail flown from another satellite RADIATES instead of sharpening: the
+     burn is real and in the pool, but the heat comes from another seat. The
+     glow is the trail's own hue at lower luminance (currentColor via drop-shadow)
+     — light, not a new hue, exactly as the rings answer it for the marks. A
+     trail flown only from this seat stays crisp. One flown from both (a shared
+     meter like Codex) both glows and keeps its full line: two facts, one stroke. */
+  .ils-trail[data-there="true"] { filter: drop-shadow(0 0 2.5px currentColor); }
+  .ils-trail[data-there="true"][data-here="false"] { opacity: .58; }
+  .ils-mark { pointer-events: all; }
+  /* A 7 DAY budget is a solid flight line + solid triangle. A 5 HOUR throttle
+     is a tight dotted line + hollow dashed circle. */
+  .ils-trail.weekly { stroke-dasharray: none; }
+  .ils-trail.session { stroke-dasharray: 1 2.2; opacity: .4; stroke-linecap: round; }
+  /* ── the two window classes, in shape ──
+     7 DAY = the budget: a solid disc. 5 HOUR = the throttle: a hollow dashed
+     triangle. (Shapes swapped 2026-08-15 by operator ruling; the classes are
+     named for what they MEAN rather than what they draw, so a future swap can
+     never leave a selector called `.ils-triangle` drawing a circle.) */
+  .ils-budget { stroke: var(--surface); stroke-width: 2; }
+  .ils-throttle { fill: none; stroke-width: 2; stroke-dasharray: 2 2.2;
+                  stroke-linecap: round; stroke-linejoin: round; }
+  /* the logged-in account's mark, said without spending a hue on it — a plain
+     ink ring, the same answer brightness gives in the ledger and the register */
+  .ils-mark .active-ring { fill: none; stroke: var(--ink); stroke-width: 1.1; opacity: .85; }
+  /* the same ring, said quieter: this account is flown from another satellite */
+  .ils-mark .remote-ring { fill: none; stroke: var(--muted); stroke-width: 1;
+    stroke-dasharray: 2 3; opacity: .7; }
+  /* ── the pooled mark ──
+     The pool is not an account, so it wears no hue and no family shape: a hollow
+     diamond in the ◆ ink the beam comparison already speaks in. It lands on the
+     same y = x beam as every other mark, because both of its coordinates are
+     means of coordinates that already live on it. */
+  .ils-pool { fill: none; stroke: var(--pace); stroke-width: 1.5;
+              stroke-linecap: round; opacity: .95; }
+  /* ── the pool's hit target ──
+     `pointer-events: all` on a <g> buys nothing: a group has no geometry of its
+     own, so hit testing falls through to the children — and every other mark on
+     this frame has a solid disc or triangle to catch the pointer while the pool
+     has ELEVEN 1.5px rays radiating from a centre. Landing on one is luck, which
+     made the pooled mark effectively unhoverable on the glass even though its
+     wiring was correct (operator, 2026-08-17). So the burst gets the same
+     invisible pad the projection endpoints use, sized just past the rays — 11 to
+     their 8.5, the radius the account rings already occupy, so it cannot reach
+     across and swallow a neighbour's mark. */
+  .ils-pool-hit { fill: transparent; stroke: transparent; pointer-events: all; }
+  .ils-pool-mark { pointer-events: all; }
+  .ils-pool-trail { fill: none; stroke: var(--pace); stroke-width: 1.1;
+    stroke-dasharray: 4 3; opacity: .38; pointer-events: stroke; }
+  .ils-pool-tag { font: 700 11px var(--mono); fill: var(--pace);
+    paint-order: stroke; stroke: var(--void); stroke-width: 3px; stroke-linejoin: round; }
+  /* the code letter, knocked out of the disc it rides — a named meter shares
+     its account's hue AND its 7 DAY shape, so this letter is the only thing on the
+     frame that separates "Alpha, all models" from "Alpha, Fable" */
+  .ils-special-code { font: 700 8px var(--mono); fill: var(--surface);
+    text-anchor: middle; pointer-events: none; }
+  .ils-mark.last-known { opacity: .72; }
+  .ils-mark.presumed { opacity: .5; }
+  .ils-mark.presumed .ils-budget, .ils-mark.presumed .ils-throttle { stroke-dasharray: 1.5 2; }
+  /* the note the frame shows when every switch under it is off — an empty frame
+     with no explanation reads as a broken instrument */
+  .ils-empty { font: 650 11px var(--mono); letter-spacing: .12em; fill: var(--muted-2);
+    text-anchor: middle; pointer-events: none; display: none; }
+  .ils-empty.showing { display: block; }
+  /* The anthropic-only hold recedes further than a selection does — a whole
+     class of series stepping back, not one row losing focus. It has to be
+     declared after every other opacity a trail or mark can carry (.session at
+     .4, .presumed at .5, .last-known at .72), or the ones already dim would
+     quietly refuse to step back at all — same specificity, last rule wins. */
+  .reg-row.solo-dimmed, .ils-trail.solo-dimmed, .ils-mark.solo-dimmed,
+  .ils-pool-trail.solo-dimmed, .ils-pool-mark.solo-dimmed { opacity: .2; }
+  /* ── a switched-off class ──
+     On the frame it is GONE, because the whole point of the switch is a frame with
+     less on it; in the register it only recedes, because the register is a family
+     roll-call that must list every model whatever the plot is showing — and
+     because a row that vanished would move every row under it. `display` beats
+     opacity outright, so this needs no ordering against the dims above; the
+     register half does, and is last. */
+  .ils-trail.facet-off, .ils-mark.facet-off, .selection-reticle.facet-off,
+  .ils-pool-trail.facet-off, .ils-pool-mark.facet-off { display: none; }
+  .reg-row.facet-off { opacity: .25; }
+  /* the register key is the plot's meter badge (see badgeSVG) — no swatch */
+  .reg-row .provider-key.badge-key, .reg-row.session .provider-key.badge-key {
+    width: 17px; height: 17px; background: none; box-shadow: none; border: 0; border-radius: 0;
+  }
+  .badge-key .meter-badge { display: block; overflow: visible; }
+  .meter-badge circle, .meter-badge polygon { fill: var(--void); stroke: var(--acc); stroke-width: 1.4; stroke-linejoin: round; }
+  .meter-badge.triangle polygon { stroke-dasharray: 2 1.6; }
+  .meter-badge text { fill: var(--acc); font: 800 8px var(--mono); text-anchor: middle; dominant-baseline: central; }
+  .ils-badge { fill: var(--void); stroke-width: 1.8; stroke-linejoin: round; }
+  .ils-badge-letter { font: 800 10px var(--mono); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+  /* the throttle wears the triangle now — drawn in borders because a dashed
+     outline cannot follow a clip-path, and shape alone already separates them */
+  .reg-row.session .provider-key {
+    background: none; box-shadow: none; border-radius: 0;
+    width: 0; height: 0; border-bottom: 10px solid var(--acc);
+    border-left: 5.5px solid transparent; border-right: 5.5px solid transparent;
+  }
+  .selection-reticle { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+  .selection-reticle.selection-selected { opacity: 1; }
+  .selection-reticle line { stroke: var(--ink-2); stroke-width: .7; opacity: .75; }
+  .selection-reticle .reticle-ring { fill: none; stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 2; }
+  /* ── the flight path ──
+     Where the window ends up at the rate it has burned so far. Red because the
+     thing it terminates at is the ceiling, and red is the one hue this page
+     already spends on capacity — the projection borrows the meaning of its
+     destination rather than inventing a colour of its own. Dotted throughout,
+     because none of it is a reading. */
+  /* The drawn line takes no pointer events at all: that is exactly what its
+     `-hit` companion exists for, and giving both a target meant the visible
+     stroke — which begins ON the mark — swallowed hovers meant for the mark. */
+  .selection-reticle .ils-projection {
+    fill: none; stroke: var(--status-capped); stroke-width: 1.45;
+    stroke-linecap: round; opacity: .92; pointer-events: none;
+  }
+  /* Density reads as recency: the further back a lens looks, the more air its
+     dots carry, so three forecasts leaving one mark are told apart by texture
+     rather than by reading three labels. The nearest is the exception at the end
+     of the ramp — drawn SOLID and bare, no dashes and no terminus symbol, because
+     it is the one a reader checks at a glance and ornament on a line that short
+     is just noise. (Operator, 2026-08-15.)
+     Keyed on RANK, not on the horizon's name: a throttle's three lenses are
+     1h/3h/total and a budget's are 6h/24h/total (operator, 2026-08-17), and the
+     ramp is about how far back a lens reaches relative to its own window — never
+     about how many hours it happens to name. */
+  .selection-reticle .ils-projection--far { stroke-dasharray: 1 9; opacity: .82; }
+  .selection-reticle .ils-projection--mid { stroke-dasharray: 2 4.5; opacity: .88; }
+  .selection-reticle .ils-projection--near { stroke-dasharray: none; opacity: 1; stroke-width: 1.7; }
+  /* The visible forecast is deliberately thin; this transparent companion is
+     the forgiving hit target that lets a reader travel along the line without
+     losing the selected path. */
+  .selection-reticle .ils-projection-hit {
+    fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke;
+  }
+  /* A reticle is invisible until its own mark is selected — but `pointer-events`
+     does not care about opacity, so every mark's forecast paths were capturing
+     the pointer across the whole frame and the marks underneath could not be
+     hovered at all. They become pointable exactly when they become visible. */
+  .selection-reticle:not(.selection-selected) .ils-projection,
+  .selection-reticle:not(.selection-selected) .ils-projection-hit,
+  .selection-reticle:not(.selection-selected) .ils-projection-dot,
+  .selection-reticle:not(.selection-selected) .ils-projection-dot-hit {
+    pointer-events: none;
+  }
+  /* inert, like the drawn line: interaction belongs to the dedicated hit
+     targets, which are only created where they cannot cover the mark */
+  .selection-reticle .ils-projection-dot {
+    fill: var(--status-capped); stroke: var(--surface); stroke-width: 1.2;
+    pointer-events: none;
+  }
+  .selection-reticle .ils-projection-dot-hit {
+    fill: transparent; stroke: transparent; pointer-events: all;
+  }
+  .selection-reticle .reticle-readout {
+    fill: var(--ink); font: 700 8.5px var(--mono); letter-spacing: .04em;
+    paint-order: stroke; stroke: var(--void); stroke-width: 3px; stroke-linejoin: round;
+  }
+  .ils-tag { font: 660 11px var(--mono); }
+  .ils-tag-pct { font: 720 11px var(--mono); }
+  .dev-hot { color: var(--status-hot); } .dev-bank { color: var(--status-bank); }
+  .dev-even { color: var(--muted); } .dev-cap { color: var(--status-capped); }
+
+  /* footer */
+  .deckfoot {
+    display: flex; justify-content: space-between; align-items: flex-end; gap: 18px; padding: 8px 22px 14px;
+    color: var(--muted); font: 11px/1.5 var(--mono);
+  }
+  .deckfoot-meta { text-align: right; }
+  .trail-provenance { color: var(--ink-2); margin-bottom: 2px; }
+  .legend { display: flex; gap: 15px; flex-wrap: wrap; }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 3px; border-radius: 2px; background: var(--c); }
+  .sw.diamond { width: auto; height: auto; background: none; color: var(--pace); font: 10px/1 var(--mono); }
+
+  /* tooltip */
+  .tip {
+    position: fixed; z-index: 40; pointer-events: none; opacity: 0; transition: opacity .12s;
+    background: #131b28; border: 1px solid var(--bezel-bright); border-radius: 7px;
+    padding: 9px 11px; font: 11.5px/1.6 var(--mono); color: var(--ink-2);
+    box-shadow: 0 16px 40px rgba(0,0,0,.5); max-width: 300px;
+  }
+  .tip b { color: var(--ink); } .tip.show { opacity: 1; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bar-fill { transition: none; } .live-chip i { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true">◆</div>
+    <div>
+      <div class="brand-name">Glideslope</div>
+      <div class="kicker brand-sub">Detailed position</div>
+    </div>
+  </div>
+  <span class="badge" id="deck-badge">LIVE</span>
+  <div class="mast-spacer"></div>
+  <div class="reload-block">
+    <button class="reload-control" id="detail-reload" type="button"
+      title="Reload this page to pick up whatever the 5-minute sampler last built">RELOAD</button>
+    <span class="reload-note">LAST SAMPLER BUILD</span>
+  </div>
+  <div class="reload-block">
+    <a class="reload-control" href="history.html"
+      title="Every meter on a real clock — scroll back through the weeks">HISTORY</a>
+    <span class="reload-note">THE SAME PLOT, UNROLLED</span>
+  </div>
+  <div class="data-age num">
+    gauge age
+    <b id="gauge-age">—</b>
+  </div>
+</header>
+
+<main class="deck" id="deck"></main>
+
+<footer class="deckfoot">
+  <div class="legend">
+    <span class="legend-item"><i class="sw" style="--c: var(--alpha)"></i>Claude · Alpha</span>
+    <span class="legend-item"><i class="sw" style="--c: var(--bravo)"></i>Claude · Bravo</span>
+    <span class="legend-item"><i class="sw" style="--c: var(--charlie)"></i>Claude · Charlie</span>
+    <span class="legend-item"><i class="sw" style="--c: var(--delta)"></i>Claude · Delta</span>
+    <span class="legend-item"><i class="sw" style="--c: var(--codex)"></i>Codex</span>
+    <span class="legend-item"><i class="sw" style="--c: var(--kimi)"></i>Kimi</span>
+    <span class="legend-item"><i class="sw" style="--c: var(--grok)"></i>Grok</span>
+    <span class="legend-item"><i class="sw" style="--c: var(--router)"></i>OpenRouter</span>
+    <span class="legend-item"><i class="sw diamond">◆</i>even-burn pace</span>
+    <span class="legend-item"><i class="sw" style="--c: var(--status-capped)"></i>capacity</span>
+  </div>
+  <div class="deckfoot-meta">
+    <div class="trail-provenance" id="trail-provenance">LIVE · sample history</div>
+    <div>fill = used · ◆ = where even burn would put you · gap between them = your deviation<span id="tz-label"></span></div>
+  </div>
+</footer>
+
+<div class="tip" id="tip"></div>
+
+<script>
+(() => {
+"use strict";
+const HOUR = 3_600_000, DAY = 24 * HOUR, MIN = 60_000;
+const RELOAD_MS = 60_000;
+const PAGE_OPENED_AT = Date.now();
+
+/* ── the three forecasts, scaled to the window they forecast ───────────────────
+   Each class gets a baseline plus two recent-rate lenses: the baseline is the
+   since-window-start projection, and the recent lenses only appear when the page
+   holds a real earlier observation inside that span.
+
+   The lookbacks are per CLASS because one set cannot serve both (operator,
+   2026-08-17). A 5 HOUR window is 300 minutes long: a 24h lookback reaches back
+   five whole windows past its own start, so the "rate" it measures was never a
+   rate inside the window being forecast — it was arithmetic on a number that had
+   already reset. And an hour of a 7 DAY budget is 0.6% of the window: a sliver
+   too short to say anything, drawn as a stub too short to read.
+
+   So a throttle is read in hours (1h, 3h, total) and a budget in days (6h, 24h,
+   total). Three lines each, and `rank` — not the id — carries the density ramp,
+   so both classes wear the same far/mid/near vocabulary and adding a class never
+   needs a new CSS rule. */
+const PROJECTION_HORIZONS = {
+  session: [
+    { id: "start", rank: "far", lookback: null },
+    { id: "3h", rank: "mid", lookback: 3 * HOUR },
+    { id: "1h", rank: "near", lookback: HOUR },
+  ],
+  weekly: [
+    { id: "start", rank: "far", lookback: null },
+    { id: "24h", rank: "mid", lookback: 24 * HOUR },
+    { id: "6h", rank: "near", lookback: 6 * HOUR },
+  ],
+};
+/* a named meter and the pool are both 7 DAY budgets, so they read as one */
+const horizonsFor = mark => PROJECTION_HORIZONS[mark.session ? "session" : "weekly"];
+
+/* Injected by deck-src/build.py — aliases/emails are stripped at build time. */
+const SNAP = /*__SNAPSHOT__*/null/*__END_SNAPSHOT__*/;
+/* Every snapshot string that lands in markup goes through esc(): labels, plans,
+   satellite names and notes come from config files and provider responses, and
+   none of them is markup. Numbers formatted here (toFixed, fmtDur) need none. */
+const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+})[char]);
+
+document.documentElement.dataset.reloadMs = String(RELOAD_MS);
+document.documentElement.dataset.reloadOnReturn = "true";
+
+function freshSnapshotURL(now = Date.now()) {
+  const next = new URL(location.href);
+  next.searchParams.set("snapshot", String(now));
+  next.searchParams.set("facets", facetsParam(plotFacets));   // a minute-ly reload must not undo a choice
+  next.searchParams.set("anthropic", anthropicOnly ? "1" : "0");
+  next.searchParams.set("expanded", plotExpanded ? "1" : "0");   // nor close the frame
+  next.searchParams.set("theater", plotTheater ? "1" : "0");     // nor drop the curtain
+  return next.href;
+}
+function reloadSnapshot() {
+  location.replace(freshSnapshotURL());
+}
+setTimeout(reloadSnapshot, RELOAD_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && Date.now() - PAGE_OPENED_AT > 5_000) reloadSnapshot();
+});
+
+const deck = document.getElementById("deck");
+if (!SNAP) {
+  deck.innerHTML = "<p style='padding:40px;font:13px ui-monospace'>No snapshot injected — run <b>python3 views/deck-src/build.py</b></p>";
+  return;
+}
+
+/* ── model ─────────────────────────────────────────────────────────────── */
+/* every account names its own token — an account missing here would fall
+   through to OpenRouter's purple and quietly impersonate another provider */
+/* Pool is not an account, and it is here for exactly the reason the rule above
+   exists: it renders as a register row and a mark like everything else, and
+   without a token of its own it would fall through to OpenRouter's purple. It
+   wears the ◆ ink, which is what the pool has always been drawn in. */
+const COLOR_KEYS = { Alpha: "alpha", Bravo: "bravo", Charlie: "charlie", Delta: "delta",
+                     Codex: "codex", Kimi: "kimi", Grok: "grok", OpenRouter: "router",
+                     Pool: "pace" };
+const ck = d => COLOR_KEYS[d] || "router";
+const prettyLabel = s => (s || "").replace("GPT-5.3-Codex-Spark", "Spark");
+const pname = p => p.provider === p.display ? p.display : `${p.provider} · ${p.display}`;
+const familyFor = provider => provider === "Claude" ? "Anthropic" : (provider || "Other");
+const familyRank = family => ({ Anthropic: 0, Codex: 1, Kimi: 2, Grok: 3 }[family] ?? 4);
+
+/* ── named meters ─────────────────────────────────────────────────────────────
+   A named meter is a per-model quota riding inside its account's own 7 DAY
+   clock: same window class, same account hue, a different budget. That makes it
+   the one thing on this frame neither shape nor colour can separate, so each one
+   is given a ONE-LETTER code and its own switch under the plot.
+
+   This list is the whole registration. An entry here earns a switch (on by
+   default since 2026-09-11 — Fable is the binding budget, not a footnote), a code
+   letter knocked out of its mark, a register row that names which model it is,
+   and a place in the meters the register rolls through — nothing downstream
+   names Fable.
+
+   GPT-5.3-Codex-Spark is deliberately NOT here: the operator does not fly it,
+   and it carries no reset clock, so it stays a line in the full ledger and never
+   reaches the approach frame. Adding it later is adding one object. */
+const NAMED_METERS = [
+  { meter: "weekly_fable", code: "F", model: "Fable" },
+];
+const NAMED_METER_BY_ID = new Map(NAMED_METERS.map(m => [m.meter, m]));
+
+/* ── meter badges ──
+   The account's letter inside an outline shape (operator, 2026-09-14): the
+   OUTLINE says which window, the LETTER says whose. Circle = 7 DAY budget,
+   triangle = 5 HOUR throttle, diamond = Fable — the same badge the popup preview
+   and the CLI tables wear. One geometry feeds the plot and the register. */
+const BADGE_LETTERS = { Alpha: "A", Bravo: "B", Charlie: "C", Delta: "D", Codex: "X", Kimi: "K", Grok: "G" };
+const badgeLetter = display => BADGE_LETTERS[display] || String(display || "?").charAt(0).toUpperCase();
+const badgeShape = w => w.id === "weekly_fable" ? "diamond" : w.minutes === 300 ? "triangle" : "circle";
+/* `size` is the circle's radius; the diamond and triangle are scaled so the
+   letter has the same clear room inside each. Returns [tag, attrs, letterDy]. */
+function badgeOutline(shape, cx, cy, size) {
+  if (shape === "circle") return ["circle", { cx, cy, r: size }, 0];
+  if (shape === "diamond") {
+    const d = size * 1.38;
+    return ["polygon", { points: `${cx},${cy - d} ${cx + d},${cy} ${cx},${cy + d} ${cx - d},${cy}` }, 0];
+  }
+  const top = cy - size * 1.25, bottom = cy + size * .95, half = size * 1.2;
+  return ["polygon", { points: `${cx},${top} ${cx + half},${bottom} ${cx - half},${bottom}` }, size * .22];
+}
+/* the plot key: the bare outline, no letter — the letter is always an account */
+function badgeKeySVG(shape, px = 14) {
+  const [tag, attrs] = badgeOutline(shape, px / 2, px / 2, px * .36);
+  return `<svg class="meter-badge ${shape}" viewBox="0 0 ${px} ${px}" width="${px}" height="${px}" style="--acc: var(--muted); overflow: visible"`
+    + ` aria-hidden="true"><${tag} ${Object.entries(attrs).map(([k, v]) => `${k}="${typeof v === "number" ? v.toFixed(2) : v}"`).join(" ")}/></svg>`;
+}
+function badgeSVG(p, w, px = 17) {
+  const c = px / 2;
+  const [tag, attrs, dy] = badgeOutline(badgeShape(w), c, c, px * .4);
+  const shape = `<${tag} ${Object.entries(attrs).map(([k, v]) => `${k}="${typeof v === "number" ? v.toFixed(2) : v}"`).join(" ")}/>`;
+  return `<svg class="meter-badge ${badgeShape(w)}" viewBox="0 0 ${px} ${px}" width="${px}" height="${px}" aria-hidden="true">`
+    + shape + `<text x="${c}" y="${(c + dy).toFixed(2)}">${esc(badgeLetter(p.display))}</text></svg>`;
+}
+
+const windowClass = w => w.minutes === 300 ? "5 HOUR" : "7 DAY";
+/* the class word is chipped wherever it is named, so the eye sorts budgets
+   from throttles before it reads either — the scope beside it stays prose */
+const wclass = (label, session) =>
+  `<span class="wclass ${session ? "wclass--session" : "wclass--week"}">${label}</span>`;
+const windowChip = w => wclass(windowClass(w), w.minutes === 300);
+/* the registered named meters answer for themselves; Spark is named here
+   because it still appears in the full ledger, which is not the frame's business */
+const windowScope = w => NAMED_METER_BY_ID.get(w.id)?.model
+  || (w.id === "codex_bengalfox" ? "Spark"
+  : /all models/i.test(w.label || "") ? "all models" : "");
+const windowDisplayLabel = w => `${windowChip(w)}${windowScope(w) ? ` · ${windowScope(w)}` : ""}`;
+/* the countdown is a column of its own now, so it carries no leading space —
+   the gap between cells is the separation, and a space would move its origin.
+   A window with no clock, or one whose clock already ran out, has no countdown
+   to give: the column says so with a dash rather than going blank, which in a
+   fixed column would read as though the row simply stopped early. */
+const resetCountdown = w => {
+  const remaining = leftMs(w);
+  return w.resets && remaining != null && remaining >= 0
+    ? `(${fmtDur(remaining)})` : `<span class="nil">—</span>`;
+};
+/* three cells rather than one run — see .reg-name. Both classes put their chip
+   at the same origin, and the clock cell is always emitted, so the countdown
+   starts at one x whether or not there is one to print */
+/* the window half of a tooltip key: the meter id is not unique on its own */
+const winKeyPart = w => String(w.minutes ?? "");
+const winKey = (p, w) => `${p.display}/${w.id}/${winKeyPart(w)}`;
+const registerName = (p, w) => {
+  const namedMeter = NAMED_METER_BY_ID.get(w.id);
+  return `<span class="reg-acct">${esc(p.display)}</span>` +
+    `<span class="reg-win">${windowChip(w)}${
+      namedMeter ? `<i class="reg-code">${namedMeter.code}</i>` : ""}</span>` +
+    `<span class="reg-clock">${resetCountdown(w)}</span>`;
+};
+/* the frame's gutter has room to spell the model out, so it does — the letter is
+   the register's economy, not a vocabulary of its own */
+const shortName = w =>
+  NAMED_METER_BY_ID.has(w.id) ? NAMED_METER_BY_ID.get(w.id).model.toUpperCase()
+  : w.minutes === 300 ? "5 HOUR"
+  : "7 DAY";
+
+/* ── the Claude burst ──
+   The pooled read is not an account and not a provider row: it is all of Claude,
+   summed. So it wears Claude's own mark rather than a shape from this plot's
+   vocabulary — nothing else on the frame can be mistaken for it, and no hue is
+   spent saying so. Eleven rays at alternating lengths, drawn as round-capped
+   spokes so it survives being 8px across on a fixed panel.
+   `mk` is passed in because each surface owns its own element factory. */
+const CLAUDE_RAYS = 11;
+const CLAUDE_RAY_LENGTHS = [1, .62, .86, .62, 1, .7, .92, .62, 1, .7, .86];
+function claudeBurst(mk, cx, cy, radius, parent) {
+  for (let i = 0; i < CLAUDE_RAYS; i++) {
+    const angle = (i / CLAUDE_RAYS) * Math.PI * 2 - Math.PI / 2;
+    const inner = radius * .17, outer = radius * CLAUDE_RAY_LENGTHS[i];
+    mk("line", {
+      x1: (cx + Math.cos(angle) * inner).toFixed(2),
+      y1: (cy + Math.sin(angle) * inner).toFixed(2),
+      x2: (cx + Math.cos(angle) * outer).toFixed(2),
+      y2: (cy + Math.sin(angle) * outer).toFixed(2),
+      class: "ils-pool",
+    }, null, parent);
+  }
+}
+
+/* The same burst as markup, for a table row's key. Kept beside the SVG version
+   so the plot and the table can never drift into different marks. */
+function claudeBurstSVG(size) {
+  const c = size / 2, r = size / 2;
+  let rays = "";
+  for (let i = 0; i < CLAUDE_RAYS; i++) {
+    const angle = (i / CLAUDE_RAYS) * Math.PI * 2 - Math.PI / 2;
+    const inner = r * .17, outer = r * CLAUDE_RAY_LENGTHS[i] * .92;
+    rays += `<line x1="${(c + Math.cos(angle) * inner).toFixed(2)}"`
+          + ` y1="${(c + Math.sin(angle) * inner).toFixed(2)}"`
+          + ` x2="${(c + Math.cos(angle) * outer).toFixed(2)}"`
+          + ` y2="${(c + Math.sin(angle) * outer).toFixed(2)}"/>`;
+  }
+  return `<svg class="pool-glyph" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}"`
+       + ` aria-hidden="true">${rays}</svg>`;
+}
+
+const providers = SNAP.accounts.map(a => ({
+  ...a,
+  dormant: Boolean(a.dormant),
+  dormantSince: a.dormant_since || null,
+  windows: a.limits.map(l => ({
+    id: l.meter_id, label: prettyLabel(l.label), pct: l.used_percent,
+    resets: l.resets_at, minutes: l.window_minutes, anchored: l.anchored,
+    presumed: Boolean(l.presumed), rolledPeriods: l.rolled_periods || 0,
+  })),
+}));
+/* ── a dormant account ──
+   No active subscription: the core never sends logins/active for it, and its
+   limits carry no usable percent. It keeps exactly one dimmed row wherever
+   this page would otherwise give it several — the plot, the register, the
+   full ledger — and never plots, never pools, never carries a named-meter row
+   of its own (Fable/Spark are noise for an account nobody can spend from). */
+const activeProviders = providers.filter(p => !p.dormant);
+const dormantProviders = providers.filter(p => p.dormant);
+
+/* ── the fleet's logins ──
+   An account is logged in ON a named satellite, and more than one can hold
+   one at a time (a laptop here, a desktop at the office). HERE is the login that
+   governs what the next prompt on this screen costs; THERE is a login held
+   elsewhere in the pool. Any provider that declares its holders wears them —
+   Codex is one account signed in on several machines, and its one shared meter
+   is every one of those machines' burn. The Claude-only fallback below keeps a
+   snapshot built before satellites existed rendering correctly. */
+const LOCAL_SAT = SNAP.local_satellite || "";
+const loginsOf = p => (p.logins && p.logins.length) ? p.logins
+  : p.provider !== "Claude" ? []
+  : (p.active && LOCAL_SAT) ? [LOCAL_SAT] : (p.active ? ["here"] : []);
+const isHere = p => LOCAL_SAT ? loginsOf(p).includes(LOCAL_SAT) : Boolean(p.active);
+const isThere = p => loginsOf(p).some(s => s !== LOCAL_SAT);
+const loginChips = (p, cls = "login-chip") => loginsOf(p).map(s =>
+  (LOCAL_SAT ? s === LOCAL_SAT : true)
+    ? `<span class="${cls}">● ${esc(s)}</span>`
+    : `<span class="${cls} remote">◦ ${esc(s)}</span>`).join("");
+/* the gutters are only legible if something says what they mean — once, where
+   they first appear, and only naming satellites that actually hold a login */
+function gutterKey() {
+  const here = providers.some(isHere), there = new Set();
+  for (const p of providers) for (const s of loginsOf(p)) if (s !== LOCAL_SAT) there.add(s);
+  const parts = [];
+  if (here && LOCAL_SAT) parts.push(`<b>┃</b> ${esc(LOCAL_SAT)}`);
+  if (there.size) parts.push(`╎ ${[...there].map(esc).join(" · ")}`);
+  return parts.length ? `<span class="gutter-key">· ${parts.join("  ")}</span>` : "";
+}
+
+/* A window whose reset passed has already been advanced to the live one upstream
+   (glideslope.roll_forward_windows). Two outcomes reach this page, and they are
+   different claims that must never render alike:
+     presumed — zeroed because no client here could have spent it (a Claude
+                account nobody is logged into). A presumption, always marked.
+     unread   — the clock is known, the burn is not. No number at all. */
+const unread = w => w.pct == null && w.rolledPeriods > 0 && Boolean(w.resets);
+const idleWin = w => w.pct == null && !unread(w);
+
+/* ── the switches under the frame ─────────────────────────────────────────────
+   The plot used to fly ONE weekly lens at a time because Alpha's all-models dot
+   and Alpha's Fable dot are the same colour on the same frame, and telling them
+   apart by label alone is a puzzle. The code letter answers that (see
+   NAMED_METERS), so the choice is no longer exclusive: each series class is an
+   independent switch, latched by click and previewed by hover.
+
+   A facet id is the meter id for a named meter and the class name otherwise,
+   so a switch never needs a table mapping it back to the marks it commands. The
+   plot draws every facet on every render — the switches only decide what is on
+   the glass — which is what lets a hover reveal a class that is switched off and
+   costs nothing when it is released. */
+const PLOT_FACETS = [
+  { id: "weekly", label: "7 DAY", on: true, colour: "window-week",
+    hint: "The weekly budgets: every account's 7 DAY window, plus the Claude pool" },
+  { id: "session", label: "5 HOUR", on: true, colour: "window-session",
+    hint: "The five-hour throttles — a ceiling you wait out, never a budget" },
+  ...NAMED_METERS.map(m => ({
+    id: m.meter, label: m.model.toUpperCase(), on: true, colour: "ink-2",
+    hint: `${m.model}'s own weekly budget, inside each account's 7 DAY clock — `
+        + `marked ${m.code} on the frame`,
+  })),
+];
+const CLASS_FACETS = new Set(PLOT_FACETS.map(f => f.id));
+/* the meters the register rolls through: the two broad classes every provider
+   carries, plus one per registered named meter */
+const REGISTER_METERS = new Set(["session", "weekly_all", "codex",
+                                 ...NAMED_METERS.map(m => m.meter)]);
+const facetOf = w => (w.minutes || 0) === 300 ? "session"
+  : NAMED_METER_BY_ID.has(w.id) ? w.id : "weekly";
+
+/* .v2 (2026-09-11): Fable is on by default now; a latch stored under the old key must not keep hiding it */
+const PLOT_FACETS_KEY = "glideslope.deck.plotFacets.v2";
+const ANTHROPIC_ONLY_KEY = "glideslope.deck.anthropicOnly";
+const DEFAULT_FACETS = PLOT_FACETS.filter(f => f.on).map(f => f.id);
+/* An explicitly empty set is a real choice — "show me nothing but the beam" — so
+   it has to survive the round trip, which an empty string cannot. `-` is the
+   spelling for it, and an unparseable value falls back to the defaults. */
+function parseFacets(raw) {
+  if (raw == null) return null;
+  if (raw === "-") return [];
+  const ids = raw.split(",").filter(id => CLASS_FACETS.has(id));
+  return ids.length ? ids : null;
+}
+function initialFacets() {
+  const fromURL = parseFacets(new URL(location.href).searchParams.get("facets"));
+  if (fromURL) return new Set(fromURL);
+  try {
+    const stored = parseFacets(localStorage.getItem(PLOT_FACETS_KEY));
+    if (stored) return new Set(stored);
+  } catch { /* file:// storage may be unavailable; the URL param still holds */ }
+  return new Set(DEFAULT_FACETS);
+}
+function initialAnthropicOnly() {
+  const fromURL = new URL(location.href).searchParams.get("anthropic");
+  if (fromURL === "1" || fromURL === "0") return fromURL === "1";
+  try {
+    const stored = localStorage.getItem(ANTHROPIC_ONLY_KEY);
+    if (stored === "1" || stored === "0") return stored === "1";
+  } catch { /* file:// storage may be unavailable; the URL param still holds */ }
+  return false;
+}
+const facetsParam = set => set.size ? [...set].join(",") : "-";
+
+/* The approach is the instrument the page is for, so it flies expanded until the
+   operator says otherwise — and that choice outlives the reload the same way the
+   lens does, or the timer would be closing the plot every minute. */
+const PLOT_EXPANDED_KEY = "glideslope.deck.plotExpanded";
+function initialPlotExpanded() {
+  const fromURL = new URL(location.href).searchParams.get("expanded");
+  if (fromURL === "1" || fromURL === "0") return fromURL === "1";
+  try {
+    const stored = localStorage.getItem(PLOT_EXPANDED_KEY);
+    if (stored === "1" || stored === "0") return stored === "1";
+  } catch { /* file:// storage may be unavailable; the URL param still holds */ }
+  return true;
+}
+
+/* The theater — the frame alone, blown up to the whole glass. A scene the
+   operator enters on purpose, so unlike the expanded frame it defaults OFF;
+   once raised it rides the minute-ly reload the same way every latched choice
+   does, or the timer would drop the curtain mid-show. */
+const PLOT_THEATER_KEY = "glideslope.deck.plotTheater";
+function initialPlotTheater() {
+  const fromURL = new URL(location.href).searchParams.get("theater");
+  if (fromURL === "1" || fromURL === "0") return fromURL === "1";
+  try {
+    const stored = localStorage.getItem(PLOT_THEATER_KEY);
+    if (stored === "1" || stored === "0") return stored === "1";
+  } catch { /* file:// storage may be unavailable; the URL param still holds */ }
+  return false;
+}
+
+let NOW = Date.now();
+let firstRender = true;
+let plotExpanded = initialPlotExpanded();
+let plotTheater = initialPlotTheater();
+function setPlotTheater(on) {
+  plotTheater = Boolean(on);
+  try { localStorage.setItem(PLOT_THEATER_KEY, plotTheater ? "1" : "0"); }
+  catch { /* URL param still holds */ }
+  render();
+}
+/* Escape always hands the glass back — the one exit that needs no aim */
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && plotTheater) setPlotTheater(false);
+});
+/* what is latched, and — separately — what the pointer is borrowing right now.
+   A preview never writes the latch, so releasing it restores the frame exactly. */
+let plotFacets = initialFacets();
+let anthropicOnly = initialAnthropicOnly();
+let facetPreview = null;        // a class facet id, held only while hovered
+let anthropicPreview = false;
+const facetVisible = facet =>
+  facetPreview ? facet === facetPreview : plotFacets.has(facet);
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const endOf = w => w.resets ? Date.parse(w.resets) : null;
+const startOf = w => w.resets && w.minutes ? Date.parse(w.resets) - w.minutes * MIN : null;
+const rolled = w => endOf(w) != null && endOf(w) < NOW;
+const leftMs = w => endOf(w) == null ? null : endOf(w) - NOW;
+function paceOf(w) {
+  const s = startOf(w), e = endOf(w);
+  if (s == null || w.pct == null) return null;
+  return clamp((NOW - s) / (e - s) * 100, 0, 100);
+}
+function needMultiple(w) {
+  const lm = leftMs(w);
+  if (lm == null || lm <= 0 || w.pct == null || !w.minutes) return null;
+  return ((100 - w.pct) / 100 * w.minutes * MIN) / lm;
+}
+function exhaustAt(w) {
+  const s = startOf(w);
+  if (s == null || w.pct == null || w.pct >= 100 || rolled(w)) return null;
+  const rate = w.pct / (NOW - s);
+  if (rate <= 0) return null;
+  const t = NOW + (100 - w.pct) / rate;
+  return t < endOf(w) ? t : null;
+}
+
+/* ── the pool as one more mark ────────────────────────────────────────────────
+   Not an account and not a provider row: the Anthropic weeklies summed. It is
+   modelled as a synthetic account plus a synthetic window so everything
+   downstream — the register row, the reticle readout, the four forecasts, the
+   tooltip — is the code that already draws an account rather than a second
+   implementation of it that can drift from the first.
+
+   The clock is the MEAN of its components' clocks, and with equal spans that is
+   exactly the window the ◆ already plots: mean phase = (now − mean start) / span,
+   and mean start = mean reset − span. So paceOf(POOL_WINDOW) reproduces
+   pool.pace_percent, and a countdown drawn off this clock cannot contradict the ◆
+   sitting beside it. The next ACTUAL reset — a real event, and the one that
+   changes what the pool is made of — is named in the tooltip rather than on the
+   row, because it is not this window's end. */
+const POOL_MARK = "Pool/pool";
+/* One builder for both pools — the all-models pool and the Fable pool are the
+   same statement over a different meter. Dormant accounts never enter a pool
+   (the core already excludes them from `pool.count`/`pool.accounts`), and a
+   dormant component's window would fail the finite-date filter below anyway. */
+function buildPoolWindow(pool, meterId) {
+  if (!pool) return null;
+  const parts = activeProviders
+    .filter(p => p.provider === "Claude" && (pool.accounts || []).includes(p.display))
+    .map(p => p.windows.find(w => w.id === meterId))
+    .filter(w => w && w.minutes && w.resets && Number.isFinite(Date.parse(w.resets)));
+  /* a mean missing a term is a different, smaller number wearing the same axis */
+  if (parts.length !== pool.count) return null;
+  const minutes = parts.reduce((sum, w) => sum + w.minutes, 0) / parts.length;
+  const resets = parts.reduce((sum, w) => sum + Date.parse(w.resets), 0) / parts.length;
+  /* the Fable pool keeps meterId "weekly_fable" as its own id (rather than a
+     synthetic "pool" id like the all-models pool) so every piece of code that
+     already knows how to mark a named meter — the F code, the Fable facet
+     switch, the register's named-meter lookup — just works unmodified. */
+  return {
+    id: meterId === "weekly_fable" ? "weekly_fable" : "pool",
+    label: meterId === "weekly_fable" ? "Weekly · pooled · Fable" : "Weekly · pooled",
+    pct: pool.used_percent,
+    resets: new Date(resets).toISOString(), minutes,
+    anchored: true, presumed: false, rolledPeriods: 0,
+  };
+}
+const POOL_WINDOW = buildPoolWindow(SNAP.pool, "weekly_all");
+/* a floor is the pool's own kind of staleness, and it is the honest thing to
+   carry: a stale component's used can only have gone up since it was read */
+const POOL_PROVIDER = POOL_WINDOW ? {
+  provider: "Claude", display: "Pool", plan: "", active: false, logins: [], dormant: false,
+  stale: Boolean(SNAP.pool.floor), observed_at: null, windows: [POOL_WINDOW],
+} : null;
+const POOL_FABLE_WINDOW = buildPoolWindow(SNAP.pool_fable, "weekly_fable");
+const POOL_FABLE_PROVIDER = POOL_FABLE_WINDOW ? {
+  provider: "Claude", display: "Pool", plan: "", active: false, logins: [], dormant: false,
+  stale: Boolean(SNAP.pool_fable.floor), observed_at: null, windows: [POOL_FABLE_WINDOW],
+} : null;
+
+/* Return a forward projection for one burn-rate lens. The x axis is already
+   elapsed percent, so each line's physical length is its forecast duration:
+   the measured time for START, or the named recent horizon. Recent lenses
+   require an actual earlier sample in their span; a single current read is not
+   evidence of a short-term rate. */
+function projectionFor(horizon, mark) {
+  const w = mark.w;
+  if (mark.presumed || mark.lastKnown || unread(w) || rolled(w)
+      || mark.u == null || mark.u <= 0 || mark.u >= 99.5
+      || mark.e == null || mark.e <= 0.1 || !w.minutes) return null;
+
+  let baseE = 0, baseU = 0, baseAt = startOf(w);
+  if (horizon.lookback != null) {
+    const cutoff = NOW - horizon.lookback;
+    const samples = (mark.samples || [])
+      .filter(sample => Number.isFinite(sample.at) && sample.at >= cutoff
+        && sample.at < NOW - 1_000 && sample.e >= 0 && sample.e < mark.e
+        && sample.u != null && sample.u >= 0 && sample.u <= mark.u)
+      .sort((a, b) => a.at - b.at);
+    if (!samples.length) return null;
+    const first = samples[0];
+    baseE = first.e;
+    baseU = first.u;
+    baseAt = first.at;
+  }
+
+  const elapsed = mark.e - baseE;
+  const used = mark.u - baseU;
+  /* ── a flat rate is a rate ──
+     `used > 0` used to be required here, which quietly deleted the forecast for
+     any account that had not moved: an account that sat at one reading for a
+     day drew nothing at all in its 6h and 24h lenses, leaving one line on the
+     frame and no way to tell "burning slowly" from "not burning". Zero is the
+     most legible reading this instrument has — it lands the window exactly where
+     it already is — so only a NEGATIVE change is rejected now, which cannot
+     happen anyway (the sample filter caps the baseline at the mark's own value)
+     and is kept as a guard rather than an assumption.
+     A zero slope makes `ceilingE` below Infinity, which `Math.min` handles, and
+     `endU` collapses to `mark.u`: a flat line, forward to the horizon. */
+  if (!(elapsed > 0.05) || !(used >= 0) || !Number.isFinite(baseAt)) return null;
+  const slope = used / elapsed;
+  if (!(slope >= 0) || !Number.isFinite(slope)) return null;
+
+  const windowMs = endOf(w) - startOf(w);
+  const remainingMs = endOf(w) - NOW;
+  const measuredMs = horizon.lookback == null ? NOW - startOf(w) : horizon.lookback;
+  const forecastMs = Math.min(measuredMs, remainingMs);
+  if (!(windowMs > 0) || !(forecastMs > 0)) return null;
+  const requestedEndE = Math.min(100, mark.e + forecastMs / windowMs * 100);
+  const ceilingE = mark.e + (100 - mark.u) / slope;
+  const endE = Math.min(requestedEndE, ceilingE, 100);
+  const endU = Math.min(100, mark.u + slope * (endE - mark.e));
+  const forwardMs = (endE - mark.e) / 100 * windowMs;
+  if (!(forwardMs > 0)) return null;
+  return {
+    horizon,
+    endE,
+    endU,
+    requestMs: measuredMs,
+    forwardMs,
+  };
+}
+function stateOf(w) {
+  /* the window rolled and nothing has read the new one: the clock is real, the
+     burn is not knowable. Distinct from NOT STARTED, which claims 0 was spent. */
+  if (unread(w)) return { cls: "state-idle", label: "UNREAD", dev: "dev-even" };
+  /* an unanchored meter (no reset clock) is NOT STARTED even at 0% — rendering
+     a percent for a window that has no clock would be a fabrication */
+  if (w.pct == null || !w.resets) return { cls: "state-idle", label: "NOT STARTED", dev: "dev-even" };
+  if (w.presumed) return { cls: "state-idle", label: "PRESUMED FRESH", dev: "dev-even" };
+  if (rolled(w)) return { cls: "state-idle", label: "ROLLED", dev: "dev-even" };
+  /* From here down every state names its relation to the beam — ahead of it,
+     on it, trailing it, or out of capacity. The idle states above name no
+     position at all, which is why they keep words of their own. */
+  if (w.pct >= 99.5) return {
+    cls: "state-capped", label: "CAPACITY", dev: "dev-cap"
+  };
+  const nm = needMultiple(w);
+  if (nm == null) return { cls: "state-even", label: "ON GLIDESLOPE", dev: "dev-even" };
+  if (nm < 0.8) return {
+    cls: "state-hot", label: "AHEAD OF GLIDESLOPE", dev: "dev-hot"
+  };
+  /* a 5h session is a throttle, not a budget — cold is never a defect there */
+  if (w.minutes < 24 * 60) return { cls: "state-even", label: "ON GLIDESLOPE", dev: "dev-even" };
+  if (nm > 1.3) return { cls: "state-bank", label: "TRAILING GLIDESLOPE", dev: "dev-bank" };
+  return { cls: "state-even", label: "ON GLIDESLOPE", dev: "dev-even" };
+}
+
+/* Round to whole minutes FIRST, then split — rounding the remainder on its own
+   is how a countdown ends up reading "3h 60m". A duration built from a
+   timestamp nobody could parse is NaN, and "NaNm" is a worse answer than the
+   dash every other missing value here gets. */
+const fmtDur = ms => {
+  if (ms == null || !Number.isFinite(ms)) return "—";
+  const minutes = Math.round(Math.abs(ms) / MIN);
+  const d = Math.floor(minutes / 1440), h = Math.floor(minutes % 1440 / 60), m = minutes % 60;
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+};
+/* Times read in the zone the config names (`timezone`, an IANA name). A zone
+   with no IANA name arrives as null, and undefined hands Intl the viewer's own
+   local zone; so does a name this browser does not know. */
+const TZ = (() => {
+  const zone = SNAP.timezone || undefined;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); return zone; }
+  catch { return undefined; }
+})();
+/* the zone's short name at that instant ("EDT", "GMT+2"): a reset a week out
+   can sit on the far side of a daylight-saving change */
+const tzName = t => {
+  try {
+    const part = new Intl.DateTimeFormat(undefined, { timeZone: TZ, timeZoneName: "short" })
+      .formatToParts(new Date(t)).find(x => x.type === "timeZoneName");
+    return part ? part.value : "";
+  } catch { return ""; }
+};
+const TZwhen = new Intl.DateTimeFormat("en-US", { timeZone: TZ,
+  weekday: "short", hour: "numeric", minute: "2-digit" });
+const TZtime = new Intl.DateTimeFormat("en-US", { timeZone: TZ,
+  hour: "numeric", minute: "2-digit" });
+const TZfull = new Intl.DateTimeFormat("en-US", { timeZone: TZ,
+  weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+/* a full date and time, named in its zone */
+const fmtZoned = t => `${TZfull.format(new Date(t))} ${tzName(t)}`.trim();
+const fmtAt = t => t == null ? "—" : TZwhen.format(new Date(t));
+
+const claudeObserved = Math.max(...providers.filter(p => p.provider === "Claude")
+  .map(p => Date.parse(p.observed_at || 0)).filter(Number.isFinite), 0);
+/* no parseable Claude observation at all leaves claudeObserved at the epoch —
+   an age measured from 1970 is not a stale gauge, it is no gauge */
+const gaugeAge = () => claudeObserved > 0 ? NOW - claudeObserved : null;
+
+function observedAge(p) {
+  const observed = Date.parse(p.observed_at || "");
+  return Number.isFinite(observed) ? Math.max(0, NOW - observed) : null;
+}
+/* A five-hour read is only as good as the window it was observed in.
+
+   Placed INSIDE the window that is running now, the number stands: usage inside
+   a window only climbs, so a cached read is a floor for that window — and the
+   account it came from is the one nothing here is logged into. Placed BEFORE the
+   window opened (or carrying no observation time at all), it describes a window
+   that has already rolled and nothing honest can be said: unknown.
+
+   Withholding a real 100% read for the account you just left — the exact moment
+   the number matters most — is the failure this replaces. */
+function sessionState(p, w) {
+  if (p.provider !== "Claude" || w.minutes !== 300) return { unknown: false, lastKnown: false };
+  /* A rolled window was advanced upstream and already describes itself: presumed
+     fresh (nothing here could have spent it) or unread (no number offered). The
+     cached-read reasoning below only applies to a window we hold a reading for. */
+  if (w.presumed) return { unknown: false, lastKnown: false };
+  if (unread(w)) return { unknown: true, lastKnown: false };
+  /* A window with no clock at all has not STARTED — from a fresh read that is a
+     fact, not a gap, and calling it UNKNOWN invents an ignorance the gauge does
+     not have. (It appeared the day a second satellite's live read replaced a
+     journaled one: an untouched 5h read "unknown" beside its own 0%.) A
+     stale account cannot make the claim, so there it stays unknown. */
+  if (!w.resets) return { unknown: Boolean(p.stale), lastKnown: false };
+  const observed = Date.parse(p.observed_at || "");
+  const start = startOf(w);
+  if (!Number.isFinite(observed) || start == null || observed < start)
+    return { unknown: true, lastKnown: false };
+  /* a cached read cannot follow the window over: the moment it rolls, the
+     account we are locked out of is running a window nobody here has read */
+  if (p.stale && rolled(w)) return { unknown: true, lastKnown: false };
+  return { unknown: false, lastKnown: Boolean(p.stale) };
+}
+const sessionUnknown = (p, w) => sessionState(p, w).unknown;
+function freshnessHTML(p, prefix = "observed") {
+  const age = observedAge(p);
+  const unknown = age == null;
+  const stale = p.stale || unknown;
+  return `<span class="lfresh ${stale ? "stale" : ""}">` +
+    `${stale ? "stale" : prefix}<small>${unknown ? "time unknown" : `${fmtDur(age)} ago`}</small></span>`;
+}
+
+/* ── tooltip ── */
+const tip = document.getElementById("tip");
+function bindTip(node, html) {
+  node.addEventListener("pointerenter", () => { tip.innerHTML = html(); tip.classList.add("show"); });
+  node.addEventListener("pointermove", e => {
+    const r = tip.getBoundingClientRect();
+    tip.style.left = Math.min(innerWidth - r.width - 14, e.clientX + 14) + "px";
+    tip.style.top = Math.min(innerHeight - r.height - 12, e.clientY + 12) + "px";
+  });
+  node.addEventListener("pointerleave", () => tip.classList.remove("show"));
+}
+function bindWinTips(el, p) {
+  for (const node of el.querySelectorAll("[data-win]")) {
+    /* The key names the ACCOUNT and the window CLASS as well as the meter.
+       Matching on the meter alone made every provider rebind every row that
+       shared a meter id, so the last provider bound won and a row quietly showed
+       another account's numbers — a confident wrong read, which is worse than no
+       read. The account was added first; the class followed on 2026-08-17, when
+       Codex began reporting a 5h AND a weekly meter both called
+       `codex_bengalfox`. Two rows, one key, and `find` always answered with the
+       first — so the weekly Spark row was reading the 5h Spark's numbers. A
+       provider is free to reuse a meter id across window classes; this page is
+       not free to confuse them. */
+    const [display, wid, minutes] = node.dataset.win.split("/");
+    if (display !== p.display) continue;
+    const w = p.windows.find(x => x.id === wid && winKeyPart(x) === minutes);
+    if (!w) continue;
+    bindTip(node, () => {
+      const pace = paceOf(w), nm = needMultiple(w);
+      const session = sessionState(p, w);
+      return `<b>${esc(pname(p))} — ${windowDisplayLabel(w)}</b><br>` +
+        (session.lastKnown && !rolled(w)
+          ? `Last known read, ${fmtDur(observedAge(p))} ago — <b>${esc(w.pct)}%</b> of this session spent when the ` +
+            `account was last readable. Inside the window that is still running, so it is a floor, not a guess.<br>` +
+            `resets ${fmtZoned(endOf(w))}` :
+        session.unknown ? `Five-hour usage is unknown — its gauge was ${p.stale ? "marked stale" : `observed ${fmtDur(observedAge(p))} ago`}, before this window opened.` :
+        w.pct == null ? "Never used this cycle. The clock only starts on first use." :
+        rolled(w) ? `Window ended ${fmtZoned(endOf(w))} at ${esc(w.pct)}% — refresh for the current one.` :
+        /* a window with a read but no clock has no even-burn position to state;
+           the dash says the sentence still has that slot and it is empty */
+        `used <b>${esc(w.pct)}%</b> · even burn would sit at ` +
+        (pace == null ? `<span class="nil">—</span>` : `<b>${pace.toFixed(1)}%</b>`) + `<br>` +
+        (nm != null ? `${((100 - w.pct) / 100 * w.minutes / 60).toFixed(0)}h of even-pace capacity vs ${fmtDur(leftMs(w))} of clock (${nm.toFixed(2)}×)<br>` : "") +
+        /* a window that has a read but no reset clock formats `new Date(null)`
+           as the epoch — this line was printing "resets Dec 31 1969" on a real
+           row. A missing clock says so; it never invents a date. */
+        `resets ${endOf(w) == null ? `<span class="nil">—</span>` : fmtZoned(endOf(w))}`);
+    });
+  }
+}
+
+/* Four things can be changing what the approach plot shows at once — a hovered
+   mark, the anthropic-only hold, which series classes are latched on, and a
+   switch the pointer is momentarily borrowing — so none of them writes classes on
+   its own. One pass reads every piece of state and writes the answer, which means
+   releasing any one of them re-reads the rest instead of clearing them, and
+   nothing is ever left stranded dim by the order the pointer happened to move. */
+let selectedMark = null;
+let selectionClearTimer = null;
+/* the gutter is laid out by a function rather than at draw time, because a switch
+   must be able to close a class without re-rendering — see relayoutTags */
+let tagLayout = [];
+let plotBounds = null;          // the frame's own top and bottom, in plot units
+let plotEmptyNote = null;
+let plotSwitchNodes = [];
+let plotWrapNode = null;
+
+function applySelection(mark) {
+  if (selectionClearTimer) {
+    clearTimeout(selectionClearTimer);
+    selectionClearTimer = null;
+  }
+  selectedMark = mark || null;
+  applyEmphasis();
+}
+function clearSelectionSoon() {
+  if (selectionClearTimer) clearTimeout(selectionClearTimer);
+  selectionClearTimer = setTimeout(() => {
+    selectionClearTimer = null;
+    applySelection(null);
+  }, 70);
+}
+/* ── the switches, in one place ──
+   A latch is written down (it outlives the minute-ly reload); a preview never is.
+   Both land on the glass through applyEmphasis, so a click and a hover cannot
+   disagree about what is showing. */
+function setFacet(id, on) {
+  if (on) plotFacets.add(id); else plotFacets.delete(id);
+  try { localStorage.setItem(PLOT_FACETS_KEY, facetsParam(plotFacets)); }
+  catch { /* URL param still holds */ }
+  applyEmphasis();
+}
+function setFacetPreview(id) {
+  facetPreview = id && CLASS_FACETS.has(id) ? id : null;
+  applyEmphasis();
+}
+function setAnthropicOnly(on, latch) {
+  if (latch) {
+    anthropicOnly = Boolean(on);
+    try { localStorage.setItem(ANTHROPIC_ONLY_KEY, anthropicOnly ? "1" : "0"); }
+    catch { /* URL param still holds */ }
+  } else {
+    anthropicPreview = Boolean(on);
+  }
+  applyEmphasis();
+}
+
+/* Spread the right-gutter tags so no two share a line, over the marks that are
+   actually on the glass right now. Done as a relayout rather than at draw time so
+   flipping a switch neither re-renders the plot (which would drop the hover that
+   flipped it) nor leaves the gap where a closed class used to sit. */
+function relayoutTags() {
+  const showing = tagLayout
+    .filter(entry => facetVisible(entry.facet))
+    .sort((a, b) => a.baseY - b.baseY);
+  /* Two marks at the same reading (two accounts idle at 0%) collide, so the stack
+     is spread in two passes: down from the frame's top, then back UP off its
+     bottom. One pass alone is not enough — a down-pass ran the last tags out
+     under the x axis, and lifting the whole column cannot fix it when the topmost
+     tag is already against the ceiling, which is exactly what 100% produces.
+     Both passes keep every gap at 15 and neither reorders the column. */
+  const GAP = 15;
+  const ys = [];
+  let floorY = plotBounds ? plotBounds.top - GAP : -Infinity;
+  for (const entry of showing) {
+    floorY = Math.max(entry.baseY, floorY + GAP);
+    ys.push(floorY);
+  }
+  if (plotBounds && ys.length) {
+    let ceilY = plotBounds.bottom + GAP;
+    for (let i = ys.length - 1; i >= 0; i--) ceilY = ys[i] = Math.min(ys[i], ceilY - GAP);
+    /* more tags than the frame is tall: nothing can be honest AND inside, so
+       stack them evenly from the top rather than piling them on one line */
+    if (ys[0] < plotBounds.top) {
+      for (let i = 0; i < ys.length; i++) ys[i] = plotBounds.top + i * GAP;
+    }
+  }
+  showing.forEach((entry, i) => {
+    entry.leader.setAttribute("y2", ys[i].toFixed(1));
+    entry.tag.setAttribute("y", (ys[i] + 3.5).toFixed(1));
+    entry.value.setAttribute("y", (ys[i] + 3.5).toFixed(1));
+  });
+}
+
+function applyEmphasis() {
+  const holding = anthropicOnly || anthropicPreview;
+  for (const node of document.querySelectorAll(
+      ".ils-trail[data-mark], .ils-mark[data-mark], .selection-reticle[data-mark], " +
+      ".ils-projection[data-mark], .ils-projection-hit[data-mark], " +
+      ".ils-projection-dot[data-mark], .ils-projection-dot-hit[data-mark], " +
+      ".ils-pool-trail[data-mark], .ils-pool-mark[data-mark], .reg-row[data-mark]")) {
+    /* the reticle is a readout, not a series: it is either drawn or it is not */
+    const reticle = node.classList.contains("selection-reticle");
+    const selected = Boolean(selectedMark) && node.dataset.mark === selectedMark;
+    /* the hold is a provider filter, and every trail, mark and register row
+       already carries its provider — no lookup back into the model needed */
+    const held = holding && node.dataset.provider !== "Claude";
+    /* the same is true of the class: the facet is on the node, so a switch is a
+       class flip over the DOM, never a walk back into the model */
+    const off = Boolean(node.dataset.facet) && !facetVisible(node.dataset.facet);
+    node.classList.toggle("selection-selected", selected);
+    node.classList.toggle("selection-dimmed", !reticle && Boolean(selectedMark) && !selected);
+    node.classList.toggle("solo-dimmed", !reticle && held);
+    node.classList.toggle("facet-off", off);
+  }
+  /* the switches say what is showing, not what is latched, so a preview reads
+     back on the control that is producing it */
+  for (const button of plotSwitchNodes) {
+    const id = button.dataset.facet;
+    button.setAttribute("aria-pressed", String(
+      id === "anthropic" ? holding : facetVisible(id)));
+    /* what a release would return to — the latch itself, which aria-pressed
+       deliberately hides while a preview is borrowing the frame */
+    button.dataset.latched = String(
+      id === "anthropic" ? anthropicOnly : plotFacets.has(id));
+  }
+  relayoutTags();
+  if (plotEmptyNote) {
+    plotEmptyNote.classList.toggle("showing",
+      !PLOT_FACETS.some(facet => facetVisible(facet.id)));
+  }
+  /* the latch, published where anything outside the plot can read it. Written
+     here rather than at render time because a click does not re-render — an
+     attribute set once at draw would be a stale answer one click later. */
+  if (plotWrapNode) {
+    plotWrapNode.dataset.plotFacets = facetsParam(plotFacets);
+    plotWrapNode.dataset.anthropicOnly = String(anthropicOnly);
+  }
+}
+
+/* ── window instrument ── */
+function winHTML(p, w) {
+  const st = stateOf(w), pace = paceOf(w), lm = leftMs(w);
+  const dev = pace != null && w.pct != null && !rolled(w) ? w.pct - pace : null;
+  const ex = exhaustAt(w);
+
+  let foot = "";
+  if (unread(w)) foot = `<span class="warn">rolled ${w.rolledPeriods}× since the last read</span><span>resets in <b>${fmtDur(lm)}</b></span>`;
+  else if (w.pct == null || !w.resets) foot = `<span>100% available · starts on first use</span>`;
+  else if (w.presumed) foot = `<span>presumed unspent · nothing here is logged in</span><span>resets in <b>${fmtDur(lm)}</b></span>`;
+  else if (rolled(w)) foot = `<span>window ended ${fmtDur(-lm)} ago at ${Math.round(w.pct)}% — refresh for current</span>`;
+  else if (w.pct >= 99.5) foot = `<span class="cap">at the ceiling</span><span>opens <b>${fmtAt(endOf(w))}</b> · in <b>${fmtDur(lm)}</b></span>`;
+  else if (ex && st.cls === "state-hot") foot = `<span class="warn">exhausts ~<b>${fmtAt(ex)}</b> at this rate</span><span>resets in <b>${fmtDur(lm)}</b></span>`;
+  else foot = `<span>&nbsp;</span><span>resets in <b>${fmtDur(lm)}</b></span>`;
+
+  const chip = (st.cls === "state-capped" || st.cls === "state-hot")
+    ? `<span class="state-chip ${st.cls}">${st.label}</span>`
+    : `<span class="state-quiet">${st.label}</span>`;
+
+  return `
+  <div class="win ${esc(w.tier || "secondary")}" data-win="${esc(winKey(p, w))}">
+    <div class="win-top">
+    <span class="kicker win-label">${windowDisplayLabel(w)}</span>
+      ${chip}
+    </div>
+    <div class="win-read num">
+      <span class="win-pct">${unread(w) ? "<small>unread</small>"
+        : w.pct == null || !w.resets ? "<small>idle</small>"
+        : Math.round(w.pct) + `<small>%${w.presumed ? " presumed" : ""}</small>`}</span>
+      <!-- silent on purpose where no position exists to state: a window with no
+           clock has not started, and a rolled one is over — its foot says so,
+           and an even-burn mark on a finished clock is a fiction. A running
+           window always keeps both slots, dashed when they cannot be read. -->
+      <span class="win-pace">${!w.resets || rolled(w) ? "" :
+        `◆ ${pace == null ? `<span class="nil">—</span>` : `<b>${pace.toFixed(1)}%</b>`}` +
+        ` &nbsp;${dev == null ? `<span class="nil">—</span>`
+          : `${dev >= 0 ? "+" : "−"}${Math.abs(dev).toFixed(0)}%`} vs even`}</span>
+    </div>
+    ${w.pct == null || !w.resets || rolled(w)
+      ? `<div class="bar"><span class="bar-idle-note" style="position:absolute;left:8px;top:-1px">${
+          unread(w) ? "— rolled, unread —" : rolled(w) ? "— window rolled —" : "— no window anchored —"}</span></div>`
+      : `<div class="bar ${w.pct >= 99.5 ? "capped" : ""}">
+           <div class="bar-fill" data-w="${clamp(w.pct, 0, 100)}"></div>
+           ${pace != null ? `<div class="bar-pace" style="left:${pace}%"></div>` : ""}
+           ${w.tier === "primary" || w.tier === "hero-inst" ? `<div class="bar-ticks">${[25,50,75].map(v => `<i style="left:${v}%"></i>`).join("")}</div>` : ""}
+         </div>`}
+    <div class="win-foot num">${foot}</div>
+  </div>`;
+}
+
+/* ── render ────────────────────────────────────────────────────────────── */
+function render() {
+  NOW = Date.now();
+  deck.innerHTML = "";
+  deck.classList.toggle("plot-expanded", plotExpanded);
+  deck.classList.toggle("plot-theater", plotTheater);
+  document.documentElement.classList.toggle("plot-theater-lock", plotTheater);
+  /* the minute-ly re-render throws the old nodes away, and with them any hover
+     the pointer was resting on — so every hover-held piece of state is dropped
+     with them. A held dim that outlived its own DOM would be a dim nobody could
+     release. What is LATCHED survives, which is the whole point of latching it. */
+  selectedMark = null;
+  facetPreview = null;
+  anthropicPreview = false;
+  tagLayout = [];
+  plotEmptyNote = null;
+  plotSwitchNodes = [];
+  plotWrapNode = null;
+  if (selectionClearTimer) {
+    clearTimeout(selectionClearTimer);
+    selectionClearTimer = null;
+  }
+
+  /* masthead */
+  const ageEl = document.getElementById("gauge-age");
+  const age = gaugeAge();
+  ageEl.textContent = age == null ? "—" : age < MIN ? "0m · synced" : fmtDur(age);
+  /* the dash is not a reading, so it never wears the reading's ink */
+  ageEl.style.color = age == null ? "var(--muted)" : age > 30 * MIN ? "var(--status-hot)" : "";
+  document.getElementById("deck-badge").textContent = "LIVE";
+  const historyHours = Number.isFinite(SNAP.history_hours)
+    ? `${Math.max(1, Math.round(SNAP.history_hours))}H` : "—";
+  document.getElementById("trail-provenance").textContent =
+    `LIVE · TRAILS FROM ${historyHours} OF SAMPLES`;
+  /* which zone every time on the page is read in */
+  const zoneNow = tzName(NOW);
+  document.getElementById("tz-label").textContent = zoneNow ? ` · times ${zoneNow}` : "";
+
+  /* the same concise weekly read that leads the CLI */
+  {
+    const rows = [];
+    let claudeRows = 0;
+    for (const p of providers) {
+      if (p.dormant) {
+        rows.push(`
+        <tr data-weekly="${esc(p.display)}" data-dormant="true">
+          <td class="weekly-account">Claude · ${esc(p.display)}<span class="dormant-tag">dormant</span></td>
+          <td class="weekly-read num nil">—</td>
+          <td class="weekly-read num nil">—</td>
+          <td class="weekly-reset num nil">—${p.dormantSince ? `<small>since ${esc(p.dormantSince)}</small>` : ""}</td>
+        </tr>`);
+        claudeRows = rows.length;
+        continue;
+      }
+      const w = p.windows.find(x => /all models/i.test(x.label || ""));
+      if (!w) continue;
+      /* a presumed-fresh window carries THIS window's clock, so its ◆ mark is
+         honest even though the account's own gauge is stale */
+      const readOf = win => {
+        const pace = p.stale && !win.presumed ? null : paceOf(win);
+        return unread(win) ? `<span class="qual">unread</span>`
+          : win.pct == null || !win.resets ? "not started"
+          : `${Math.round(win.pct)}%${win.presumed ? `<span class="qual">presumed</span>` : ""}${
+              pace == null || rolled(win) ? "" : `<span class="pace">(◆ ${pace.toFixed(1)}%)</span>`}`;
+      };
+      const value = readOf(w);
+      /* Fable is the binding weekly (2026-09-11): its own column, a dash where
+         the provider has no Fable meter so the column count never moves */
+      const f = p.windows.find(x => x.id === "weekly_fable");
+      const fable = f ? readOf(f) : "—";
+      const reset = !w.resets ? "not started"
+        : rolled(w) ? `ended ${fmtDur(-leftMs(w))} ago`
+        : `in ${fmtDur(leftMs(w))}<small>${fmtZoned(endOf(w))}</small>`;
+      const account = esc(p.provider === "Claude" ? `Claude · ${p.display}` : p.display);
+      rows.push(`
+        <tr data-weekly="${esc(p.display)}" data-here="${isHere(p)}" data-there="${isThere(p)}">
+          <td class="weekly-account">${account}${loginChips(p, "weekly-login")}</td>
+          <td class="weekly-read num">${value}</td>
+          <td class="weekly-read num${f ? "" : " nil"}">${fable}</td>
+          <td class="weekly-reset num">${reset}</td>
+        </tr>`);
+      if (p.provider === "Claude") claudeRows = rows.length;
+    }
+    /* ── the pooled read ──
+       Three Max 20x quotas on three clocks, read as one budget. Both halves of
+       the glide-slope comparison are means — used against the mean of the phases
+       — so the row speaks the ◆ vocabulary unchanged. It goes directly under the
+       accounts it is made of, because that is the only place it means anything. */
+    const pool = SNAP.pool;
+    if (pool && claudeRows) {
+      const poolCell = pl => {
+        const delta = pl.used_percent - pl.pace_percent;
+        const verdict = pl.verdict === "ahead" ? `+${delta.toFixed(1)} ahead`
+          : pl.verdict === "trailing" ? `−${Math.abs(delta).toFixed(1)} banking`
+          : pl.verdict === "even" ? "on ◆" : "floor below ◆ · undecided";
+        return `${pl.used_percent.toFixed(1)}%${
+            pl.floor ? `<span class="qual">floor</span>` : ""}<span class="pace">(◆ ${
+            pl.pace_percent.toFixed(1)}%)</span><span class="pool-verdict ${esc(pl.verdict)}">${verdict}</span>`;
+      };
+      const fablePool = SNAP.pool_fable;
+      rows.splice(claudeRows, 0, `
+        <tr class="pooled" data-weekly="Pooled">
+          <td class="weekly-account">Claude · pooled
+            <small>${pool.accounts.map(esc).join(" + ")}</small></td>
+          <td class="weekly-read num">${poolCell(pool)}</td>
+          <td class="weekly-read num${fablePool ? "" : " nil"}">${fablePool ? poolCell(fablePool) : "—"}</td>
+          <td class="weekly-reset num">next ${esc(pool.next_reset_account)}<small>${
+            fmtZoned(pool.next_reset_at)}</small></td>
+        </tr>`);
+    }
+    const r = SNAP.openrouter;
+    if (r && r.weekly_usd != null) {
+      /* a null limit rendered as $0 is not a gap, it is a wrong number — the
+         one failure worse than an empty cell, so it dashes like the rest */
+      const remaining = r.remaining_usd == null ? "limit remaining unknown" :
+        `$${Math.round(r.remaining_usd)} left of ${r.limit_usd
+          ? `$${Math.round(r.limit_usd)}` : "—"}/${esc(r.limit_reset || "period")}`;
+      rows.push(`
+        <tr data-weekly="OpenRouter">
+          <td class="weekly-account">OpenRouter</td>
+          <td class="weekly-read num">$${r.weekly_usd.toFixed(2)}</td>
+          <td class="weekly-read num nil">—</td>
+          <td class="weekly-reset">rolling 7d<small>· ${remaining}</small></td>
+        </tr>`);
+    }
+    const summary = document.createElement("section");
+    summary.className = "module weekly-summary";
+    const warnings = (SNAP.warnings || []).map(esc).filter(Boolean);
+    summary.innerHTML = `
+      <div class="section-head">
+        <span class="kicker">${wclass("7 DAY", false)} status</span>
+        <span class="section-note">◆ even-burn position ${gutterKey()}</span>
+      </div>
+      <table class="weekly-table">
+        <thead><tr><th>Account</th><th>${wclass("7 DAY", false)}</th><th>Fable</th><th>Next reset at</th></tr></thead>
+        <tbody>${rows.join("")}</tbody>
+      </table>
+      ${warnings.length ? `<div class="summary-warning">${warnings.join(" · ")}</div>` : ""}`;
+    deck.appendChild(summary);
+  }
+
+  /* one coherent full-detail table */
+  {
+    const el = document.createElement("section");
+    el.className = "module ledger full-state";
+    /* one row, not one per window — a dormant account has nothing left to
+       read per meter, and per-meter rows would only be noise repeated three
+       times over. Same eight columns as `cell`, so nothing below it moves. */
+    const dormantCell = p => `
+      <div class="lrow num dormant-row" data-provider="${esc(p.provider)}" data-account="${esc(p.display)}"
+           data-window="dormant" data-active="false" data-here="false" data-there="false"
+           data-stale="false" data-anchored="false" data-dormant="true"
+           style="--acc: var(--muted); --hot: var(--muted)">
+        <span class="key"></span>
+        <span class="lprovider">${esc(p.provider)}</span>
+        <span class="lname laccount">${esc(p.display)}<span class="dormant-tag">dormant</span>
+          <small class="lplan">${esc(p.plan || "—")}</small></span>
+        <span class="lname"><span class="nil">—</span></span>
+        <div class="lposition">
+          <div class="bar lbar idle"></div>
+          <span class="lread nil">—</span>
+        </div>
+        <span class="state-quiet">dormant${p.dormantSince ? ` since ${esc(p.dormantSince)}` : ""}</span>
+        <span class="lreset"><span class="nil">—</span></span>
+        <span class="lfresh"><span class="nil">—</span></span>
+      </div>`;
+    const cell = (p, w) => {
+      const session = sessionState(p, w);
+      const unknown = session.unknown;
+      const lastKnown = session.lastKnown && !rolled(w) && w.pct != null && w.resets;
+      const st = unknown ? { cls: "state-idle", label: "UNKNOWN" } : stateOf(w);
+      // a floor is not a position — a last-known read never carries the ◆ mark
+      const pace = unknown || lastKnown ? null : paceOf(w), lm = leftMs(w);
+      const capped = w.pct != null && w.resets && w.pct >= 99.5 && !rolled(w);
+      // a presumed-fresh window draws its bar: the value is 0 and stated as presumed
+      const idle = unknown || w.pct == null || !w.resets || rolled(w);
+      const chip = unknown ? `<span class="state-chip state-idle">UNKNOWN</span>`
+        : capped ? `<span class="state-chip state-capped">CAPACITY</span>`
+        : st.cls === "state-hot" ? `<span class="state-chip state-hot">AHEAD OF GLIDESLOPE</span>`
+        : `<span class="state-quiet">${st.label.toLowerCase()}</span>`;
+      // the column says "resets in" — the cell says how long, and then exactly when
+      const reset = w.pct == null || !w.resets ? "—"
+        : rolled(w) ? `ended <b>${fmtDur(-lm)}</b> ago`
+        : `<b>${fmtDur(lm)}</b>`;
+      /* the ◆ read is dashed, not dropped, when the position cannot be computed
+         for a window that is still running — but a last-known floor and a
+         rolled window are silent by contract: neither has a position to miss */
+      const read = unknown ? `<span class="lread unknown">unknown</span>`
+        : idle && !rolled(w) ? `<span class="lread nil">—</span>`
+        : `<span class="lread ${capped ? "cap" : ""}">${Math.round(w.pct)}<small>%</small>` +
+          `${lastKnown ? `<span class="lpace">last known</span>`
+            : w.presumed ? `<span class="lpace">presumed · ◆ ${pace != null ? `${pace.toFixed(0)}%` : "—"}</span>`
+            : idle ? ""
+            : `<span class="lpace">◆ ${pace != null ? `${pace.toFixed(0)}%` : "—"}</span>`}</span>`;
+      return `
+      <div class="lrow num" data-win="${esc(winKey(p, w))}" data-provider="${esc(p.provider)}"
+           data-account="${esc(p.display)}" data-window="${esc(w.id)}" data-active="${Boolean(p.active)}"
+           data-here="${isHere(p)}" data-there="${isThere(p)}"
+           data-stale="${Boolean(p.stale)}" data-anchored="${Boolean(w.resets)}"
+           style="--acc: var(--${ck(p.display)}); --hot: var(--${ck(p.display)}-hot)">
+        <span class="key"></span>
+        <span class="lprovider">${esc(p.provider)}</span>
+        <span class="lname laccount">${esc(p.display)}${loginChips(p)}
+          <small class="lplan">${esc(p.plan || "—")}</small></span>
+        <span class="lname">${windowDisplayLabel(w)}</span>
+        <div class="lposition">
+          ${idle
+            ? `<div class="bar lbar idle"></div>`
+            : `<div class="bar lbar ${capped ? "capped" : ""}">
+                 <div class="bar-fill" data-w="${clamp(w.pct, 0, 100)}"></div>
+                 ${pace != null ? `<div class="bar-pace" style="left:${pace}%"></div>` : ""}
+               </div>`}
+          ${read}
+        </div>
+        ${chip}
+        <span class="lreset">${reset}${w.resets ? `<time datetime="${esc(w.resets)}">${fmtZoned(endOf(w))}</time>` : ""}</span>
+        ${freshnessHTML(p)}
+      </div>`;
+    };
+    const rows = [];
+    let afterClaude = 0;
+    for (const p of providers) {
+      if (p.dormant) { rows.push(dormantCell(p)); afterClaude = rows.length; continue; }
+      for (const w of p.windows) rows.push(cell(p, w));
+      if (p.provider === "Claude") afterClaude = rows.length;
+    }
+    /* the pooled weekly, in the same eight columns as the accounts it sums.
+       No key swatch and no hue: it is not a provider, it is their total. The
+       Fable pool is the same statement over weekly_fable — it rides directly
+       under the all-models pool, wearing the F code the frame already gives
+       every Fable meter. */
+    const pooledRowHTML = (pool, meterId, code) => {
+      const delta = pool.used_percent - pool.pace_percent;
+      const chip = pool.verdict === "ahead" ? `<span class="state-chip state-hot">AHEAD OF GLIDESLOPE</span>`
+        : pool.verdict === "trailing" ? `<span class="state-quiet">banking capacity</span>`
+        : pool.verdict === "even" ? `<span class="state-quiet">on glideslope</span>`
+        : `<span class="state-chip state-idle">UNDECIDED</span>`;
+      return `
+      <div class="lrow num pooled-row${code ? " pooled-fable" : ""}" data-provider="Claude"
+           data-account="Pooled${code ? ` ${code}` : ""}"
+           data-window="${meterId}" data-active="false" data-here="false" data-there="false"
+           data-stale="${Boolean(pool.floor)}" data-anchored="true"
+           style="--acc: var(--muted); --hot: var(--ink)">
+        ${claudeBurstSVG(12)}
+        <span class="lprovider">Claude</span>
+        <span class="lname laccount">Pooled${code ? `<i class="reg-code">${code}</i>` : ""
+          }<small class="lplan">${esc(pool.count)} accounts</small></span>
+        <span class="lname">${wclass("7 DAY", false)} ${code ? "Fable" : "all models"}<small class="lwin">sum · ${
+          esc(pool.next_reset_account)} back first</small></span>
+        <div class="lposition">
+          <div class="bar lbar">
+            <div class="bar-fill" data-w="${clamp(pool.used_percent, 0, 100)}"></div>
+            <div class="bar-pace" style="left:${clamp(pool.pace_percent, 0, 100)}%"></div>
+          </div>
+          <span class="lread">${pool.used_percent.toFixed(1)}<small>%</small><span class="lpace">${
+            pool.floor ? "floor · " : ""}◆ ${pool.pace_percent.toFixed(0)}%</span></span>
+        </div>
+        ${chip}
+        <span class="lreset"><b>${fmtDur(Date.parse(pool.next_reset_at) - NOW)}</b><time datetime="${
+          esc(pool.next_reset_at)}">${fmtZoned(pool.next_reset_at)}</time></span>
+        <span class="lfresh">${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)} pts<small>vs ◆ glideslope</small></span>
+      </div>`;
+    };
+    const pool = SNAP.pool;
+    if (pool && afterClaude) {
+      rows.splice(afterClaude, 0, pooledRowHTML(pool, "weekly_all", null));
+      afterClaude += 1;
+    }
+    const poolFable = SNAP.pool_fable;
+    if (poolFable && afterClaude) {
+      rows.splice(afterClaude, 0, pooledRowHTML(poolFable, "weekly_fable", "F"));
+      afterClaude += 1;
+    }
+    const r = SNAP.openrouter;
+    if (r && r.weekly_usd != null) {
+      const cap = r.limit_usd || 0;
+      const used = cap ? clamp((cap - (r.remaining_usd ?? cap)) / cap * 100, 0, 100) : 0;
+      rows.push(`
+      <div class="lrow num openrouter-row" data-provider="OpenRouter" data-account="OpenRouter"
+           data-window="rolling_7d" data-active="false" data-stale="false" data-anchored="false"
+           style="--acc: var(--router); --hot: var(--router-hot)">
+        <span class="key"></span>
+        <span class="lprovider">OpenRouter</span>
+        <span class="lname laccount">OpenRouter<small class="lplan">metered</small></span>
+        <span class="lname">Rolling 7d spend<small class="lplan">USD</small></span>
+        <div class="lposition">
+          <div class="bar lbar"><div class="bar-fill" data-w="${used}"></div></div>
+          <span class="lread">$${r.weekly_usd.toFixed(2)}</span>
+        </div>
+        <span class="state-quiet">rolling 7d</span>
+        <span class="lreset">—<small>${esc(r.limit_reset || "limit period unknown")} · ${
+          r.remaining_usd == null ? `<span class="nil">—</span>` : `<b>$${Math.round(r.remaining_usd)}</b>`
+        } left of ${cap ? `$${Math.round(cap)}` : `<span class="nil">—</span>`}</small></span>
+        <span class="lfresh">detail built<small>${fmtDur(Math.max(0, NOW - Date.parse(SNAP.built_at)))} ago</small></span>
+      </div>`);
+    }
+    el.innerHTML = `
+      <div class="section-head">
+        <span class="kicker">Full detail · all windows</span>
+        <span class="section-note">account · window · position · state · reset · freshness</span>
+      </div>
+      <div class="lrow lhead">
+        <span></span>
+        <span class="kicker">Provider</span>
+        <span class="kicker">Account</span>
+        <span class="kicker">Window</span>
+        <span class="kicker" style="text-align:center">Used vs ◆ Glideslope</span>
+        <span class="kicker">State</span>
+        <span class="kicker">Resets in</span>
+        <span class="kicker">Freshness</span>
+      </div>
+      ${rows.join("")}`;
+    deck.appendChild(el);
+    for (const p of providers) bindWinTips(el, p);
+  }
+
+  /* API-equivalent spend — an optional spend.json in the store, written by a
+     separate collector that is not part of this repo. Drawn from its own ledger,
+     so it can lag the meters by up to one collection. */
+  {
+    const S = SNAP.spend;
+    const el = document.createElement("section");
+    el.className = "module spend-mod";
+    const usd = v => v == null ? "—"
+      : v >= 10000 ? `$${(v / 1000).toFixed(1)}k`
+      : v >= 100 ? `$${Math.round(v).toLocaleString("en-US")}`
+      : `$${v.toFixed(2)}`;
+    const tok = v => v == null ? "—" : v >= 1e9 ? `${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `${(v / 1e6).toFixed(0)}M` : `${Math.round(v / 1e3)}k`;
+    const accVar = n => ({ Alpha: "--alpha", Bravo: "--bravo", Charlie: "--charlie", Delta: "--delta", Codex: "--codex", Kimi: "--kimi", Grok: "--grok" })[n] || "--muted-2";
+    const hotVar = n => ({ Alpha: "--alpha-hot", Bravo: "--bravo-hot", Charlie: "--charlie-hot", Delta: "--delta-hot", Codex: "--codex-hot", Kimi: "--kimi-hot", Grok: "--grok-hot" })[n] || "--muted";
+    const emptySpend = note => `<div class="section-head"><span class="kicker">API-equivalent spend</span></div>
+        <div class="spend-empty">${note}</div>`;
+    if (!S || !S.totals || !S.totals.all) {
+      el.innerHTML = emptySpend("No spend ledger. This panel draws an optional <code>spend.json</code> from the store; Glideslope itself does not write one.");
+    } else try {
+      const T = S.totals;
+      const ago = iso => { const m = Math.max(0, Math.round((NOW - Date.parse(iso)) / 60000));
+        return !Number.isFinite(m) ? "—" : m < 1 ? "just now" : m < 90 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
+      const collected = Object.entries(S.collected_at || {}).map(([mach, iso]) => {
+        const old = NOW - Date.parse(iso) > 60 * 60000;
+        return `<span style="color:${old ? "var(--status-hot)" : "inherit"}">${esc(mach)} ${ago(iso)}</span>`;
+      }).join(" · ");
+      const since = S.first_request_at ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(S.first_request_at)) : "—";
+      const tile = (k, b, extra, cls = "") => `
+        <div class="spend-tile ${cls}">
+          <div class="k">${k}</div>
+          <div class="v">${usd(b && b.usd)}</div>
+          <div class="s">${tok(b && b.tokens)} tok · Fable <b>${usd(b && b.fable_usd)}</b>${extra || ""}</div>
+        </div>`;
+      const L = S.leverage || {};
+      const tiles = `
+        <div class="spend-tiles">
+          ${tile("24 hours", T.d1)}${tile("7 days", T.d7)}${tile("30 days", T.d30)}${tile("All time", T.all, `<br>since ${since}`, "all")}
+          <div class="spend-lever">
+            <div><div class="x">${L.claude_multiple != null ? esc(L.claude_multiple) + "×" : "—"}</div>
+              <div class="t">Claude, last 30 days: ${usd(L.claude_api_equivalent_d30_usd)} at API prices on $${Math.round(L.claude_subscriptions_monthly_usd || 0)}/mo of plans</div></div>
+            <div><div class="x" style="color: var(--codex-hot)">${L.codex_multiple != null ? esc(L.codex_multiple) + "×" : "—"}</div>
+              <div class="t">Codex, last 30 days: ${usd(L.codex_api_equivalent_d30_usd)} at API prices on $${Math.round(L.codex_subscription_monthly_usd || 0)}/mo</div></div>
+          </div>
+        </div>`;
+
+      const rows = (S.accounts || []).map(a => {
+        const w = a.window;
+        /* a percent read long ago (nobody logged in there) is marked, never passed off as now */
+        const asOf = w && w.pct_stale && w.pct_observed_at ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(w.pct_observed_at)) : null;
+        const pct = v => v == null ? "" : asOf ? `~${Math.round(v)}%` : w.pct_presumed ? `<i>${Math.round(v)}%</i>` : `${Math.round(v)}%`;
+        const pctTitle = asOf ? ` title="meter last read ${asOf}; $ / 1% uses only spend up to that read"`
+          : w && w.pct_presumed ? ` title="presumed fresh: the window reset since the meter was last read"` : "";
+        const wcell = w ? `${usd(w.usd)}<small${pctTitle}>${pct(w.weekly_all_pct)}</small>` : `<span class="nil">—</span>`;
+        const fcell = w ? `<span class="f">${usd(w.fable_usd)}</span><small${pctTitle}>${pct(w.weekly_fable_pct)}</small>` : `<span class="nil">—</span>`;
+        const per = v => v != null ? usd(v) : `<span class="nil">—</span>`;
+        const fAll = a.all && a.all.usd ? Math.round(100 * a.all.fable_usd / a.all.usd) : null;
+        const label = a.name === "unattributed" ? "Unattributed" : a.name;
+        return `<tr style="--acc: var(${accVar(a.name)})" title="${a.name === "unattributed" ? "Requests from before Glideslope recorded which account was logged in on that machine" : ""}">
+          <td class="acct"><i></i>${esc(label)}</td>
+          <td>${wcell}</td><td>${fcell}</td>
+          <td>${per(w && w.usd_per_pct_all)}</td><td>${per(w && w.usd_per_pct_fable)}</td>
+          <td>${usd(a.d7 && a.d7.usd)}</td><td>${usd(a.d30 && a.d30.usd)}</td>
+          <td>${usd(a.all && a.all.usd)}${fAll != null && a.provider === "Claude" ? `<small title="share of this account's all-time API-equivalent spent on Fable">${fAll}% F</small>` : ""}</td>
+        </tr>`;
+      });
+      rows.push(`<tr class="sum"><td class="acct">Total</td><td></td><td></td><td></td><td></td>
+        <td>${usd(T.d7.usd)}</td><td>${usd(T.d30.usd)}</td><td>${usd(T.all.usd)}</td></tr>`);
+      const table = `
+        <table class="spend-table">
+          <thead><tr><th>Account</th><th>This ${wclass("7 DAY", false)}</th><th>Fable</th>
+            <th title="What one percent of the 7 DAY meter cost at API prices this window">$ / 1% wk</th>
+            <th title="What one percent of the Fable meter cost at API prices this window">$ / 1% F</th>
+            <th>7 days</th><th>30 days</th><th>All time</th></tr></thead>
+          <tbody>${rows.join("")}</tbody>
+        </table>`;
+
+      /* daily stacked bars: one column per day, one segment per payer, the Fable
+         share of each account drawn in its hot shade on top of the rest */
+      const D = S.daily || { days: [], series: {} };
+      const days = D.days || [];
+      const order = ["Alpha", "Bravo", "Charlie", "Delta", "Codex", "Kimi", "Grok", "unattributed"];
+      const segs = [];
+      for (const n of order) {
+        if (D.series[n]) segs.push({ key: n, name: n, color: `var(${accVar(n)})`, op: n === "unattributed" ? .55 : .78 });
+        if (D.series[n + ":fable"]) segs.push({ key: n + ":fable", name: `${n} · Fable`, color: `var(${hotVar(n)})`, op: 1 });
+      }
+      const totalsByDay = days.map((_, i) => segs.reduce((t, sg) => t + (D.series[sg.key][i] || 0), 0));
+      const peak = Math.max(1, ...totalsByDay);
+      const VWc = 1000, VHc = 150, gap = 2, bw = days.length ? VWc / days.length : VWc;
+      let bars = "";
+      days.forEach((d, i) => {
+        let y = VHc;
+        const tipLines = [];
+        for (const sg of segs) {
+          const v = D.series[sg.key][i] || 0;
+          if (v <= 0) continue;
+          const h = v / peak * (VHc - 4);
+          y -= h;
+          bars += `<rect x="${(i * bw + gap / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - gap).toFixed(1)}" height="${h.toFixed(1)}" fill="${sg.color}" fill-opacity="${sg.op}"><title>${esc(d)} · ${esc(sg.name)}: ${usd(v)} (day ${usd(totalsByDay[i])})</title></rect>`;
+        }
+      });
+      const gridLines = [0.25, 0.5, 0.75, 1].map(f => `<line x1="0" x2="${VWc}" y1="${(VHc - f * (VHc - 4)).toFixed(1)}" y2="${(VHc - f * (VHc - 4)).toFixed(1)}" stroke="var(--grid)" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join("");
+      const legend = segs.map(sg => `<span><i style="background:${sg.color}; opacity:${sg.op}"></i>${esc(sg.name)}</span>`).join("");
+      const chart = `
+        <div class="spend-chart">
+          <div class="chart-head"><span class="kicker">Daily · last ${days.length} days · peak ${usd(peak)}</span>
+            <span class="legend">${legend}</span></div>
+          <svg viewBox="0 0 ${VWc} ${VHc}" preserveAspectRatio="none" aria-label="Daily API-equivalent spend">${gridLines}${bars}</svg>
+        </div>`;
+
+      // Machines come from the ledger itself; nothing here knows their names.
+      const machineNames = Object.keys(S.machines || {});
+      const fmtDay = (ms) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(ms));
+      const lateStarts = Object.entries(S.attribution || {}).filter(([, ms]) => ms).map(([name, ms]) => `all ${esc(name)} work before ${fmtDay(ms)}`);
+      const machineList = machineNames.length ? machineNames.map(esc).join(" and ") : "each machine";
+      el.innerHTML = `
+        <div class="section-head">
+          <span class="kicker">API-equivalent spend · what the tokens would cost at list prices</span>
+          <span class="section-note">Claude Code, Codex, Kimi, Grok · collected ${collected || "—"} · not money spent</span>
+        </div>
+        <div class="spend-body">${tiles}${table}${chart}
+          <div class="spend-foot">Each Claude Code and Codex request on ${machineList} (plus any Kimi-plan and Grok Build turns) is priced at API list rates (cache reads and writes included) and credited to the Claude account logged in on its machine at that moment, read from Glideslope's samples and login switches. Unattributed = no login read within a day of the request${lateStarts.length ? ` (${lateStarts.join("; ")})` : ""}. $ / 1% = this window's Claude Code cost up to the meter's last read, divided by that meter. The meter also counts claude.ai, mobile and other machines, so $ / 1% is a floor.</div>
+        </div>`;
+    } catch (err) {
+      el.innerHTML = emptySpend("The spend ledger could not be drawn: " + esc(err && err.message || err));
+    }
+    deck.appendChild(el);
+  }
+
+  /* the two time-ordered panels, each its own full-width band under the ledger */
+  const horizonMod = document.createElement("section");
+  horizonMod.className = "module rail-mod horizon-mod";
+  horizonMod.innerHTML = `
+    <div class="rail-head"><span class="kicker">Reset horizon · next 7 days</span></div>
+    <div class="horizon"><svg id="horizon" viewBox="0 0 300 118" preserveAspectRatio="none"></svg></div>`;
+  deck.appendChild(horizonMod);
+
+  const switchMod = document.createElement("section");
+  switchMod.className = "module rail-mod switch-mod";
+  switchMod.innerHTML = `
+    <div class="rail-head"><span class="kicker">Switch log · recent</span></div>
+    <div id="switch-log"></div>`;
+  deck.appendChild(switchMod);
+
+  {
+    const host = switchMod.querySelector("#switch-log");
+    const TZday = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric" });
+    const fmtSw = t => NOW - t > 18 * HOUR
+      ? `${TZday.format(new Date(t))}<br>${TZtime.format(new Date(t))}`
+      : TZtime.format(new Date(t));
+    host.innerHTML = (SNAP.switches || []).slice(0, 5).map(s => `
+      <div class="sw-row num">
+        <span class="sw-time">${fmtSw(Date.parse(s.at))}</span>
+        <div>
+          <div class="sw-what"><b style="color:var(--${ck(s.from)}-hot)">${esc(s.from)}</b> → <b style="color:var(--${ck(s.to)}-hot)">${esc(s.to)}</b></div>
+          ${s.note ? `<div class="sw-note">${esc(s.note)}</div>` : ""}
+        </div>
+      </div>`).join("") || `<div class="sw-note">no switches recorded yet</div>`;
+  }
+
+  {
+    const svg = horizonMod.querySelector("#horizon");
+    const NSVG = "http://www.w3.org/2000/svg";
+    const mk = (tag, attrs, text) => {
+      const n = document.createElementNS(NSVG, tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      if (text != null) n.textContent = text;
+      svg.appendChild(n); return n;
+    };
+    /* One user unit per rendered pixel: the band is now full width, and a fixed
+       viewBox stretched to fill it would stretch every label with it. */
+    const VBW = Math.max(560, Math.round(svg.getBoundingClientRect().width || 560));
+    svg.setAttribute("viewBox", `0 0 ${VBW} 118`);
+    const X0 = 12, X1 = VBW - 12, Y = 96, span = 7 * DAY;
+    const x = t => X0 + (t - NOW) / span * (X1 - X0);
+    for (let d = 0; d <= 7; d++) {
+      const t = NOW + d * DAY;
+      mk("line", { x1: x(t), x2: x(t), y1: Y - 6, y2: Y, class: "hz-tick" });
+      if (d && d < 7) mk("text", { x: x(t), y: Y + 13, "text-anchor": "middle", class: "hz-day" },
+        new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" }).format(new Date(t)));
+    }
+    mk("line", { x1: X0, x2: X1, y1: Y, y2: Y, class: "hz-axis" });
+    const byKey = new Map();
+    for (const p of activeProviders) for (const w of p.windows) {
+      const t = endOf(w);
+      if (t == null || t <= NOW || t >= NOW + span) continue;
+      const key = `${p.display}@${Math.round(t / MIN)}`;
+      if (!byKey.has(key)) byKey.set(key, { t, p, parts: [] });
+      byKey.get(key).parts.push(shortName(w));
+    }
+    const events = [...byKey.values()].sort((a, b) => a.t - b.t);
+    events.forEach((e, i) => {
+      const xx = x(e.t), yy = Y - 22 - (i % 3) * 26;   // stagger: neighbours never share a line
+      mk("line", { x1: xx, x2: xx, y1: yy + 4, y2: Y, stroke: `var(--${ck(e.p.display)})`, "stroke-dasharray": "2 3", opacity: .55 });
+      mk("circle", { cx: xx, cy: Y, r: 2.6, fill: `var(--${ck(e.p.display)})` });
+      const anchor = xx > X1 - 130 ? "end" : "start", dx = anchor === "end" ? -5 : 6;
+      mk("text", { x: xx + dx, y: yy, "text-anchor": anchor, class: "hz-label", fill: `var(--${ck(e.p.display)}-hot)` },
+        `${e.p.display} ${e.parts.join(" + ")}`);
+      mk("text", { x: xx + dx, y: yy + 11, "text-anchor": anchor, class: "hz-when" }, `in ${fmtDur(e.t - NOW)}`);
+    });
+  }
+
+  /* approach plot + deviation register — every series class drawn, the switches
+     under the frame deciding which of them is on the glass */
+  {
+    const plotWrap = document.createElement("div");
+    plotWrapNode = plotWrap;
+    plotWrap.className = "plot-wrap";
+    plotWrap.dataset.trailHours = "all";
+    /* the theater's 900 × 506 is 16:9 — the shape of the big screen it plays
+       on, so the scaled frame meets the glass with almost nothing to spare */
+    const VW = plotTheater ? 900 : plotExpanded ? 820 : 560,
+          VH = plotTheater ? 506 : plotExpanded ? 500 : 360;
+    plotWrap.innerHTML = `
+      <section class="module plot-pane">
+        <div class="plot-head">
+          <span class="kicker">Approach plot</span>
+          <div class="plot-controls" aria-label="Approach plot controls">
+            <button class="plot-control plot-expand" type="button"
+              aria-pressed="${plotExpanded}">${plotExpanded ? "Collapse" : "Expand plot"}</button>
+            <button class="plot-control plot-fullscreen" type="button"
+              aria-pressed="${plotTheater}"
+              title="${plotTheater
+                ? "Hand the glass back — or click the frame, or press Escape"
+                : "Blow the frame up to fill the screen — clicking the frame does it too"}"
+              >${plotTheater ? "Exit full screen" : "Full screen"}</button>
+          </div>
+        </div>
+        <svg id="ils" viewBox="0 0 ${VW} ${VH}" aria-label="Usage approach plot"></svg>
+        <div class="plot-foot">
+          <div class="plot-switches" aria-label="Approach plot series">
+            <button class="plot-switch plot-switch-hold" type="button" data-facet="anthropic"
+              title="Hold the three Claude accounts at full strength — Codex and Kimi recede. Click to latch it; rest on it to borrow it."
+              >anthropic only</button>
+            <span class="plot-switch-sep" aria-hidden="true"></span>
+            ${PLOT_FACETS.map(facet => `<button class="plot-switch" type="button"
+              data-facet="${facet.id}" style="--sw: var(--${facet.colour})"
+              title="${facet.hint}. Click to latch it; rest on it to see it alone."
+              >${facet.label}</button>`).join("")}
+          </div>
+          <div class="plot-key">
+            <span>${badgeKeySVG("circle")}${wclass("7 DAY", false)} budget</span>
+            <span>${badgeKeySVG("triangle")}${wclass("5 HOUR", true)} throttle</span>
+            <span>${badgeKeySVG("diamond")}Fable</span>
+            <span>letter = account</span>
+            <span>${claudeBurstSVG(12)}Claude pool</span>
+          </div>
+        </div>
+      </section>
+      <section class="module plot-side">
+        <div class="kicker">Deviation register</div>
+        <div class="reg-axis" style="margin-top:4px">
+          <span></span><span></span>
+          <span class="reg-axis-scale"><span>−50% · TRAILING</span><span>◆ EVEN</span><span>AHEAD · +50%</span></span>
+          <span></span>
+        </div>
+        <div id="plot-legend" style="flex:1; display:flex; flex-direction:column; justify-content:space-evenly"></div>
+      </section>`;
+    deck.appendChild(plotWrap);
+    plotWrap.querySelector(".plot-expand").addEventListener("click", () => {
+      plotExpanded = !plotExpanded;
+      try { localStorage.setItem(PLOT_EXPANDED_KEY, plotExpanded ? "1" : "0"); } catch { /* URL param still holds */ }
+      render();
+    });
+    plotWrap.querySelector(".plot-fullscreen").addEventListener("click",
+      () => setPlotTheater(!plotTheater));
+    /* ── click latches, resting borrows ──
+       A latch is remembered and rides the reload. A preview lasts exactly as long
+       as the operator's attention does — nothing stored, nothing moved, and the
+       frame handed straight back on release. Focus counts as attention too, so a
+       keyboard or a tap reads the same as a pointer. Neither re-renders: the plot
+       already carries every class, so both are a pass of class flips. */
+    plotSwitchNodes = [...plotWrap.querySelectorAll(".plot-switch")];
+    for (const button of plotSwitchNodes) {
+      const id = button.dataset.facet;
+      const hold = id === "anthropic";
+      const preview = on => hold ? setAnthropicOnly(on, false) : setFacetPreview(on ? id : null);
+      button.addEventListener("click", () => {
+        if (hold) setAnthropicOnly(!anthropicOnly, true);
+        else setFacet(id, !plotFacets.has(id));
+      });
+      button.addEventListener("pointerenter", () => preview(true));
+      button.addEventListener("pointerleave", () => preview(false));
+      button.addEventListener("pointercancel", () => preview(false));
+      button.addEventListener("focus", () => preview(true));
+      button.addEventListener("blur", () => preview(false));
+    }
+
+    const svg = plotWrap.querySelector("#ils");
+    /* the frame itself is the way into the theater and the way back out. The
+       marks on it are hover instruments — nothing on the plot spends a click —
+       so the click is free to mean the one thing the cursor already promises. */
+    svg.addEventListener("click", () => setPlotTheater(!plotTheater));
+    const NSVG = "http://www.w3.org/2000/svg";
+    const mk = (tag, attrs, text, parent = svg) => {
+      const n = document.createElementNS(NSVG, tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      if (text != null) n.textContent = text;
+      parent.appendChild(n); return n;
+    };
+    /* the left margin carries a per-cent glyph on every y tick now — 34 put
+       "50%" on top of the rotated USED label, so the gutter buys the room back */
+    /* The right gutter carries each trail's tag beside its own right-anchored
+       value, so it has to hold the widest label the data actually produces —
+       measured, not assumed. Assuming it is how "Alpha 5 HOUR · presumed" came
+       to be printed straight through the 0% it qualifies: the qualifier is the
+       honest half of that row, so the gutter yields to the words rather than the
+       words to the gutter. Only if fitting them would eat the frame itself does
+       the type step down instead — the tag never silently loses a character. */
+    let widestTag = 0;
+    for (const p of activeProviders) {
+      for (const w of p.windows) {
+        if (!REGISTER_METERS.has(w.id)) continue;
+        widestTag = Math.max(widestTag,
+          `${p.display} ${shortName(w)}${w.presumed ? " · presumed" : ""}`.length);
+      }
+    }
+    const TAG_PX = 11, ADVANCE = .605;      /* mono advance, in ems of type size */
+    /* +5 columns for the widest value ("100%") and its gap, +22 for the leader
+       stub on the left and the frame's own right edge */
+    const gutterAt = px => Math.ceil((widestTag + 5) * px * ADVANCE) + 22;
+    const GUTTER_CAP = Math.round(VW * .4);
+    const tagPx = gutterAt(TAG_PX) <= GUTTER_CAP
+      ? TAG_PX : Math.max(8.5, TAG_PX * GUTTER_CAP / gutterAt(TAG_PX));
+    const M = {
+      l: 40, t: 18, b: 28,
+      r: Math.max(plotExpanded || plotTheater ? 170 : 150, Math.min(gutterAt(tagPx), GUTTER_CAP)),
+    };
+    const W = VW - M.l - M.r, H = VH - M.t - M.b;
+    const x = e => M.l + e / 100 * W, y = u => M.t + (100 - u) / 100 * H;
+    plotBounds = { top: M.t, bottom: M.t + H };
+    const defs = mk("defs", {});
+    const arrow = mk("marker", { id: "projection-arrow", markerWidth: 7, markerHeight: 7,
+      refX: 6, refY: 3.5, orient: "auto", markerUnits: "userSpaceOnUse" }, null, defs);
+    mk("path", { d: "M0,0 L7,3.5 L0,7 Z", fill: "var(--status-capped)" }, null, arrow);
+    mk("rect", { x: M.l, y: M.t, width: W, height: H, rx: 6, class: "ils-frame" });
+    for (const v of [25, 50, 75]) {
+      mk("line", { x1: x(v), x2: x(v), y1: M.t, y2: M.t + H, class: "ils-grid" });
+      mk("line", { x1: M.l, x2: M.l + W, y1: y(v), y2: y(v), class: "ils-grid" });
+    }
+    mk("line", { x1: x(0), y1: y(0), x2: x(100), y2: y(100), class: "ils-beam-glow" });
+    mk("line", { x1: x(0), y1: y(0), x2: x(100), y2: y(100), class: "ils-beam" });
+    mk("text", { x: x(5), y: y(93), class: "ils-zone-label" }, "AHEAD OF GLIDESLOPE");
+    mk("text", { x: x(55), y: y(7), class: "ils-zone-label" }, "TRAILING GLIDESLOPE");
+    mk("text", { x: x(50), y: VH - 7, "text-anchor": "middle", class: "ils-axis" }, "WINDOW ELAPSED →");
+    mk("text", { x: 12, y: y(50), transform: `rotate(-90 12 ${y(50)})`, "text-anchor": "middle", class: "ils-axis" }, "USED →");
+    /* both axes are percentages — elapsed and used — so both ticks say so */
+    for (const v of [0, 50, 100]) {
+      mk("text", { x: x(v), y: M.t + H + 12, "text-anchor": "middle", class: "ils-axis" }, `${v}%`);
+      mk("text", { x: M.l - 5, y: y(v) + 3, "text-anchor": "end", class: "ils-axis" }, `${v}%`);
+    }
+    /* switching every class off is a legitimate thing to do, and a bare frame with
+       no explanation reads as an instrument that broke rather than one you emptied */
+    plotEmptyNote = mk("text", { x: M.l + W / 2, y: M.t + H / 2, class: "ils-empty" },
+      "EVERY SERIES SWITCHED OFF");
+
+    /* ── the flight path ──
+       Where this window ends up if nothing changes. The rate is the one the
+       instrument already flies by (exhaustAt): total burn over elapsed time —
+       so on these axes the projection is exactly the ray from the window's own
+       origin through the mark, and it is drawn FORWARD from the mark only. The
+       stretch behind is the trail, which is already on the glass; redrawing it
+       as a projection would dress a reading up as a guess.
+
+       It is a child of the reticle group, so it appears and vanishes with the
+       hover and costs nothing when the pointer is elsewhere.
+
+       Only a live reading gets one. A presumed zero has no rate, an unread
+       window has no number, and a stale floor's rate stopped being true when
+       the read did — projecting any of them produces a confident time-of-death
+       with nothing behind it, which is the one thing this page must never say. */
+    function drawFlightPath(g, mark, markId) {
+      for (const horizon of horizonsFor(mark)) {
+        const projection = projectionFor(horizon, mark);
+        if (!projection) continue;
+        const { endE, endU, requestMs, forwardMs } = projection;
+        const x0 = x(mark.e), y0 = y(mark.u), x1 = x(endE), y1 = y(endU);
+        const d = `M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}`;
+        /* The hit stroke is 12px wide and every horizon starts at the SAME point
+           — the mark — so together they threw a fat invisible pad over the very
+           mark they belong to, and the mark could no longer be hovered or
+           tooltipped. The pad starts a little way down the line instead: far
+           enough to clear the symbol, close enough that the line is still easy
+           to catch. */
+        const reach = Math.hypot(x1 - x0, y1 - y0);
+        const step = reach > 0 ? Math.min(11, reach * 0.5) / reach : 0;
+        const dHit = `M${(x0 + (x1 - x0) * step).toFixed(1)},${(y0 + (y1 - y0) * step).toFixed(1)} `
+          + `L${x1.toFixed(1)},${y1.toFixed(1)}`;
+        const attrs = {
+          "data-mark": markId, "data-provider": mark.p.provider,
+          "data-horizon": horizon.id, "data-rank": horizon.rank,
+          "data-request-ms": Math.round(requestMs),
+          "data-forward-ms": Math.round(forwardMs),
+        };
+        /* The nearest horizon goes bare: solid, no arrowhead, no terminus dot. It
+           is the shortest line on the frame and the one read most often, and three
+           ornaments on a stub that spans a few pixels is what made it unreadable.
+           Every longer horizon keeps its arrow and dot, which is what tells you
+           where each forecast actually stops. Keyed on rank, so it stays the
+           nearest line whatever each class calls it. */
+        const bare = horizon.rank === "near";
+        mk("path", { ...attrs, class: `ils-projection ils-projection--${horizon.rank}`, d,
+          ...(bare ? {} : { "marker-end": "url(#projection-arrow)" }) }, null, g);
+        mk("path", { ...attrs, class: "ils-projection-hit", d: dHit }, null, g);
+        if (!bare) {
+          mk("circle", { ...attrs, cx: x(endE), cy: y(endU), r: 2.8,
+            class: "ils-projection-dot" }, null, g);
+        }
+        /* An endpoint sitting on top of the mark is not a separate thing to
+           point at — and its 9px pad would swallow the mark's own hover, which
+           is exactly what a short or flat forecast produces. So the terminus
+           gets an interactive target only when it is far enough away to be one,
+           and the bare 1h line never gets one at all: it has no dot to point at.
+           The line's own offset hit-stroke still carries its tooltip. */
+        if (!bare && reach > 10) {
+          mk("circle", { ...attrs, cx: x(endE), cy: y(endU), r: 9,
+            class: "ils-projection-dot-hit" }, null, g);
+        }
+      }
+    }
+
+    const marks = [];
+    for (const p of activeProviders) {
+      const windows = [...p.windows].filter(w => REGISTER_METERS.has(w.id)).sort((a, b) =>
+        (a.minutes === 300 ? 1 : 0) - (b.minutes === 300 ? 1 : 0));
+      for (const w of windows) {
+        const session = (w.minutes || 0) === 300;
+        /* which switch commands this mark. The frame draws every facet and the
+           switches decide what is on the glass, so nothing is filtered out here —
+           the register is a family roll-call either way: every eligible model
+           gets a row, including a no-clock or unread window that cannot honestly
+           occupy the frame at all. */
+        const facet = facetOf(w);
+        const state = sessionState(p, w);
+        const samples = (SNAP.trails[`${p.display}/${w.id}`] || [])
+          .map(point => point.length >= 3
+            ? { at: Number(point[0]), e: Number(point[1]), u: Number(point[2]) }
+            : { at: null, e: Number(point[0]), u: Number(point[1]) })
+          .filter(point => Number.isFinite(point.e) && Number.isFinite(point.u));
+        const trail = samples.map(point => [point.e, point.u]);
+        let at = null;
+        let plottable = false;
+        let position = null;
+        if (w.pct != null && !rolled(w) && !state.unknown && Boolean(w.resets)) {
+          const pace = paceOf(w);
+          if (pace != null) {
+            /* A last-known read is pinned to its observation, not dragged along
+               to now: the clock moved, the cached number did not. */
+            at = state.lastKnown
+              ? clamp((Date.parse(p.observed_at || "") - startOf(w))
+                      / (endOf(w) - startOf(w)) * 100, 0, 100)
+              : pace;
+            position = [Math.round(at * 100) / 100, w.pct];
+            /* A presumed value has a real clock and a real zero, so it gets a
+               floor mark. It has no sample history, so do not invent a trail. */
+            if (!w.presumed) {
+              const live = position;
+              if (!trail.length || Math.abs(trail[trail.length - 1][0] - live[0]) > .05
+                  || trail[trail.length - 1][1] !== live[1]) trail.push(live);
+              samples.push({ at: NOW, e: live[0], u: live[1] });
+            }
+            plottable = true;
+          }
+        }
+        marks.push({ p, w, trail, samples, session, lastKnown: state.lastKnown,
+          facet, presumed: w.presumed, at, position, plottable });
+      }
+    }
+    for (const m of marks) {
+      /* Both axes must be known to occupy the frame. A presumed value satisfies
+         that rule: its real clock and real zero are plotted as a marked floor,
+         while unread has no y value and stays off the frame. A presumed window
+         has no sample history, so its one mark gets no synthesized trail. */
+      if (m.presumed || !m.plottable || m.trail.length < 2) continue;
+      const d = m.trail.map(([e, u], i) => `${i ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`).join(" ");
+      /* the trail knows its source: which seat(s) flew this stretch of burn.
+         `color` carries the account hue so the elsewhere-glow can radiate in
+         the trail's own light (currentColor), not a borrowed one. */
+      mk("path", { d, class: `ils-trail ${m.session ? "session" : "weekly"}`,
+        "data-mark": `${m.p.display}/${m.w.id}`, "data-provider": m.p.provider,
+        "data-facet": m.facet, "data-here": String(isHere(m.p)), "data-there": String(isThere(m.p)),
+        stroke: `var(--${ck(m.p.display)})`, style: `color:var(--${ck(m.p.display)})` });
+    }
+    const legend = plotWrap.querySelector("#plot-legend");
+    const plotTags = marks.filter(m => m.at != null && m.w.pct != null)
+      .map(m => ({ m, e: m.at, u: m.w.pct, ty: y(m.w.pct) }));
+    const registerTags = marks.map(m =>
+      ({ m, e: m.at, u: m.w.pct, ty: m.w.pct == null ? null : y(m.w.pct) }));
+    for (const t of plotTags) {
+      const capped = t.m.w.pct >= 99.5;
+      const colour = capped ? "var(--status-capped)" : `var(--${ck(t.m.p.display)}-hot)`;
+      const markId = `${t.m.p.display}/${t.m.w.id}`;
+      const loggedIn = isHere(t.m.p), remote = isThere(t.m.p);
+      const g = mk("g", { class: `ils-mark ${t.m.session ? "session" : "weekly"}` +
+        (t.m.lastKnown ? " last-known" : "") + (t.m.presumed ? " presumed" : ""),
+        "data-mark": markId, "data-provider": t.m.p.provider,
+        "data-facet": t.m.facet,
+        "data-elapsed": t.e.toFixed(1),
+        "data-used": Math.round(t.u).toString() });
+      const leader = mk("line", { x1: x(t.e), y1: y(t.u), x2: M.l + W + 6, y2: t.ty, stroke: "var(--bezel-bright)", "stroke-width": .7, opacity: .6 }, null, g);
+      /* the account you are flying, said in luminance rather than hue — the
+         three Anthropic marks are siblings now, so colour cannot answer this.
+         A second ring, dashed and dimmer, says the same of a satellite that is
+         not this one: someone is spending it, just not from this seat. */
+      if (loggedIn) mk("circle", { cx: x(t.e), cy: y(t.u), r: 15, class: "active-ring" }, null, g);
+      else if (remote) mk("circle", { cx: x(t.e), cy: y(t.u), r: 15, class: "remote-ring" }, null, g);
+      /* the meter badge: outline = window class (circle 7 DAY, triangle 5 HOUR,
+         diamond Fable), letter = account. A presumed value keeps its distinct
+         dim treatment. */
+      const [badgeTag, badgeAttrs, badgeDy] = badgeOutline(badgeShape(t.m.w), x(t.e), y(t.u), 8.5);
+      mk(badgeTag, { ...badgeAttrs, class: `ils-badge ${t.m.session ? "ils-throttle session" : "ils-budget"}`,
+        style: `stroke:${colour}` }, null, g);
+      mk("text", { x: x(t.e), y: y(t.u) + badgeDy, class: "ils-badge-letter", style: `fill:${colour}` },
+        badgeLetter(t.m.p.display), g);
+      const reticle = mk("g", { class: "selection-reticle", "data-mark": markId,
+        "data-facet": t.m.facet,
+        "data-elapsed": `${t.e.toFixed(1)}%`, "data-used": `${Math.round(t.u)}%` });
+      mk("line", { x1: x(t.e), y1: y(t.u), x2: x(t.e), y2: M.t + H }, null, reticle);
+      mk("line", { x1: M.l, y1: y(t.u), x2: x(t.e), y2: y(t.u) }, null, reticle);
+      mk("circle", { cx: x(t.e), cy: y(t.u), r: 9, class: "reticle-ring" }, null, reticle);
+      mk("text", { x: x(t.e), y: VH - 7, "text-anchor": "middle", class: "reticle-readout" },
+        `ELAPSED ${t.e.toFixed(1)}%`, reticle);
+      mk("text", { x: M.l + 3, y: y(t.u) - 5, class: "reticle-readout" },
+        `USED ${Math.round(t.u)}%`, reticle);
+      drawFlightPath(reticle, { ...t.m, e: t.e, u: t.u }, markId);
+      const short = shortName(t.m.w);
+      const tag = mk("text", { x: M.l + W + 10, y: t.ty + 3.5, class: "ils-tag",
+        "font-size": `${tagPx}px`, fill: `var(--${ck(t.m.p.display)}-hot)` },
+        `${t.m.p.display} ${short}${t.m.presumed ? " · presumed" : ""}`, g);
+      const value = mk("text", { x: VW - 4, y: t.ty + 3.5, "text-anchor": "end", class: "ils-tag-pct",
+        "font-size": `${tagPx}px`,
+        fill: capped ? "var(--status-capped)" : "var(--ink)" }, `${Math.round(t.m.w.pct)}%`, g);
+      /* the gutter is spread by relayoutTags, over whatever is on the glass — a
+         switch closing a class must close the space it took with it */
+      tagLayout.push({ facet: t.m.facet, baseY: y(t.u), leader, tag, value });
+    }
+    /* ── the pool on the beam ──
+       The pooled read needs no new axes. Both of its coordinates are means of
+       coordinates already on this frame — mean window-elapsed against mean used
+       — so the y = x beam judges the pool exactly as it judges an account, and
+       "above the beam" keeps its one meaning. The trail is the same mean taken
+       at every past sample instant, which is the only place the *rate* across
+       three offset windows can actually be seen.
+
+       Because both coordinates are honest coordinates, the pool earns everything
+       an account's mark has: a trail, a reticle readout, a register row and a
+       forecast. Its window is the MEAN of its components' windows, which is
+       exactly the window whose phase the ◆ already plots — with equal spans,
+       mean phase = (now − mean start) / span, so the mean clock and the mean
+       phase are the same statement and the countdown cannot disagree with the ◆.
+
+       One honesty note the operator ratified knowingly (2026-08-17): the pool is
+       a FLOOR whenever any component was last read stale, and a floor's rate is a
+       floor too, so a pooled forecast leans slow — it says you have longer than
+       you do. The rate itself is measured from live samples (whatever is being
+       flown right now moves the mean), and the mark and the tooltip both carry
+       the floor, so the read is disclosed rather than withheld. */
+    const poolPlot = SNAP.pool;
+    let poolTag = null;
+    if (poolPlot) {
+      const px = x(poolPlot.pace_percent), py = y(poolPlot.used_percent);
+      const series = marks
+        .filter(m => m.p.provider === "Claude" && m.w.id === "weekly_all")
+        .map(m => ({ w: m.w, pts: (SNAP.trails[`${m.p.display}/${m.w.id}`] || [])
+          .filter(pt => pt.length >= 3)
+          .map(pt => ({ at: Number(pt[0]), u: Number(pt[2]) })) }))
+        .filter(s => s.pts.length && startOf(s.w) != null && endOf(s.w) != null);
+      const trail = [];
+      const poolSamples = [];
+      /* Only instants where EVERY component has been read are plotted: a mean
+         missing a term is a different, smaller number wearing the same axis. */
+      if (series.length === poolPlot.count) {
+        const times = [...new Set(series.flatMap(s => s.pts.map(p => p.at)))].sort((a, b) => a - b);
+        const cursor = series.map(() => -1);
+        for (const t of times) {
+          let used = 0, elapsed = 0, ready = true;
+          series.forEach((s, i) => {
+            while (cursor[i] + 1 < s.pts.length && s.pts[cursor[i] + 1].at <= t) cursor[i]++;
+            if (cursor[i] < 0) { ready = false; return; }  // no reading yet for this account
+            const st = startOf(s.w), en = endOf(s.w);
+            used += s.pts[cursor[i]].u;                     // carried forward: unread ≠ moved
+            elapsed += clamp((t - st) / (en - st) * 100, 0, 100);
+          });
+          if (ready) {
+            const e = elapsed / series.length, u = used / series.length;
+            trail.push([e, u]);
+            poolSamples.push({ at: t, e, u });
+          }
+        }
+      }
+      trail.push([poolPlot.pace_percent, poolPlot.used_percent]);
+      poolSamples.push({ at: NOW, e: poolPlot.pace_percent, u: poolPlot.used_percent });
+      if (trail.length > 1) {
+        mk("path", { class: "ils-pool-trail", "data-mark": POOL_MARK,
+          "data-provider": "Claude", "data-facet": "weekly",
+          d: trail.map(([e, u], i) => `${i ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`).join(" ") });
+      }
+      const g = mk("g", { class: "ils-pool-mark", "data-mark": POOL_MARK,
+        "data-provider": "Claude", "data-facet": "weekly",
+        "data-elapsed": poolPlot.pace_percent.toFixed(1),
+        "data-used": Math.round(poolPlot.used_percent).toString() });
+      /* first child, so a ray or the tag drawn after it still wins the pointer —
+         this only has to catch what those two miss, which is most of the mark */
+      mk("circle", { cx: px, cy: py, r: 11, class: "ils-pool-hit" }, null, g);
+      claudeBurst(mk, px, py, 8.5, g);
+      const left = px > (M.l + W * .72);  // never let the label run off the frame
+      mk("text", { x: left ? px - 12 : px + 12, y: py + 4, class: "ils-pool-tag",
+        "text-anchor": left ? "end" : "start" },
+        `CLAUDE POOL ${poolPlot.used_percent.toFixed(0)}%${poolPlot.floor ? "+" : ""}`, g);
+      /* the same reticle and the same four forecasts every other mark carries —
+         the pool has a clock and a measured rate, so it can answer both questions */
+      if (POOL_WINDOW) {
+        const reticle = mk("g", { class: "selection-reticle", "data-mark": POOL_MARK,
+          "data-facet": "weekly",
+          "data-elapsed": `${poolPlot.pace_percent.toFixed(1)}%`,
+          "data-used": `${Math.round(poolPlot.used_percent)}%` });
+        mk("line", { x1: px, y1: py, x2: px, y2: M.t + H }, null, reticle);
+        mk("line", { x1: M.l, y1: py, x2: px, y2: py }, null, reticle);
+        mk("circle", { cx: px, cy: py, r: 11, class: "reticle-ring" }, null, reticle);
+        mk("text", { x: px, y: VH - 7, "text-anchor": "middle", class: "reticle-readout" },
+          `ELAPSED ${poolPlot.pace_percent.toFixed(1)}%`, reticle);
+        mk("text", { x: M.l + 3, y: py - 5, class: "reticle-readout" },
+          `USED ${Math.round(poolPlot.used_percent)}%`, reticle);
+        drawFlightPath(reticle, {
+          p: POOL_PROVIDER, w: POOL_WINDOW, samples: poolSamples, session: false,
+          lastKnown: false, presumed: false,
+          e: poolPlot.pace_percent, u: poolPlot.used_percent,
+        }, POOL_MARK);
+        poolTag = { m: { p: POOL_PROVIDER, w: POOL_WINDOW, session: false,
+                         lastKnown: false, presumed: false, facet: "weekly",
+                         pool: poolPlot },
+                    e: poolPlot.pace_percent, u: poolPlot.used_percent, ty: py };
+      }
+    }
+    /* ── the Fable pool ──
+       Every Fable trail is already on the frame via the named-meter facet, so
+       the pool's own job here is smaller than the all-models pool's: it does
+       not need a second synthetic mark drawn on the glass, only to enter the
+       register (and the tooltip vocabulary) the same way every other pooled
+       read does — under its facet switch, wearing the F code. */
+    const poolFablePlot = SNAP.pool_fable;
+    let poolFableTag = null;
+    if (poolFablePlot && POOL_FABLE_WINDOW) {
+      poolFableTag = { m: { p: POOL_FABLE_PROVIDER, w: POOL_FABLE_WINDOW, session: false,
+                            lastKnown: false, presumed: false, facet: "weekly_fable",
+                            pool: poolFablePlot },
+                       e: poolFablePlot.pace_percent, u: poolFablePlot.used_percent, ty: null };
+    }
+
+    /* The register is grouped by the provider's family, not a used-percent
+       heat-map. A family occupies one box and cannot split across columns. */
+    const groups = new Map();
+    for (const t of registerTags) {
+      const family = familyFor(t.m.p.provider);
+      if (!groups.has(family)) groups.set(family, []);
+      groups.get(family).push(t);
+    }
+    /* a dormant account is never plotted and never pooled, but it still gets
+       one dimmed row — a family roll-call must list every account, live or
+       not, and losing one from the list reads as "forgot it exists" rather
+       than "nothing left to say about it". It goes in with the accounts,
+       BEFORE the pool: the pool's own place is last inside the box, under
+       every account it is made of, and that invariant does not bend for a
+       row that is not even one of its components. */
+    for (const p of dormantProviders) {
+      const family = familyFor(p.provider);
+      if (!groups.has(family)) groups.set(family, []);
+      groups.get(family).push({ m: { p, dormant: true } });
+    }
+    /* the pool is last inside the Anthropic box — under the accounts it is made
+       of, which is the only place it means anything. It is not a family of its
+       own, so it never creates a box: no Anthropic accounts, no pooled row. */
+    if (poolTag && groups.has("Anthropic")) groups.get("Anthropic").push(poolTag);
+    if (poolFableTag && groups.has("Anthropic")) groups.get("Anthropic").push(poolFableTag);
+    for (const [family, familyTags] of [...groups.entries()].sort((a, b) => familyRank(a[0]) - familyRank(b[0]))) {
+      const box = document.createElement("section");
+      box.className = `register-family ${family === "Anthropic" ? "family-anthropic" : ""}`;
+      box.dataset.family = family;
+      box.innerHTML = `<div class="family-label">${esc(family)}</div>`;
+      const rows = document.createElement("div");
+      rows.className = "family-rows";
+      for (const t of familyTags) {
+        if (t.m.dormant) {
+          const drow = document.createElement("div");
+          drow.className = "reg-row dormant";
+          drow.dataset.mark = `${t.m.p.display}/dormant`;
+          drow.dataset.provider = t.m.p.provider;
+          drow.dataset.account = t.m.p.display;
+          drow.dataset.dormant = "true";
+          drow.style.setProperty("--acc", `var(--${ck(t.m.p.display)})`);
+          drow.innerHTML = `
+            <span class="provider-key"></span>
+            <span class="reg-name"><span class="reg-acct">${esc(t.m.p.display)}</span>` +
+              `<span class="reg-win"><span class="dormant-tag">dormant</span></span>` +
+              `<span class="reg-clock"><span class="nil">—</span></span></span>
+            <div class="reg-div"><div class="reg-track"></div><div class="reg-zero"></div></div>
+            <span class="reg-val num nil">—</span>`;
+          rows.appendChild(drow);
+          continue;
+        }
+        const pooled = t.m.pool || null;
+        const st = stateOf(t.m.w);
+        const capped = t.m.w.pct != null && t.m.w.pct >= 99.5;
+        const row = document.createElement("div");
+        row.className = `reg-row ${t.m.session ? "session" : "weekly"}${pooled ? " pooled" : ""}`;
+        row.dataset.mark = `${t.m.p.display}/${t.m.w.id}`;
+        row.dataset.provider = t.m.p.provider;
+        row.dataset.account = t.m.p.display;
+        row.dataset.window = t.m.w.id;
+        row.dataset.facet = t.m.facet;
+        /* the logged-in account reads brighter here for the same reason its
+           mark wears a ring: one bright name, in every place you might look */
+        row.dataset.active = String(isHere(t.m.p));
+        row.dataset.here = String(isHere(t.m.p));
+        row.dataset.there = String(isThere(t.m.p));
+        row.style.setProperty("--acc", `var(--${ck(t.m.p.display)})`);
+        const dev = t.e == null || t.m.w.pct == null ? null : t.m.w.pct - t.e;
+        const mag = dev == null ? 0 : Math.min(Math.abs(dev), 50);
+        const side = capped ? "side-cap" : st.dev === "dev-hot" ? "side-hot"
+          : st.dev === "dev-bank" ? "side-bank" : dev == null || dev >= 0 ? "side-even-r" : "side-even-l";
+        /* a pooled read built on a stale component understates, and the register
+           says so in the one place it has for a qualifier */
+        const note = t.m.lastKnown ? "LAST KNOWN"
+          : `${st.label}${pooled && pooled.floor ? " · FLOOR" : ""}`;
+        const bar = dev == null ? "" : `<div class="reg-bar ${side}" style="${dev >= 0 ? "left" : "right"}:50%; width:${mag}%"></div>`;
+        row.innerHTML = `
+          <span class="provider-key${pooled ? "" : " badge-key"}">${pooled ? claudeBurstSVG(13) : badgeSVG(t.m.p, t.m.w)}</span>
+          <span class="reg-name">${registerName(t.m.p, t.m.w)}<small class="${t.m.lastKnown ? "dev-even" : st.dev}">${note}</small></span>
+          <div class="reg-div"><div class="reg-track"></div>${bar}<div class="reg-zero"></div></div>
+          <!-- the deviation the row could not compute drops the state's colour
+               with the number: an orange dash would name a position, and the
+               absence of a number is exactly the claim that there is none -->
+          <span class="reg-val num ${dev == null ? "nil" : st.dev}">${dev == null ? "—"
+            : (dev >= 0 ? "+" : "−") + Math.abs(dev).toFixed(0) + "<small>%</small>"}</span>`;
+        rows.appendChild(row);
+        bindTip(row, () => (pooled
+          ? `<b>Claude pool${t.m.w.id === "weekly_fable" ? " · Fable" : ""} — ${windowChip(t.m.w)}</b><br>` +
+            `${esc(pooled.count)} Max 20x weeklies on ${esc(pooled.count)} clocks, read as one ` +
+            `budget: used is the mean of ${pooled.accounts.map(esc).join(" + ")}, ◆ the mean of ` +
+            `their phases — so this window is their mean window.<br>` +
+            `${t.e.toFixed(1)}% of the pooled window elapsed · ${t.m.w.pct.toFixed(1)}% used<br>` +
+            `${capped ? "At the ceiling until reset." : (dev >= 0 ? "Ahead of" : "Trailing") +
+              " the glideslope by " + Math.abs(dev).toFixed(0) + " points."}<br>` +
+            (pooled.floor
+              ? `Floor: a component was last read stale, so the true number is only ` +
+                `higher — and a forecast off this rate leans slow.<br>` : "") +
+            `next actual reset ${esc(pooled.next_reset_account)} ` +
+            `${fmtZoned(pooled.next_reset_at)}`
+          : `<b>${esc(pname(t.m.p))} — ${windowDisplayLabel(t.m.w)}</b><br>` +
+          (t.e == null ? (t.m.w.resets ? "This window is not currently plottable." : "No reset clock — not plotted.") :
+          (t.m.lastKnown ? `Last known read, ${fmtDur(observedAge(t.m.p))} ago — plotted where it was observed.<br>` : "") +
+          `${t.e.toFixed(1)}% of the window elapsed · ${esc(t.m.w.pct)}% used<br>` +
+          (t.m.session
+            ? `A 5 HOUR session is a throttle, not a budget — above the line only means the next hours are slower.`
+            : `${capped ? "At the ceiling until reset." : (dev >= 0 ? "Ahead of" : "Trailing") + " the glideslope by " + Math.abs(dev).toFixed(0) + " points."}`))));
+      }
+      box.appendChild(rows);
+      legend.appendChild(box);
+    }
+    for (const node of plotWrap.querySelectorAll(
+        ".ils-trail[data-mark], .ils-mark[data-mark], .reg-row[data-mark], " +
+        ".ils-pool-trail[data-mark], .ils-pool-mark[data-mark], " +
+        ".ils-projection[data-mark], .ils-projection-hit[data-mark], " +
+        ".ils-projection-dot[data-mark], .ils-projection-dot-hit[data-mark]")) {
+      node.addEventListener("pointerenter", () => applySelection(node.dataset.mark));
+      node.addEventListener("pointerleave", clearSelectionSoon);
+    }
+    /* the switches are drawn on every render, so the frame's state has to be
+       written onto them once at the end of it — nothing else calls this pass */
+    applyEmphasis();
+  }
+
+  /* Reading order, matching the grid: the plot and its register lead, the weekly
+     read beside them, then the full ledger, then the horizon and the switch log.
+     Placement is CSS, but the DOM has to tell the same story — it is what a
+     reader and the tab key follow. */
+  for (const selector of [".plot-wrap", ".weekly-summary", ".full-state", ".spend-mod",
+                         ".horizon-mod", ".switch-mod"]) {
+    const module = deck.querySelector(selector);
+    if (module) deck.appendChild(module);
+  }
+
+  /* fill animation — first paint only; re-renders set widths instantly */
+  const fills = deck.querySelectorAll(".bar-fill");
+  if (firstRender) {
+    requestAnimationFrame(() => fills.forEach(f => f.style.width = `calc(${f.dataset.w}% - 2px)`));
+    firstRender = false;
+  } else {
+    fills.forEach(f => { f.style.transition = "none"; f.style.width = `calc(${f.dataset.w}% - 2px)`; });
+  }
+}
+
+document.getElementById("detail-reload").addEventListener("click", () => {
+  /* This page cannot re-gauge from file://. RELOAD only asks the browser to pick
+     up whatever the 5-minute sampler has already built. */
+  location.replace(freshSnapshotURL());
+});
+
+render();
+setInterval(render, 60_000);   /* clocks and countdowns stay honest while open */
+})();
+</script>
+</body>
+</html>
