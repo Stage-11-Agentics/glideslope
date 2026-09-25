@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#
+# Open a terminal waiting at Claude Code's /login for one account's login home.
+#
+#   claude-login-pane <account>          open a c11 workspace (or Terminal.app) for the login
+#   claude-login-pane --here <account>   what runs inside it: prompt, then Claude Code
+#
+# Built for the Glideslope popup, which runs it through a host action; the browser
+# half of the login is always a human's. With no home yet, `claude-account login`
+# creates one. With a home whose login has lapsed, Claude Code opens in that home
+# for a fresh /login. Nothing here reads, writes or moves a credential.
+set -euo pipefail
+
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+PY=/opt/homebrew/bin/python3
+[ -x "$PY" ] || PY=python3
+ACCOUNT_TOOL="$(cd "$(dirname "$SELF")" && pwd)/claude-account"
+
+usage() { echo "usage: claude-login-pane [--here] <account>" >&2; exit 2; }
+
+if [ "${1:-}" = "--here" ]; then
+    [ -n "${2:-}" ] || usage
+    account="$2"
+    # A login pane must never inherit another session's home.
+    unset CLAUDE_CONFIG_DIR CLAUDE_ACCOUNT_HOME CLAUDE_ACCOUNT
+    home=$("$PY" "$ACCOUNT_TOOL" homes --json | "$PY" -c '
+import json, sys
+wanted = sys.argv[1].lower()
+for row in json.load(sys.stdin):
+    if row.get("email") and ((row.get("call_sign") or "").lower() == wanted or row["home"] == wanted):
+        print(row["home"]); break' "$account")
+    # A home that holds a login (live or lapsed) re-logs in place; anything else goes
+    # through `claude-account login`, which makes or reuses the account's own profile
+    # home. Never fall through to a launch in the default home: that is Charlie's.
+    printf '\n  \033[1mClaude login · %s\033[0m\n' "$account"
+    printf '  Type /login, pick the Claude subscription, and authorize in the browser.\n'
+    printf '  The browser must be signed in to claude.ai as %s first.\n\n' "$account"
+    if [ -n "$home" ]; then
+        exec env CLAUDE_ACCOUNT="$account" "$PY" "$ACCOUNT_TOOL" exec -- claude
+    fi
+    exec "$PY" "$ACCOUNT_TOOL" login "$account"
+fi
+
+[ -n "${1:-}" ] || usage
+account="$1"
+case "$account" in *[!A-Za-z0-9._@-]*) echo "bad account name: $account" >&2; exit 2 ;; esac
+inner="'$SELF' --here '$account'"
+
+C11=/Applications/c11.app/Contents/Resources/bin/c11
+if [ -x "$C11" ]; then
+    env -u C11_SURFACE_ID -u C11_WORKSPACE_ID -u C11_SHELL_INTEGRATION \
+        "$C11" new-workspace --cwd "$HOME" --title "Claude login · $account" \
+        --command "$inner" >/dev/null 2>&1 && {
+        open -a c11 >/dev/null 2>&1 || true
+        echo "login pane opened in c11 for $account"
+        exit 0
+    }
+fi
+osascript -e "tell application \"Terminal\" to do script \"$inner\"" \
+          -e 'tell application "Terminal" to activate' >/dev/null
+echo "login pane opened in Terminal for $account"

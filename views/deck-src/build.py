@@ -176,6 +176,7 @@ def build_snapshot(pos: dict) -> dict:
         # account, local first. `active` is kept as the local half of the same
         # fact so nothing downstream has to know about the fleet to work.
         "logins": [str(name) for name in (a.get("logins") or [])],
+        "held_on": [str(name) for name in (a.get("held_on") or [])],
         "plan": a.get("plan") or "",
         "stale": bool(a.get("stale")),
         "observed_at": a.get("observed_at"),

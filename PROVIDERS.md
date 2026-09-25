@@ -93,6 +93,19 @@ gone falls back to the default home's account, in the launcher and in Glideslope
 `claude` actually gets. Running sessions are never moved; a switch only changes where the
 next one starts.
 
+**Logged in means selected.** A satellite may hold several login homes but is logged in to one
+account: its selection. `logins` names the satellites whose selection an account is (a beacon's
+`login_email`); `held_on` names every satellite holding a home for it (`login_emails`). The
+presumed-fresh check and `--pick` read `held_on`, because an unselected home can still be launched
+into; every "logged in here" mark reads `logins`.
+
+**Switching from the popup.** Clicking a Claude row in the popup opens a confirm dialog; only its
+confirm button sends the host a manifest action label, `Use <Account>` or `Log in <Account>`, over
+the same `runAction` bridge as Refresh. The host maps each label to a command (for example
+`claude-account use alpha`, or `tools/claude-login-pane alpha`, which opens a terminal at
+Claude Code's `/login` for that account's home). The page never holds a command. Without a host the
+dialog says which command to run instead.
+
 **`auto` asks Glideslope.** `glideslope.py --pick --json` → `pick_account()`: sticky — stay on
 the selected account while its 5h session and both weeklies sit under `NOTIFY_PERCENT`
 (moving costs a rebuilt prompt cache on every resumed conversation); past the line, move to

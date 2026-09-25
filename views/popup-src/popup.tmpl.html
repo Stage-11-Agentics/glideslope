@@ -407,6 +407,55 @@
   .reg-row.logged-in.remote-login {
     box-shadow: inset 2px 0 0 var(--ink), inset -2px 0 0 var(--muted-2);
   }
+  /* ── switching accounts ──
+     A Claude row is a door: clicking it opens this dialog, and nothing moves until
+     its confirm button is pressed. The card holds one size in every state, so the
+     buttons never jump while a result comes back. */
+  .reg-row.switchable { cursor: pointer; }
+  .reg-row.switchable:hover { background: color-mix(in oklab, var(--ink) 6%, transparent); }
+  .reg-row.switchable.logged-in:hover { background: color-mix(in oklab, var(--ink) 14%, transparent); }
+  .acct-dialog {
+    position: fixed; inset: 0; z-index: 50;
+    display: none; align-items: center; justify-content: center;
+    background: color-mix(in oklab, var(--void) 74%, transparent);
+  }
+  .acct-dialog[data-open="true"] { display: flex; }
+  .acct-card {
+    width: 400px; min-height: 212px; box-sizing: border-box;
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 18px 18px 14px;
+    border: 1px solid var(--bezel-bright); border-radius: 10px;
+    background: var(--panel);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .55);
+    color: var(--ink-2); font: 500 13px/1.45 var(--sans);
+  }
+  .acct-kicker { color: var(--muted); font: 650 9.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .acct-title { color: var(--ink); font: 700 18px/1.2 var(--sans); }
+  .acct-title .acct-swatch { display: inline-block; width: 9px; height: 9px; margin-right: 8px;
+    border-radius: 50%; background: var(--acc); vertical-align: 2px; }
+  .acct-body { min-height: 40px; }
+  .acct-meters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .acct-meter { padding: 7px 8px; border: 1px solid var(--bezel); border-radius: 6px; background: var(--panel-2); }
+  .acct-meter b { display: block; margin-bottom: 4px; color: var(--ink); font: 700 15px/1 var(--mono); }
+  .acct-meter small { color: var(--muted); font: 650 8.5px/1 var(--mono); letter-spacing: .12em; }
+  .acct-meter.hot b { color: var(--significant); }
+  .acct-status { min-height: 18px; color: var(--muted); font: 600 10.5px/1.4 var(--mono); letter-spacing: .04em; }
+  .acct-status[data-state="error"] { color: var(--significant); }
+  .acct-status[data-state="ok"] { color: var(--codex); }
+  .acct-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+  .acct-actions .spacer { flex: 1; }
+  .acct-btn {
+    width: 112px; height: 30px; padding: 0;
+    border: 1px solid var(--bezel-bright); border-radius: 6px;
+    background: var(--panel-2); color: var(--ink-2);
+    font: 680 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; cursor: pointer;
+  }
+  .acct-btn:hover { color: var(--ink); }
+  .acct-btn.primary { width: 150px; border-color: var(--ink); background: var(--ink); color: var(--void); }
+  .acct-btn.primary:hover { background: #fff; }
+  .acct-btn.quiet { border-color: transparent; background: none; color: var(--muted); }
+  .acct-btn[hidden] { visibility: hidden; display: inline-block; }
+  .acct-btn:disabled { opacity: .45; cursor: default; }
   /* ── a dormant account ──
      No active subscription: never plotted, never pooled, one dimmed row
      wherever this panel would otherwise give it several. */
@@ -780,6 +829,21 @@
   </section>
   <div id="warnings"></div>
 
+  <div class="acct-dialog" id="account-dialog" data-open="false" role="dialog" aria-modal="true" aria-labelledby="acct-title">
+    <div class="acct-card">
+      <div class="acct-kicker" id="acct-kicker">Claude account</div>
+      <div class="acct-title" id="acct-title"></div>
+      <div class="acct-body" id="acct-body"></div>
+      <div class="acct-meters" id="acct-meters"></div>
+      <div class="acct-status" id="acct-status" role="status" aria-live="polite"></div>
+      <div class="acct-actions">
+        <button class="acct-btn quiet" id="acct-relogin" type="button">Log in again</button>
+        <span class="spacer"></span>
+        <button class="acct-btn" id="acct-cancel" type="button">Cancel</button>
+        <button class="acct-btn primary" id="acct-confirm" type="button"></button>
+      </div>
+    </div>
+  </div>
   <footer class="preview-foot">
     <span class="snapshot-age num" id="last-update">Live</span>
     <span class="refresh-status" id="refresh-status" role="status" aria-live="polite"></span>
@@ -1836,6 +1900,13 @@ function fillRegister(register, entries) {
         <span class="reg-dev num ${state.tone}">${deviation == null ? "—"
           : (deviation >= 0 ? "+" : "−") + Math.abs(deviation).toFixed(0) + "%"}</span>
         <span class="reg-used num">${used}</span>`;
+      if (entry.account.provider === "Claude" && !entry.account.dormant) {
+        row.classList.add("switchable");
+        row.title = isHere(entry.account)
+          ? `${entry.account.display} · this machine's account`
+          : `Switch to ${entry.account.display}…`;
+        row.addEventListener("click", () => openAccountDialog(entry.account));
+      }
       rows.appendChild(row);
     }
     box.appendChild(rows);
@@ -2051,10 +2122,156 @@ function requestRefresh() {
 }
 window.gregorovichSurface = window.gregorovichSurface || {};
 window.gregorovichSurface.actionResult = result => {
+  if (result && dialogPending && result.label === dialogPending) {
+    accountActionResult(result);
+    return;
+  }
   if (!result || result.label !== "Refresh" || !refreshBusy) return;
   if (!result.ok) finishRefresh("error", `REFRESH FAILED — ${result.message || "action failed"}`);
 };
 refreshButton.addEventListener("click", requestRefresh);
+
+/* ── switching accounts ──
+   Switching points NEW sessions on this machine at an account; a running session
+   never moves. The page holds no command: it sends the host one manifest action
+   label, "Use <Account>" or "Log in <Account>", and the host decides what runs.
+   Nothing is sent until the dialog's confirm button is pressed. */
+const dialog = document.getElementById("account-dialog");
+const dialogKicker = document.getElementById("acct-kicker");
+const dialogTitle = document.getElementById("acct-title");
+const dialogBody = document.getElementById("acct-body");
+const dialogMeters = document.getElementById("acct-meters");
+const dialogStatus = document.getElementById("acct-status");
+const dialogConfirm = document.getElementById("acct-confirm");
+const dialogCancel = document.getElementById("acct-cancel");
+const dialogRelogin = document.getElementById("acct-relogin");
+const HOT_PERCENT = 90;
+let dialogAccount = null;
+let dialogMode = null;      // "switch" | "here" | "login"
+let dialogPending = null;   // the action label awaiting a result
+const hereName = LOCAL_SAT || "this machine";
+const heldHere = account => isHere(account)
+  || (LOCAL_SAT ? (account.held_on || []).includes(LOCAL_SAT) : false);
+const currentHere = () => (SNAP.accounts || []).find(a => a.provider === "Claude" && isHere(a));
+
+const DIALOG_METERS = [["weekly_all", "7 day"], ["weekly_fable", "Fable"], ["session", "5 hour"]];
+// A window with no reset clock has not started; the register shows it as "—" too.
+const meterUsed = meter => meter && meter.resets_at && meter.used_percent != null
+  ? Math.round(meter.used_percent) : null;
+function meterCells(account) {
+  return DIALOG_METERS.map(([id, label]) => {
+    const meter = (account.limits || []).find(limit => limit.meter_id === id);
+    const used = meterUsed(meter);
+    const hot = used != null && used >= HOT_PERCENT;
+    return `<div class="acct-meter${hot ? " hot" : ""}"><b>${used == null ? "—" : `${used}%`}</b>`
+      + `<small>${escapeHTML(label.toUpperCase())}</small></div>`;
+  }).join("");
+}
+function setDialogStatus(state, text) {
+  dialogStatus.dataset.state = state;
+  dialogStatus.textContent = text;
+}
+function openAccountDialog(account) {
+  if (dialogPending) return;
+  dialogAccount = account;
+  const name = escapeHTML(account.display);
+  const current = currentHere();
+  dialogTitle.style.setProperty("--acc", colorFor(account.display));
+  dialogKicker.textContent = `Claude account · ${hereName}`;
+  dialogMeters.innerHTML = meterCells(account);
+  setDialogStatus("", "");
+  dialogRelogin.hidden = false;
+  dialogCancel.textContent = "Cancel";
+  dialogConfirm.hidden = false;
+  dialogConfirm.disabled = false;
+  if (isHere(account)) {
+    dialogMode = "here";
+    dialogTitle.innerHTML = `<span class="acct-swatch"></span>${name} is in use here`;
+    dialogBody.textContent = `New sessions on ${hereName} already start as ${account.display}.`;
+    dialogRelogin.hidden = true;
+    dialogConfirm.textContent = "Log in again";
+    dialogCancel.textContent = "Close";
+  } else if (heldHere(account)) {
+    dialogMode = "switch";
+    dialogTitle.innerHTML = `<span class="acct-swatch"></span>Switch to ${name}?`;
+    dialogBody.textContent = `New sessions on ${hereName} will start as ${account.display}.`
+      + (current ? ` Sessions already running stay on ${current.display}.` : "");
+    dialogConfirm.textContent = `Switch to ${account.display}`;
+    const hot = DIALOG_METERS.map(([id, label]) => [label,
+      meterUsed((account.limits || []).find(limit => limit.meter_id === id))])
+      .filter(([, used]) => used != null && used >= HOT_PERCENT);
+    if (hot.length) {
+      setDialogStatus("error", `Heads up: ${account.display}'s `
+        + hot.map(([label, used]) => `${label} window is at ${used}%`).join(", ") + ".");
+    }
+  } else {
+    dialogMode = "login";
+    dialogTitle.innerHTML = `<span class="acct-swatch"></span>${name} has no login here`;
+    dialogBody.textContent = `Open a terminal at /login for ${account.display}. `
+      + `Sign the browser in to claude.ai as ${account.display} first.`;
+    dialogRelogin.hidden = true;
+    dialogConfirm.textContent = "Open login";
+  }
+  dialog.dataset.open = "true";
+  dialogCancel.focus();
+}
+function closeAccountDialog() {
+  if (dialogPending) return;
+  dialog.dataset.open = "false";
+  dialogAccount = null;
+  dialogMode = null;
+}
+function sendAccountAction(kind) {
+  if (!dialogAccount || dialogPending) return;
+  const label = `${kind} ${dialogAccount.display}`;
+  if (!postSurface({ action: "runAction", label })) {
+    const who = dialogAccount.display.toLowerCase();
+    setDialogStatus("error", kind === "Use"
+      ? `NO HOST HERE — run: claude-account use ${who}`
+      : `NO HOST HERE — run: tools/claude-login-pane ${who}`);
+    return;
+  }
+  dialogPending = label;
+  dialogConfirm.disabled = true;
+  dialogCancel.disabled = true;
+  dialogRelogin.disabled = true;
+  setDialogStatus("working", kind === "Use" ? "SWITCHING…" : "OPENING A LOGIN PANE…");
+}
+function accountActionResult(result) {
+  const label = dialogPending;
+  dialogPending = null;
+  dialogCancel.disabled = false;
+  dialogRelogin.disabled = false;
+  if (!result.ok) {
+    dialogConfirm.disabled = false;
+    setDialogStatus("error", `FAILED — ${result.message || "action failed"}`);
+    return;
+  }
+  dialogConfirm.hidden = true;
+  dialogRelogin.hidden = true;
+  dialogCancel.textContent = "Close";
+  if (label.startsWith("Use ")) {
+    const name = label.slice(4);
+    setDialogStatus("ok", `New sessions now start as ${name}. Updating the board…`);
+    setTimeout(closeAccountDialog, 1400);
+    // The login watcher rebuilds the views within about 20 s; wait for that build.
+    refreshBusy = true;
+    refreshButton.disabled = true;
+    setRefreshState("working", `SWITCHED TO ${name.toUpperCase()} · UPDATING…`);
+    waitForRefresh();
+  } else {
+    setDialogStatus("ok", "Login pane opened. Type /login there.");
+  }
+}
+dialogConfirm.addEventListener("click", () => {
+  sendAccountAction(dialogMode === "switch" ? "Use" : "Log in");
+});
+dialogRelogin.addEventListener("click", () => sendAccountAction("Log in"));
+dialogCancel.addEventListener("click", closeAccountDialog);
+dialog.addEventListener("click", event => { if (event.target === dialog) closeAccountDialog(); });
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && dialog.dataset.open === "true") closeAccountDialog();
+});
 })();
 </script>
 </body>
