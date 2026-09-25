@@ -69,6 +69,17 @@ STORE = DEFAULT_HOME_DIR / "accounts"
 ROSTER = STORE / "roster.json"            # identities only, never a token
 USAGE_CACHE = STORE / ".usage-cache"      # last-known-good usage per alias
 SWITCH_LOG = STORE / ".switch-log.jsonl"  # shared with Glideslope's login observer
+USAGE_BACKOFF = STORE / ".usage-backoff.json"  # no usage reads until this time, after a 429
+
+# The usage endpoint throttles hard, and its limit behaves as one shared budget for
+# every account on a machine: when it refuses one, it refuses them all. So a 429
+# pauses every read here (this tool, and Glideslope through it) for Retry-After
+# seconds, bounded, or BACKOFF_DEFAULT_S without one; and the reads within one run
+# are spaced, never fired together.
+BACKOFF_DEFAULT_S = 300
+BACKOFF_MIN_S = 60
+BACKOFF_MAX_S = 1800
+READ_SPACING_S = 2.0
 SELECTION = STORE / "selection.json"      # which account new sessions use — no token
 GLIDESLOPE = Path(__file__).resolve().parent / "glideslope.py"
 
@@ -536,14 +547,65 @@ def age_str(iso: str | None) -> str:
 
 # ---------------------------------------------------------------- usage
 
+class Throttled(Exception):
+    """The usage endpoint answered 429. `retry_after` is its hint in seconds, if any."""
+
+    def __init__(self, retry_after: float | None):
+        super().__init__("HTTP Error 429: Too Many Requests")
+        self.retry_after = retry_after
+
+
 def fetch_usage(token: str) -> dict:
     req = urllib.request.Request(USAGE_URL, headers={
         "Authorization": f"Bearer {token}",
         "anthropic-beta": "oauth-2025-04-20",
         "User-Agent": UA,
     })
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise Throttled(_retry_after_seconds(exc.headers.get("Retry-After"))) from exc
+        raise
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except ValueError:
+        return None  # an HTTP-date form is rare here; the default pause covers it
+
+
+def backoff_until(now: float | None = None) -> float | None:
+    """The epoch second before which no usage read may go out, or None when clear."""
+    try:
+        until = float(json.loads(USAGE_BACKOFF.read_text())["until_epoch"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return until if until > (time.time() if now is None else now) else None
+
+
+def start_backoff(retry_after: float | None, now: float | None = None) -> float:
+    seconds = BACKOFF_DEFAULT_S if retry_after is None else retry_after
+    seconds = min(max(seconds, BACKOFF_MIN_S), BACKOFF_MAX_S)
+    until = (time.time() if now is None else now) + seconds
+    try:
+        STORE.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(USAGE_BACKOFF, {
+            "until_epoch": until,
+            "until": datetime.fromtimestamp(until, timezone.utc).isoformat(),
+            "retry_after": retry_after,
+            "set_at": now_iso(),
+        })
+    except OSError:
+        pass  # a pause we cannot record still holds for the rest of this run
+    return until
+
+
+def _throttled_note(until: float) -> str:
+    local = datetime.fromtimestamp(until).astimezone().strftime("%H:%M")
+    return f"throttled by Anthropic's usage endpoint; next read after {local}"
 
 
 def limit_rows(usage: dict) -> list[tuple[str, float, str]]:
@@ -772,6 +834,8 @@ def cmd_status(args: list[str]) -> None:
     roster = roster_read()
     chosen = selected_email(all_homes)
     report: dict[str, dict] = {}
+    paused_until = backoff_until()
+    reads = 0
 
     for alias, entry in sorted(roster.items()):
         email = entry.get("email", "?")
@@ -779,8 +843,16 @@ def cmd_status(args: list[str]) -> None:
         is_active = email == chosen
         base = {"email": email, "active": is_active, "logged_in": home is not None,
                 "home": home.name if home else None}
-        if home is not None:
+        if home is not None and paused_until is not None:
+            report[alias] = {**base, "stale": True, "error": _throttled_note(paused_until)}
+            if not as_json:
+                print(f"\n{C['bold']}{alias}{C['off']}  {email}  {C['dim']}home {home.name}{C['off']}")
+                print(f"  {C['yellow']}{_throttled_note(paused_until)}{C['off']}")
+        elif home is not None:
             try:
+                if reads:
+                    time.sleep(READ_SPACING_S)
+                reads += 1
                 rows = limit_rows(fetch_usage(live_token(home)))
                 cache_put(alias, email, rows)
                 report[alias] = {**base,
@@ -793,6 +865,12 @@ def cmd_status(args: list[str]) -> None:
                         print(f"  {label:<21} {bar(pct)} {pct:5.1f}%   "
                               f"{C['dim']}resets {local_time(resets)}{C['off']}")
                 continue
+            except Throttled as ex:
+                paused_until = start_backoff(ex.retry_after)
+                report[alias] = {**base, "stale": True, "error": _throttled_note(paused_until)}
+                if not as_json:
+                    print(f"\n{C['bold']}{alias}{C['off']}  {email}  {C['dim']}home {home.name}{C['off']}")
+                    print(f"  {C['yellow']}{_throttled_note(paused_until)}{C['off']}")
             except Exception as ex:
                 report[alias] = {**base, "stale": True, "error": str(ex)}
                 if not as_json:

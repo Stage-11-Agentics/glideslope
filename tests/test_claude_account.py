@@ -147,3 +147,54 @@ class SelectionTests(ToolCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UsageBackoffTests(ToolCase):
+    """A 429 pauses every usage read on the machine; reads in one run are spaced."""
+
+    USAGE = {"limits": []}
+
+    def setUp(self):
+        super().setUp()
+        profile = self.tool.ensure_profile("charlie")
+        write_config(profile / ".claude.json", "lab@example.com")
+        self.tool.roster_write({"lab": {"email": "lab@example.com"},
+                                "personal": {"email": "personal@example.com"}})
+
+    def status(self, fetch):
+        import contextlib, io
+        out = io.StringIO()
+        with mock.patch.object(self.tool, "live_token", return_value="token"), \
+             mock.patch.object(self.tool, "fetch_usage", side_effect=fetch) as fetched, \
+             mock.patch.object(self.tool.time, "sleep") as slept, \
+             contextlib.redirect_stdout(out):
+            self.tool.cmd_status(["--json"])
+        return json.loads(out.getvalue()), fetched, slept
+
+    def test_reads_in_one_run_are_spaced(self):
+        report, fetched, slept = self.status(lambda token: self.USAGE)
+        self.assertEqual(fetched.call_count, 2)
+        slept.assert_called_once_with(self.tool.READ_SPACING_S)
+        self.assertFalse(report["lab"].get("stale"))
+
+    def test_a_429_pauses_the_rest_of_the_run_and_records_the_pause(self):
+        def throttled(token):
+            raise self.tool.Throttled(120.0)
+        report, fetched, _ = self.status(throttled)
+        self.assertEqual(fetched.call_count, 1)
+        self.assertTrue(all(row["stale"] for row in report.values()))
+        self.assertIn("throttled", report["lab"]["error"])
+        self.assertIsNotNone(self.tool.backoff_until())
+
+    def test_an_active_pause_sends_no_request(self):
+        self.tool.start_backoff(None)
+        report, fetched, _ = self.status(lambda token: self.USAGE)
+        self.assertEqual(fetched.call_count, 0)
+        self.assertIn("next read after", report["personal"]["error"])
+
+    def test_the_pause_is_bounded(self):
+        now = 1_000_000.0
+        self.assertEqual(self.tool.start_backoff(5, now=now), now + self.tool.BACKOFF_MIN_S)
+        self.assertEqual(self.tool.start_backoff(10**6, now=now), now + self.tool.BACKOFF_MAX_S)
+        self.assertEqual(self.tool.start_backoff(None, now=now), now + self.tool.BACKOFF_DEFAULT_S)
+        self.assertIsNone(self.tool.backoff_until(now=now + self.tool.BACKOFF_DEFAULT_S + 1))

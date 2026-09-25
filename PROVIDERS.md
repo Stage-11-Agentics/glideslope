@@ -124,7 +124,15 @@ machine's logins (`snapshot_matches_logins()`: the selected account must be the 
 — those files churn constantly, so it compares a login fingerprint
 (`<store>/login-fingerprint.json`) and only on a real change `kickstart -k`s the sampler.
 Measured: selection change → fresh sample + rebuilt deck in ~20s. The sampler itself reads
-with `--max-age-seconds 45`, so every 60s tick is a fresh Claude read.
+with `--max-age-seconds 170`, so Claude usage is read about every 3 minutes while other providers
+read every tick; a login change still forces a fresh read at once.
+
+**The usage endpoint throttles, and the limit is shared.** At one read a minute, some 40% of
+reads came back HTTP 429 (measured 2026-09), and a refused run refused every account at once.
+So `claude-account` treats a 429 as a pause for the whole machine: it records
+`~/.claude/accounts/.usage-backoff.json` (Retry-After seconds, bounded to 1 to 30 minutes, else 5), sends
+no usage request until it passes, and serves the last good numbers marked stale with the time
+of the next read. Reads within one run are spaced a couple of seconds apart.
 
 Each satellite publishes every home's login (`login_emails`, beacon schema 3) beside the
 selected one (`login_email`), and Glideslope folds them together — see **Satellites** below.

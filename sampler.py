@@ -103,10 +103,11 @@ def utc_now_iso() -> str:
 def collect() -> dict:
     """One position read through the sanctioned, lock-disciplined pipeline."""
     result = subprocess.run(
-        # --max-age-seconds under the 60s cadence: every sample is a fresh Claude
-        # read, not a gauge up to CLAUDE_CACHE_SECONDS old (one usage GET per
-        # logged-in account per minute).
-        [sys.executable, str(ROOT / "glideslope.py"), "--json", "--max-age-seconds", "45"],
+        # Claude usage is read at most about every 3 minutes, not every tick: the
+        # usage endpoint throttles hard, and at one read a minute some 40% of reads
+        # came back 429 (2026-09). Other providers still read every tick, and a
+        # login change still forces a fresh Claude read at once.
+        [sys.executable, str(ROOT / "glideslope.py"), "--json", "--max-age-seconds", "170"],
         capture_output=True, text=True, timeout=180, env=subprocess_env(),
     )
     if result.returncode != 0:
