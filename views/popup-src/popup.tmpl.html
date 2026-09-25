@@ -261,6 +261,9 @@
   /* A filtered-out register row stays faded even under a hover dim — written
      last, and doubled for weight, so it wins whenever both apply. */
   .reg-row.filter-off.filter-off { opacity: .22; }
+  /* The hovered account's other windows dim less than everything else: the plot
+     still focuses the one window, and the account still reads as one unit. */
+  .reg-row.switchable.account-hover.selection-dimmed:not(.filter-off) { opacity: .72; }
   .selection-reticle { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
   .selection-reticle.selection-selected { opacity: 1; }
   .selection-reticle line { stroke: var(--ink-2); stroke-width: .7; opacity: .75; }
@@ -412,8 +415,24 @@
      its confirm button is pressed. The card holds one size in every state, so the
      buttons never jump while a result comes back. */
   .reg-row.switchable { cursor: pointer; }
-  .reg-row.switchable:hover { background: color-mix(in oklab, var(--ink) 6%, transparent); }
-  .reg-row.switchable.logged-in:hover { background: color-mix(in oklab, var(--ink) 14%, transparent); }
+  /* Hovering any window of an account outlines all of that account's rows: the
+     thing a click switches is the account, not the window. An outline, not a
+     border, so nothing moves by a pixel. */
+  .reg-row.switchable.account-hover {
+    outline: 1px solid var(--bezel-bright); outline-offset: -1px;
+    background: color-mix(in oklab, var(--ink) 6%, transparent);
+  }
+  .reg-row.switchable.logged-in.account-hover { background: color-mix(in oklab, var(--ink) 14%, transparent); }
+  /* The header says what a click does, and says it more exactly on hover. Fixed
+     width, one line, so its changing text never shifts the total beside it. */
+  .switch-hint {
+    display: inline-block; width: 190px; margin-left: 10px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    color: var(--muted-2); font: 650 8.5px/1.1 var(--mono); letter-spacing: .12em;
+    text-transform: uppercase; vertical-align: 1px;
+  }
+  .switch-hint[data-live="switch"] { color: var(--ink); }
+  .switch-hint[data-live="here"] { color: var(--ink-2); }
   .acct-dialog {
     position: fixed; inset: 0; z-index: 50;
     display: none; align-items: center; justify-content: center;
@@ -953,6 +972,26 @@ const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, char => ({
    is retained as the local half of the same fact, so a snapshot built before
    satellites existed still reads correctly. */
 const LOCAL_SAT = SNAP.local_satellite || "";
+const SWITCH_HINT = "⇄ click an account to switch";
+/* Hovering a Claude row lights every row of that account and rewrites the
+   Anthropic header's hint into the exact thing a click will do. */
+function hoverAccount(account) {
+  for (const row of document.querySelectorAll(".reg-row.switchable")) {
+    row.classList.toggle("account-hover", Boolean(account) && row.dataset.account === account.display);
+  }
+  const hint = document.querySelector(".switch-hint");
+  if (!hint) return;
+  if (!account) {
+    hint.textContent = SWITCH_HINT;
+    hint.dataset.live = "";
+  } else if (isHere(account)) {
+    hint.textContent = `● ${account.display} in use here`;
+    hint.dataset.live = "here";
+  } else {
+    hint.textContent = `⇄ switch to ${account.display}`;
+    hint.dataset.live = "switch";
+  }
+}
 const loginsOf = account => (account.logins && account.logins.length) ? account.logins
   : account.provider !== "Claude" ? []
   : (account.active ? [LOCAL_SAT || "here"] : []);
@@ -1853,7 +1892,9 @@ function fillRegister(register, entries) {
     const famTotal = fam && fam.d7
       ? `<span class="family-total num" title="${escapeHTML(family)}: API-equivalent at list prices, rolling 7 days${fam.all ? ` · ${spendFmt(fam.all.usd)} all time` : ""}; not money spent">${spendFmt(fam.d7.usd)}<small>7D</small></span>`
       : "";
-    box.innerHTML = `<div class="family-label"><span>${escapeHTML(family)}</span>${famTotal}</div>`;
+    const hint = family === "Anthropic"
+      ? `<span class="switch-hint" data-live="">${SWITCH_HINT}</span>` : "";
+    box.innerHTML = `<div class="family-label"><span>${escapeHTML(family)}${hint}</span>${famTotal}</div>`;
     const rows = document.createElement("div");
     rows.className = "family-rows";
     for (const entry of familyEntries) {
@@ -1906,6 +1947,8 @@ function fillRegister(register, entries) {
           ? `${entry.account.display} · this machine's account`
           : `Switch to ${entry.account.display}…`;
         row.addEventListener("click", () => openAccountDialog(entry.account));
+        row.addEventListener("pointerenter", () => hoverAccount(entry.account));
+        row.addEventListener("pointerleave", () => hoverAccount(null));
       }
       rows.appendChild(row);
     }
