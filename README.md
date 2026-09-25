@@ -66,13 +66,13 @@ bash tools/install-sampler.sh         # every 60s: journal the position, keep th
 
 or `uv tool install git+https://github.com/Stage-11-Agentics/glideslope` for the `glideslope` and `claude-account` commands alone.
 
-`glideslope` prints the position as relay-ready markdown; `--json` gives the same position as one snapshot. configuration is one optional file, `~/.glideslope/config.toml`, and every key has a default: [`config.example.toml`](config.example.toml).
+configuration is one optional file, `~/.glideslope/config.toml`, and every key has a default: [`config.example.toml`](config.example.toml).
 
 ## seeing it.
 
 two surfaces ship. both are the same position.
 
-- **the terminal.** `glideslope` is the position as a table, and the only terminal interface. `--watch` keeps it redrawing in a pane.
+- **the terminal.** `glideslope` is the position as a table, relay-ready markdown, and the only terminal interface. `--watch` keeps it redrawing in a pane; `--json` is the same position as one snapshot.
 - **the browser.** `glideslope --open` rebuilds the Detail view and opens it as a tab. the page is one self-contained HTML file on disk, nothing hosted, and it reloads itself every minute, so with the sampler installed the tab is a live instrument. `--open popup` is the plot and register alone, `--open history` the same plot on a real clock, weeks stacked behind you.
 
 a menu bar, a side panel, a dashboard cell: not shipped. the popup was drawn for one. it expects a host that embeds it in a web view and rewrites the file every minute, and the sampler already does the rewriting. that wrapper is a short job for your agent, in whatever your platform calls a status item, and we would take the pull request.
