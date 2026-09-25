@@ -32,6 +32,10 @@ Most usage tools only warn about the first. On a subscription both sides cost mo
 
 ## What it looks like
 
+<p align="center"><img src="docs/screenshots/popup.png" width="720" alt="The Glideslope popup: every window of every account on one approach plot, with the register beneath"></p>
+
+Every marker is one window of one account. The dashed line is the glide slope. Above it, ahead; below it, banking. That's the whole idea, and it's the same picture in the terminal:
+
 ```
 glideslope
 ```
@@ -59,7 +63,10 @@ The same position, drawn. The approach plot puts every window on one glide slope
 - **Popup** (`views/popup.html`): the plot alone, sized for a menu bar or side panel.
 - **History** (`views/history.html`): weeks stacked behind you on a real clock.
 
-Self-contained HTML, opened from disk, nothing hosted. Screenshots coming.
+Self-contained HTML, opened from disk, nothing hosted.
+
+<p align="center"><img src="docs/screenshots/deck-plot.png" alt="The Detail view: approach plot with history trails and the deviation register"></p>
+<p align="center"><img src="docs/screenshots/deck-ledger.png" alt="The Detail view: every window of every account as a burn clock, used against the slope"></p>
 
 ## Install
 

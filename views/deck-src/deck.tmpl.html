@@ -939,14 +939,8 @@
 
 <footer class="deckfoot">
   <div class="legend">
-    <span class="legend-item"><i class="sw" style="--c: var(--alpha)"></i>Claude · Alpha</span>
-    <span class="legend-item"><i class="sw" style="--c: var(--bravo)"></i>Claude · Bravo</span>
-    <span class="legend-item"><i class="sw" style="--c: var(--charlie)"></i>Claude · Charlie</span>
-    <span class="legend-item"><i class="sw" style="--c: var(--delta)"></i>Claude · Delta</span>
-    <span class="legend-item"><i class="sw" style="--c: var(--codex)"></i>Codex</span>
-    <span class="legend-item"><i class="sw" style="--c: var(--kimi)"></i>Kimi</span>
-    <span class="legend-item"><i class="sw" style="--c: var(--grok)"></i>Grok</span>
-    <span class="legend-item"><i class="sw" style="--c: var(--router)"></i>OpenRouter</span>
+    <!-- one swatch per account actually in the position, filled at render -->
+    <span id="legend-accounts" style="display: contents"></span>
     <span class="legend-item"><i class="sw diamond">◆</i>even-burn pace</span>
     <span class="legend-item"><i class="sw" style="--c: var(--status-capped)"></i>capacity</span>
   </div>
@@ -2964,6 +2958,22 @@ document.getElementById("detail-reload").addEventListener("click", () => {
      up whatever the 5-minute sampler has already built. */
   location.replace(freshSnapshotURL());
 });
+
+/* The legend names the accounts this position actually holds, no more. */
+(() => {
+  const host = document.getElementById("legend-accounts");
+  if (!host || !S || !Array.isArray(S.accounts)) return;
+  const seen = new Set();
+  const items = [];
+  for (const a of S.accounts) {
+    const key = `${a.provider}·${a.display}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = a.provider === "Claude" ? `Claude · ${a.display}` : a.display;
+    items.push(`<span class="legend-item"><i class="sw" style="--c: var(--${ck(a.display)})"></i>${esc(label)}</span>`);
+  }
+  host.innerHTML = items.join("");
+})();
 
 render();
 setInterval(render, 60_000);   /* clocks and countdowns stay honest while open */
