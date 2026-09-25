@@ -3,21 +3,33 @@
 <p align="center"><b><i>Token subscription optimization for the modern hyperengineer</i></b></p>
 
 <p align="center"><img src="docs/screenshots/hero.png" width="720" alt="the Glideslope popup: every window of every account on one approach plot, with the register beneath naming each marker"></p>
-<p align="center"><sub><i>Understand your various subscriptions, and understand where they all are, in both 5 and 7 hour usage, to optimize your utilization of the most valuable resource: intelligence</i></sub></p>
+<p align="center"><sub><i>every subscription you hold, on one frame, each against its own clock, 5-hour and 7-day alike. letter = account. shape = window: ○ seven-day · △ five-hour · ◇ Fable · ✳ Claude pool · Σ everything. the dashed beam is even burn, and the register beneath names every marker. a real week of the most valuable resource there is: intelligence.</i></sub></p>
 
 ---
 
 listen.
 
-you are running coding agents on many accounts: Claude Max accounts, Codex plans, Kimi, and Grok, because one subscription is no where near enough to get build all of your in flight projects. Many meters. reset clocks. six pages, each with its own idea of a percent. you check them in the gaps between the work, and the one answer you actually need, *am I ahead or behind, and can i kick off this large job now?*, is on none of them.
+you are running coding agents on many accounts: Claude Max, Codex, Kimi, Grok, because one subscription is nowhere near enough for everything you have in flight. many meters. many reset clocks. many pages, each with its own idea of a percent. you check them in the gaps between the work, and the one answer you actually need, *am I ahead or behind, and can I kick off this large job now?*, is on none of them.
 
-## What is the Glidesloop
+the problem is not the limit. the problem is. position.
 
-The Glidesloop is the path towards optimum usage: you are on the 7d glidesloop if, 3.5 days into your 7 day usage period, you have used exactly 50% of your tokens. You are ahead of the 5h glidesloop if, 1 hour into your 5 hour limit, you have used 33% of your tokens. We are mapping two different times into the same graph, which takes some getting used to, but once you wrap your head around this paragraph you will find it immensely information dense and effective. 
+### the glide slope.
 
-**Glideslope reads every subscription plan you fly into one single interface and puts one mark on every meter: usage is relative to the  ◆ glide slope.** above it, you are hot, and you will hit the ceiling early. below it, you are banking capacity that expires at the reset. one comparison, the same in every cell, for every provider, on every window.
+the name is borrowed from the instrument landing system: the radio beam, flown by an airliner into Pittsburgh through a snowstorm in 1938, that tells a pilot in cloud one thing: above the path to the runway, or below it. the pilot flies the needle, not the ground.
+
+here, the glide slope is the path of optimum usage. you are on the 7-day glide slope if, 3.5 days into a 7-day window, you have used exactly 50% of it. you are ahead of the 5-hour glide slope if, 1 hour into a 5-hour window, you have used 33%, because even burn would have you at 20%. two clocks, one rule: used, against elapsed. we map both onto one graph. it takes some getting used to. once it clicks, it is the densest picture on your screen, and you will not want the old meters back.
+
+**Glideslope reads every subscription you fly into one interface and puts one mark on every meter: the ◆ glide slope, where an even burn to the reset would have you right now.** above it, you are hot, and you will hit the ceiling early. below it, you are banking capacity that expires at the reset. one comparison, the same in every cell, for every provider, on every window.
+
+most usage tools only warn about the first. on a subscription both sides cost money, so Glideslope treats both as news. capacity does not roll over. at the reset it is gone.
 
 this is built for the hyperengineer flying several subscriptions at once, on purpose, for maximum effect. it asks you to learn one idea and one picture. the idea takes a minute. the picture takes three looks. after that, a single percentage on a single page will feel like flying with one instrument covered.
+
+---
+
+### lineage.
+
+Glideslope was born inside Gregorovich, Atin Woodard's personal infrastructure, where it has flown a multi-account rotation since July 2026. the ◆ mark came first. the plot, the pool, the satellites and the honesty markers each came from a way the instrument turned out to be wrong: a login held on another machine, a stale read presumed fresh, a pool that is only a floor. it will not always be right. it will always say how sure it is.
 
 ---
 
@@ -153,14 +165,6 @@ claude-account use auto           # let the glide slope pick the account with ro
 running sessions never move, and nothing here stores a token. login is a place, not a boolean: a machine reads the one account it is logged into live, and other machines' logins arrive by beacon (`tools/install-satellite.sh`), so an account held elsewhere reads `unread` rather than a comfortable `0%`. `claude-account --help` has the rest.
 
 one honest gap: we only jump between Claude accounts, so `claude-account` only knows Claude. multi-account switching for Codex is not built. it is the same shape, one login home per account, and it should be a short job for your agent. we would welcome that pull request.
-
----
-
-## lineage.
-
-the name is borrowed from the instrument landing system. a glide slope is a radio beam, tested from 1929, flown by a scheduled airliner into Pittsburgh through a snowstorm in 1938, standardized by ICAO in 1949, that tells a pilot in cloud one thing: above the path to the runway, or below it. the pilot flies the needle, not the ground. we needed the same instrument for a different kind of descent.
-
-Glideslope was born inside Gregorovich, Atin Woodard's personal infrastructure, where it has flown a multi-account rotation since July 2026. the ◆ mark came first. the plot, the pool, the satellites and the honesty markers each came from a way the instrument turned out to be wrong: a login held on another machine, a stale read presumed fresh, a pool that is only a floor. it reads what the providers publish about your own account and nothing else, and it will not always be right. it will always say how sure it is.
 
 ## license.
 
