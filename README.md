@@ -2,8 +2,8 @@
 
 <p align="center"><b><i>Every flat-fee coding plan you pay for, on one glide path.</i></b></p>
 
-<p align="center"><img src="docs/screenshots/hero-plot.png" width="85%" alt="the Glideslope approach plot: every window of every account on one frame, against the even-burn beam"></p>
-<p align="center"><sub><i>six accounts. four providers. three kinds of window. one frame. every marker is one window of one account, and the dashed beam is even burn. a real week.</i></sub></p>
+<p align="center"><img src="docs/screenshots/hero.png" width="720" alt="the Glideslope popup: every window of every account on one approach plot, with the register beneath naming each marker"></p>
+<p align="center"><sub><i>six accounts. four providers. three kinds of window. one frame. every marker is one window of one account: the letter is the account, the shape is the window. ○ seven-day budget · △ five-hour session · ◇ weekly Fable · ✳ the Claude pool · Σ everything. the dashed beam is even burn. the register beneath names every marker. a real week.</i></sub></p>
 
 ---
 
@@ -57,8 +57,8 @@ above the beam, ahead: the trail is climbing faster than the window is closing, 
 
 **the pool.** if you rotate between Claude accounts, the number you are actually flying is the pool: the mean of the useds against the mean of the phases. both are means of coordinates already on the frame, so the pool lands on the same beam as everything else, as ✳ CLAUDE POOL. Σ TOTAL POOL does it across every subscription you hold. you are not one account. you are many. the pool is the one you fly.
 
-<p align="center"><img src="docs/screenshots/popup.png" width="640" alt="the Glideslope popup: the approach plot with the register beneath it, one row per window per account"></p>
-<p align="center"><sub><i>the popup. the plot, and under it the register: reset in, list-price value, distance from slope, used. sized for a menu bar, opened from a file, nothing hosted.</i></sub></p>
+<p align="center"><img src="docs/screenshots/deck-plot.png" alt="the Detail view: approach plot with trails, the legend row beneath it, and the deviation register listing every window's distance from its own slope"></p>
+<p align="center"><sub><i>the Detail view. the same frame with trails, and the key in the row beneath it: ○ 7 DAY budget, △ 5 HOUR throttle, ◇ Fable, letter = account, ✳ Claude pool. on the right, the deviation register: every window's distance from its own slope, as a bar you can read from across the room.</i></sub></p>
 
 ### a note on the learning curve.
 
@@ -106,9 +106,6 @@ self-contained HTML, opened from disk, rebuilt by the sampler every sixty second
 - **Detail view** (`views/deck.html`): every window on the plot with its trail, the deviation register, the full ledger, the reset horizon, the switch log.
 - **Popup** (`views/popup.html`): the plot and the register alone, sized for a menu bar or a side panel.
 - **History** (`views/history.html`): the same plot on a real clock. weeks stacked behind you.
-
-<p align="center"><img src="docs/screenshots/deck-plot.png" alt="the Detail view: approach plot with trails, and the deviation register listing every window's distance from its own slope"></p>
-<p align="center"><sub><i>the Detail view. approach plot, trails, and the deviation register: every window's distance from its own slope, as a bar you can read from across the room.</i></sub></p>
 
 <p align="center"><img src="docs/screenshots/deck-ledger.png" alt="the Detail view ledger: every window of every account as a burn clock, with state, reset and freshness"></p>
 <p align="center"><sub><i>the ledger. every window of every account as a burn clock: used against the ◆ mark, its state, its reset, and how fresh the read is. the tooltip does the arithmetic out loud.</i></sub></p>
