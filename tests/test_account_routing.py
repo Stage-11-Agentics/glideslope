@@ -140,15 +140,36 @@ class DeadlineTests(unittest.TestCase):
 
 
 class SatelliteLoginTests(unittest.TestCase):
-    def test_every_local_login_and_every_beacon_login_is_recorded(self):
+    def test_only_the_selected_login_counts_as_logged_in(self):
         accounts = glideslope.normalize_claude(claude_snapshot_with_charlie(), NOW)
         satellites = [{"name": "studio", "login_email": "personal@example.com",
                        "login_emails": ["personal@example.com", "work@example.com"]}]
         glideslope.reconcile_satellite_logins(
-            accounts, ["charlie@example.test", "personal@example.com"], satellites)
+            accounts, ["charlie@example.test", "personal@example.com"], satellites,
+            live_email="charlie@example.test")
         self.assertEqual(by_display(accounts, "Charlie")["logins"], [LOCAL])
-        self.assertEqual(by_display(accounts, "Bravo")["logins"], [LOCAL, "studio"])
-        self.assertEqual(by_display(accounts, "Alpha")["logins"], ["studio"])
+        self.assertEqual(by_display(accounts, "Bravo")["logins"], ["studio"])
+        self.assertEqual(by_display(accounts, "Alpha")["logins"], [])
+
+    def test_every_login_home_is_held_even_when_not_selected(self):
+        accounts = glideslope.normalize_claude(claude_snapshot_with_charlie(), NOW)
+        satellites = [{"name": "studio", "login_email": "personal@example.com",
+                       "login_emails": ["personal@example.com", "work@example.com"]}]
+        glideslope.reconcile_satellite_logins(
+            accounts, ["charlie@example.test", "personal@example.com"], satellites,
+            live_email="charlie@example.test")
+        self.assertEqual(by_display(accounts, "Charlie")["held_on"], [LOCAL])
+        self.assertEqual(by_display(accounts, "Bravo")["held_on"], [LOCAL, "studio"])
+        self.assertEqual(by_display(accounts, "Alpha")["held_on"], ["studio"])
+
+    def test_one_machine_is_logged_in_to_one_account(self):
+        accounts = glideslope.normalize_claude(claude_snapshot_with_charlie(), NOW)
+        glideslope.reconcile_satellite_logins(
+            accounts, ["charlie@example.test", "personal@example.com", "work@example.com"], [],
+            live_email="work@example.com")
+        here = [a["display"] for a in accounts
+                if a.get("provider") == "Claude" and LOCAL in a["logins"]]
+        self.assertEqual(here, ["Alpha"])
 
     def test_an_old_beacon_with_one_login_still_counts(self):
         accounts = glideslope.normalize_claude(claude_snapshot_with_charlie(), NOW)

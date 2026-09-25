@@ -732,29 +732,43 @@ def merge_satellite_claude(
 
 def reconcile_satellite_logins(
     accounts: list[dict[str, Any]], local_emails: str | list[str] | None,
-    satellites: list[dict[str, Any]],
+    satellites: list[dict[str, Any]], live_email: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Record every satellite each Claude account is logged in on.
+    """Record, for each Claude account, the satellites logged in to it.
 
-    `active` keeps its one meaning — the account new sessions HERE start in —
-    because the surfaces that lead with it are this machine's. `logins` is the
-    fleet answer, ordered with the local satellite first so a renderer can take
-    the head without sorting. A satellite may hold several logins (one per login
-    home); a beacon from before that publishes only `login_email`.
+    A satellite can hold several logins (one per login home) but is logged in
+    to one: the selected account, the one its new sessions start in. `logins`
+    names the satellites whose selected account this is, local first, so every
+    surface that says "logged in" says it once per machine. `held_on` names every
+    satellite holding a login home for it, whether selected or not, because an
+    unselected home can still spend (a one-launch override) and can be picked.
+
+    `live_email` is this machine's selected account; without it, a lone
+    `local_emails` string is taken as the selection (the pre-homes call shape).
+    A beacon's `login_email` is its selection; `login_emails` its homes.
     """
     local = {local_emails} if isinstance(local_emails, str) else set(local_emails or ())
+    if live_email is None and isinstance(local_emails, str):
+        live_email = local_emails
     for account in accounts:
         if account.get("provider") != "Claude":
             continue
-        names: list[str] = []
-        if account.get("email") in local:
-            names.append(LOCAL_SATELLITE)
+        email = account.get("email")
+        logins: list[str] = []
+        held: list[str] = []
+        if email and email == live_email:
+            logins.append(LOCAL_SATELLITE)
+        if email in local or (email and email == live_email):
+            held.append(LOCAL_SATELLITE)
         for satellite in satellites:
-            held = satellite.get("login_emails") or (
-                [satellite["login_email"]] if satellite.get("login_email") else [])
-            if account.get("email") in held:
-                names.append(satellite["name"])
-        account["logins"] = names
+            selected = satellite.get("login_email")
+            homes = satellite.get("login_emails") or ([selected] if selected else [])
+            if email and email == selected:
+                logins.append(satellite["name"])
+            if email in homes:
+                held.append(satellite["name"])
+        account["logins"] = logins
+        account["held_on"] = held
     return accounts
 
 
@@ -1923,8 +1937,8 @@ def roll_forward_windows(accounts: list[dict[str, Any]], now: dt.datetime) -> li
         # into is one the fleet provably cannot have spent since the roll — the
         # test used to be "not logged in here", which quietly became a lie the
         # day a second machine held a login of its own.
-        logins = account.get("logins")
-        in_use = bool(logins) if logins is not None else bool(account.get("active"))
+        held = account.get("held_on", account.get("logins"))
+        in_use = bool(held) if held is not None else bool(account.get("active"))
         presumable = (account.get("provider") == "Claude" and not in_use
                      and not account.get("dormant"))
         for limit in account.get("limits", []):
@@ -2321,7 +2335,7 @@ def pick_account(
     """
     local = [account for account in accounts
              if account.get("provider") == "Claude" and not account.get("dormant")
-             and LOCAL_SATELLITE in (account.get("logins") or [])]
+             and LOCAL_SATELLITE in (account.get("held_on") or account.get("logins") or [])]
     current = next((account for account in local if account.get("active")), None)
 
     def over_line(account: dict[str, Any], meters: tuple[str, ...] = NOTIFY_METERS) -> dict[str, Any] | None:
@@ -3263,7 +3277,7 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     # Correct who's-active from the live login — instant after a switch, no API.
     # Also journal built-in /login switches, which bypass claude-account's hook.
     reconcile_login(accounts, live_email)
-    reconcile_satellite_logins(accounts, local_emails, satellites)
+    reconcile_satellite_logins(accounts, local_emails, satellites, live_email)
     if accounts and live_email:
         try:
             observe_login_switch(accounts, live_email, now)
