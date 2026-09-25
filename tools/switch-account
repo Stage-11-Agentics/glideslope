@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#
+# Point new Claude sessions on this machine at an account, then redraw the views now.
+#
+#   switch-account <account>
+#
+# `claude-account use` moves the selection; the views rebuild right after from the
+# cached gauge (no usage read, about 2 s), so the popup shows the new account as
+# logged in here at once. The login watcher still kicks a full sample for fresh
+# numbers. Built for the popup's switch dialog, through a host action.
+set -euo pipefail
+[ -n "${1:-}" ] || { echo "usage: switch-account <account>" >&2; exit 2; }
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY=/opt/homebrew/bin/python3
+[ -x "$PY" ] || PY=python3
+"$PY" "$ROOT/tools/claude-account" use "$1"
+if ! "$PY" "$ROOT/views/deck-src/build.py" >/dev/null 2>&1; then
+    echo "switched; the views will redraw on the next sample" >&2
+fi
