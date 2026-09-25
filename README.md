@@ -2,13 +2,26 @@
 
 <p align="center"><b><i>Every flat-fee coding plan you pay for, on one glide path.</i></b></p>
 
+<p align="center"><img src="docs/screenshots/hero-plot.png" width="85%" alt="the Glideslope approach plot: every window of every account on one frame, against the even-burn beam"></p>
+<p align="center"><sub><i>six accounts. four providers. three kinds of window. one frame. every marker is one window of one account, and the dashed beam is even burn. a real week.</i></sub></p>
+
 ---
 
-If you run coding agents on more than one subscription (a couple of Claude Max accounts, Codex, Kimi, Grok), you have several meters, each on its own reset clock, each on its own page. Glideslope reads all of them into one table and puts one mark on every meter: the **◆ glide slope**.
+listen.
 
-## The glide slope
+you are running coding agents on two or three Claude Max accounts, a Codex plan, Kimi, and Grok, because one subscription was never going to hold the work and a second one costs less than the API. that is six meters. six reset clocks. six pages, each with its own idea of a percent. you check them in the gaps between the work, and the one number you actually need, *am I ahead or behind, and where is there room*, is on none of them.
 
-A flat-fee plan is a fixed budget on a fixed window: 100% of a weekly quota, gone at the reset. The glide slope is the straight line from 0% at the window's start to 100% at its reset. At any moment it tells you where you *would* be if you were spending evenly.
+the problem is not the limit. the problem is. position.
+
+**Glideslope reads every flat-fee plan you fly into one frame and puts one mark on every meter: the ◆ glide slope, where an even burn to the reset would have you right now.** above it, you are hot, and you will hit the ceiling early. below it, you are banking capacity that expires at the reset. one comparison, the same in every cell, for every provider, on every window.
+
+this is built for the hyperengineer flying several subscriptions at once, on purpose, for maximum effect. it asks you to learn one idea and one picture. the idea takes a minute. the picture takes three looks. after that, a single percentage on a single page will feel like flying with one instrument covered.
+
+---
+
+## the glide slope.
+
+a flat-fee plan is a fixed budget on a fixed window: 100% of a weekly quota, gone at the reset. the glide slope is the straight line from 0% at the window's start to 100% at its reset. at any moment it tells you where you *would* be if you were spending evenly.
 
 ```
 100% ┤                                      ╱ reset
@@ -23,52 +36,108 @@ A flat-fee plan is a fixed budget on a fixed window: 100% of a weekly quota, gon
      start                    now           reset
 ```
 
-Every metered cell reads `used (◆ slope)`. That one comparison answers the only two questions that matter on a flat-fee plan:
+every metered cell reads `used (◆ slope)`. that one comparison answers the only two questions that matter on a flat-fee plan:
 
-- **Above the line, you will hit the ceiling before the reset.** Slow down, or switch to an account with room.
-- **Below the line, you are leaving paid capacity on the table.** Capacity does not roll over; at the reset it is gone.
+- **above the line, you will hit the ceiling before the reset.** slow down, or switch to an account with room.
+- **below the line, you are leaving paid capacity on the table.** capacity does not roll over. at the reset it is gone.
 
-Most usage tools only warn about the first. On a subscription both sides cost money, so Glideslope treats both as news, for every provider, in the same column.
+most usage tools only warn about the first. on a subscription both sides cost money, so Glideslope treats both as news, for every provider, in the same column. a ceiling is a wall: it tells you where you stopped. a glide slope is a path: it tells you how to arrive.
 
-## What it looks like
+every mind in the room is on a window. the model's resets by the hour and the week. yours resets when you sleep. neither rolls over.
 
-<p align="center"><img src="docs/screenshots/popup.png" width="720" alt="The Glideslope popup: every window of every account on one approach plot, with the register beneath"></p>
+## one frame. every window.
 
-Every marker is one window of one account. The dashed line is the glide slope. Above it, ahead; below it, banking. That's the whole idea, and it's the same picture in the terminal:
+now the picture. the approach plot puts every window of every account on the same axes.
+
+x is the window: 0% at its start, 100% at its reset. y is what you have used. the dashed beam is y = x, even burn, the glide slope itself. every marker is one window of one account. the letter is the account. the shape is the window: ○ seven-day budget, △ five-hour session, ◇ the weekly Fable meter. behind each marker is its trail, every sample the journal took this window.
+
+here is the part that asks something of you. a five-hour session and a seven-day budget are on the same plot. not side by side. the same axes. the x axis is not time, it is *how much of this window has elapsed*, so hour three of a five-hour session and day four of a seven-day week sit on the same vertical. that is what lets six accounts across four providers, on three kinds of window, read as one picture. it is also why the picture is strange the first time you see it.
+
+above the beam, ahead: the trail is climbing faster than the window is closing, and you will reach 100% before the reset does. below it, banking. the register beside the plot says the same thing as a number: `+66%` is Bravo sixty-six points above its own slope, `−53%` is Codex fifty-three points below it.
+
+**the pool.** if you rotate between Claude accounts, the number you are actually flying is the pool: the mean of the useds against the mean of the phases. both are means of coordinates already on the frame, so the pool lands on the same beam as everything else, as ✳ CLAUDE POOL. Σ TOTAL POOL does it across every subscription you hold. you are not one account. you are many. the pool is the one you fly.
+
+<p align="center"><img src="docs/screenshots/popup.png" width="640" alt="the Glideslope popup: the approach plot with the register beneath it, one row per window per account"></p>
+<p align="center"><sub><i>the popup. the plot, and under it the register: reset in, list-price value, distance from slope, used. sized for a menu bar, opened from a file, nothing hosted.</i></sub></p>
+
+### a note on the learning curve.
+
+the plot is not gentle. the first time you look at it you will see a scatter of letters and shapes, and that is your brain refusing to put a five-hour throttle and a seven-day budget on one axis. it is right to refuse. nothing else you use does that.
+
+give it three looks. on the third, the scatter becomes a fleet: which account is hot, which one is banking, which window dies first, where the room is. that read takes under a second once you have it, and it is not available anywhere else. we built the instrument for the operator who will do the work of learning it, and we did not soften it for the one who won't.
+
+## in the terminal.
+
+the same position, as text. relay-ready markdown, because the first reader is usually an agent.
 
 ```
 glideslope
 ```
 
+**● Logged in · Hyperion: Claude · Charlie**   ◦ Atlas: Claude · Bravo
+
 | Weekly status ||||
 |:-:|:-:|:-:|:-:|
 | **Account** | **Weekly** | **Fable** | **Next reset at** |
-| Claude · Alpha ● laptop | A⃝ 41% (◆ 38.2%) | A⃟ 58% (◆ 38.2%) | 4d 7h – Mon Sep 28, 11:00 PM |
-| Claude · Bravo | B⃝ 22% (◆ 70.6%) | B⃟ 19% (◆ 70.6%) | 2d 1h – Sat Sep 26, 4:35 PM |
-| Claude · pooled (2 · Max 20x) | 31.5% (◆ 54.4%) · banking | 38.5% (◆ 54.4%) · banking | next Bravo in 2d 1h |
-| Codex | X⃝ 64% (◆ 57.0%) | — | 3d 0h – Sun Sep 27, 3:24 PM |
-| Kimi | K⃝ 7% (◆ 12.4%) | — | 6d 3h – Wed Sep 30, 6:24 PM |
-| Grok | G⃝ 2% (◆ 75.2%) | — | 1d 17h – Sat Sep 26, 8:54 AM |
-| Total · pooled (4 · $630/mo) | 40.4% (◆ 56.2%) · banking | — | next Grok in 1d 17h |
+| Claude · Alpha | A⃝ 81% (◆ 81.2%) | A⃟ 100% (◆ 81.2%) | 1d 7h – Sat Sep 26, 11:00 PM EDT |
+| *Claude · Bravo ◦ Atlas* | B⃝ 0% (◆ 20.5%) | B⃟ 0% (◆ 20.5%) | 5d 13h – Thu Oct 1, 5:00 AM EDT |
+| Claude · Charlie ● Hyperion | C⃝ 8% (◆ 1.5%) | C⃟ 10% (◆ 1.5%) | 6d 21h – Fri Oct 2, 12:59 PM EDT |
+| Claude · pooled (3 · Max 20x) | 29.7% (◆ 34.4%) · −4.8 banking | 36.7% (◆ 34.4%) · +2.2 ahead | next Alpha in 1d 7h – Sat Sep 26, 11:00 PM EDT |
+| Codex ● Hyperion ◦ Atlas | X⃝ 3% (◆ 56.4%) | — | 3d 1h – Mon Sep 28, 4:39 PM EDT |
+| Kimi | K⃝ 8% (◆ 55.4%) | — | 3d 2h – Mon Sep 28, 6:20 PM EDT |
+| Grok ● Hyperion | G⃝ 1% (◆ 44.0%) | — | 3d 22h – Tue Sep 29, 1:31 PM EDT |
+| Total · pooled (5 · $830/mo, not Kimi) | 22.2% (◆ 40.1%) · −17.9 banking | — | next Alpha in 1d 7h – Sat Sep 26, 11:00 PM EDT |
+| OpenRouter | $6.26 | — | rolling 7d · $89 left of $100/monthly |
 
-Values illustrative. The letter is the account, the outline is the window (circle weekly, triangle 5h session, diamond Fable weekly). A second table lists every window of every account; `--json` gives the same position as one snapshot. Cells never pretend: `stale`, `presumed`, `floor` and `undecided` mark exactly how much was actually read.
+the position on the afternoon this page was written. the letter is the account, the outline is the window: circle weekly, triangle five-hour session, diamond weekly Fable. `● Hyperion` is the machine an account is logged into; `◦ Atlas` is a login held on another one. a second table lists every window of every account, and `--json` gives the same position as one snapshot.
 
-The **pooled rows** treat your accounts as one budget. If you rotate between accounts, that is the number you are actually flying.
+**the cells never pretend.** `stale` is a last-known read. `presumed` is a window that rolled over with nothing logged in to spend it. `floor` means the truth is this or higher. `undecided` is a pooled floor sitting below the mark, which cannot say ahead or behind and does not try. an instrument that marks the edge of its own knowledge is worth more than one that rounds. every one of those markers exists because the instrument was once wrong in exactly that way.
 
-## The views
+**the API-equivalent block** prices every token at list. it is a valuation, never money spent, and it is the reason the juggling is worth it. on the afternoon this page was written the Claude line read:
 
-The same position, drawn. The approach plot puts every window on one glide slope frame, so five accounts across four providers read as one picture.
+```
+Claude, last 30 days: $14,885 API-equivalent on $600/mo of plans = 24.8×
+```
 
-- **Detail view** (`views/deck.html`): every window on the plot with its history trail, the full ledger, reset horizon, and switch log.
-- **Popup** (`views/popup.html`): the plot alone, sized for a menu bar or side panel.
-- **History** (`views/history.html`): weeks stacked behind you on a real clock.
+## the views.
 
-Self-contained HTML, opened from disk, nothing hosted.
+self-contained HTML, opened from disk, rebuilt by the sampler every sixty seconds. nothing hosted.
 
-<p align="center"><img src="docs/screenshots/deck-plot.png" alt="The Detail view: approach plot with history trails and the deviation register"></p>
-<p align="center"><img src="docs/screenshots/deck-ledger.png" alt="The Detail view: every window of every account as a burn clock, used against the slope"></p>
+- **Detail view** (`views/deck.html`): every window on the plot with its trail, the deviation register, the full ledger, the reset horizon, the switch log.
+- **Popup** (`views/popup.html`): the plot and the register alone, sized for a menu bar or a side panel.
+- **History** (`views/history.html`): the same plot on a real clock. weeks stacked behind you.
 
-## Install
+<p align="center"><img src="docs/screenshots/deck-plot.png" alt="the Detail view: approach plot with trails, and the deviation register listing every window's distance from its own slope"></p>
+<p align="center"><sub><i>the Detail view. approach plot, trails, and the deviation register: every window's distance from its own slope, as a bar you can read from across the room.</i></sub></p>
+
+<p align="center"><img src="docs/screenshots/deck-ledger.png" alt="the Detail view ledger: every window of every account as a burn clock, with state, reset and freshness"></p>
+<p align="center"><sub><i>the ledger. every window of every account as a burn clock: used against the ◆ mark, its state, its reset, and how fresh the read is. the tooltip does the arithmetic out loud.</i></sub></p>
+
+## for agents.
+
+the agent is on the same window you are. a skill ships in the repo; install it and Claude Code can ask, mid-task, where it is on usage, and get the table rather than a guess:
+
+```bash
+ln -s "$PWD/skills/glideslope" ~/.claude/skills/glideslope
+```
+
+> where am I on usage?
+
+the table, relayed verbatim, honesty markers intact.
+
+> I have a three-hour session ahead of me. which account has the room?
+
+ranked by slack against each account's own slope, never by raw percent. 60% six days into a week is capacity about to expire; 20% one day in is already behind.
+
+> Bravo is at 90%. point new sessions at whichever account has the most slack.
+
+`claude-account use auto`, suggested, not run. the agent proposes the switch and the operator makes it.
+
+an agent that knows its own budget can pace the work, or tell you the account it is on is about to run dry before the 429 does. `--json` is the same position as one object, for the agent that would rather compute than read.
+
+developing Glideslope with an agent: [`CLAUDE.md`](CLAUDE.md).
+
+## install.
 
 Python 3.11+, standard library only. macOS for the Claude read and the background jobs; the rest is plain Python.
 
@@ -80,11 +149,11 @@ bash tools/install-sampler.sh         # every 60s: journal the position, rebuild
 open views/deck.html
 ```
 
-Or `uv tool install git+https://github.com/Stage-11-Agentics/glideslope` for the `glideslope` and `claude-account` commands alone.
+or `uv tool install git+https://github.com/Stage-11-Agentics/glideslope` for the `glideslope` and `claude-account` commands alone.
 
-Configuration is one optional file, `~/.glideslope/config.toml`: plan labels, account names, other machines, alert sink. Every key has a default. See [`config.example.toml`](config.example.toml).
+configuration is one optional file, `~/.glideslope/config.toml`: plan labels, account names, other machines, alert sink. every key has a default. see [`config.example.toml`](config.example.toml).
 
-## Providers
+## providers.
 
 | Provider | Meters | Credential |
 |---|---|---|
@@ -94,11 +163,11 @@ Configuration is one optional file, `~/.glideslope/config.toml`: plan labels, ac
 | **Grok** | SuperGrok weekly compute pool | the Grok Build login |
 | **OpenRouter** | rolling 7-day dollars (metered, so no slope) | a static API key |
 
-Full read paths, units and failure modes: [`PROVIDERS.md`](PROVIDERS.md).
+full read paths, units and failure modes, and the checklist for adding the next provider: [`PROVIDERS.md`](PROVIDERS.md). every provider is normalized into one shared account shape and drawn by the same tables and views. nothing is a special case at the presentation layer, and one provider's outage becomes a warning row, never a missing subscription.
 
-**Glideslope holds no credentials and mints no tokens.** Claude is read with the access token Claude Code already keeps, only while it is valid. Static keys come from the environment or a `0600` keys file. The one exception is Grok, whose six-hour token is refreshed in place the same way Grok's own client does it. The promises, stated as invariants: [`SECURITY.md`](SECURITY.md).
+**Glideslope holds no credentials and mints no tokens.** Claude is read with the access token Claude Code already keeps, only while it is valid. static keys come from the environment or a `0600` keys file. the one exception is Grok, whose six-hour token is refreshed in place the same way Grok's own client does it. the promises, stated as invariants: [`SECURITY.md`](SECURITY.md).
 
-## Several Claude logins on one machine
+## several Claude logins on one machine.
 
 `claude-account`, shipped here, gives each Claude account its own login home (one `CLAUDE_CONFIG_DIR` each) so one machine holds every login at once, and routes new sessions between them:
 
@@ -108,18 +177,32 @@ claude-account use bravo          # new sessions start as Bravo
 claude-account use auto           # let the glide slope pick the account with room
 ```
 
-Running sessions never move, and nothing here stores a token. `claude-account --help` has the rest.
+running sessions never move, and nothing here stores a token. login is a place, not a boolean: a machine reads the one account it is logged into live, and other machines' logins arrive by beacon (`tools/install-satellite.sh`), so an account held elsewhere reads `unread` rather than a comfortable `0%`. `claude-account --help` has the rest.
 
-## For agents
+one honest gap: we only jump between Claude accounts, so `claude-account` only knows Claude. multi-account switching for Codex is not built. it is the same shape, one login home per account, and it should be a short job for your agent. we would welcome that pull request.
 
-The output is relay-ready markdown, and a skill ships in the repo. Install it for Claude Code and ask "where am I on usage?":
+---
 
-```bash
-ln -s "$PWD/skills/glideslope" ~/.claude/skills/glideslope
-```
+## lineage.
 
-Developing Glideslope with an agent: [`CLAUDE.md`](CLAUDE.md).
+the name is borrowed from the instrument landing system. a glide slope is a radio beam, tested from 1929, flown by a scheduled airliner into Pittsburgh through a snowstorm in 1938, standardized by ICAO in 1949, that tells a pilot in cloud one thing: above the path to the runway, or below it. the pilot flies the needle, not the ground. we needed the same instrument for a different kind of descent.
 
-## Origin
+Glideslope was born inside Gregorovich, Atin Woodard's personal infrastructure, where it has flown a multi-account rotation since July 2026. the ◆ mark came first. the plot, the pool, the satellites and the honesty markers each came from a way the instrument turned out to be wrong: a login held on another machine, a stale read presumed fresh, a pool that is only a floor. it reads what the providers publish about your own account and nothing else, and it will not always be right. it will always say how sure it is.
 
-Born inside Gregorovich, Atin Woodard's personal infrastructure, where it has flown a multi-account rotation since July 2026. [MIT](LICENSE). A [Stage 11 Agentics](https://stage11.ai) project.
+## license.
+
+[MIT](LICENSE). Stage 11 Agentics Corporation.
+
+---
+
+*we believe in the deployment of intelligence. more of it, in more hands, on real work. not waited for. not hoarded. used.*
+
+*the hyperengineer is the one deploying it. we build so that every hour of mind they can reach lands on the work, all of it, and so they can see it landing.*
+
+*as much intelligence deployed as the world can hold, as well as we can manage it. the beautiful future is on the far side of that. not this side.*
+
+*let's build it together.*
+
+---
+
+Glideslope is a [Stage 11 Agentics](https://stage11.ai) project.
