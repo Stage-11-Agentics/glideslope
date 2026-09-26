@@ -2962,10 +2962,10 @@ document.getElementById("detail-reload").addEventListener("click", () => {
 /* The legend names the accounts this position actually holds, no more. */
 (() => {
   const host = document.getElementById("legend-accounts");
-  if (!host || !S || !Array.isArray(S.accounts)) return;
+  if (!host || !SNAP || !Array.isArray(SNAP.accounts)) return;
   const seen = new Set();
   const items = [];
-  for (const a of S.accounts) {
+  for (const a of SNAP.accounts) {
     const key = `${a.provider}·${a.display}`;
     if (seen.has(key)) continue;
     seen.add(key);
