@@ -15,7 +15,7 @@ the problem is not the limit. the problem is. position.
 
 ### the glide slope.
 
-the name is borrowed from the instrument landing system: the radio beam, flown by an airliner into Pittsburgh through a snowstorm in 1938, that tells a pilot in cloud one thing: above the path to the runway, or below it. the pilot flies the needle, not the ground.
+the name is borrowed from an airplane's instrument landing system: the path that tells a pilot in cloud one thing: are you on the right path to land above the path to the runway, or below it. the pilot flies the needle, not the ground.
 
 here, the glide slope is the path of optimum usage. you are on the 7-day glide slope if, 3.5 days into a 7-day window, you have used exactly 50% of it. you are ahead of the 5-hour glide slope if, 1 hour into a 5-hour window, you have used 33%, because even burn would have you at 20%. two clocks, one rule: used, against elapsed. so both go on one graph: the x axis is not time, it is *how much of this window has elapsed*, and hour three of a five-hour session sits on the same vertical as day four of a seven-day week. it takes some getting used to. once it clicks, it is the densest picture on your screen, and you will not want the old meters back.
 
@@ -27,12 +27,6 @@ this is built for the hyperengineer flying several subscriptions at once, on pur
 
 ---
 
-### lineage.
-
-Glideslope was born inside Gregorovich, Atin Woodard's personal infrastructure, where it has flown a multi-account rotation since July 2026. the ◆ mark came first. the plot, the pool, the satellites and the honesty markers each came from a way the instrument turned out to be wrong: a login held on another machine, a stale read presumed fresh, a pool that is only a floor. it will not always be right. it will always say how sure it is.
-
----
-
 ## reading the approach plot.
 
 now the picture. the approach plot puts every window of every account on the same axes.
@@ -41,7 +35,7 @@ x is the window: 0% at its start, 100% at its reset. y is what you have used. th
 
 above the beam, ahead: the trail is climbing faster than the window is closing, and you will reach 100% before the reset does. below it, banking. the register beside the plot says the same thing as a number: `+66%` is Bravo sixty-six points above its own slope, `−53%` is Codex fifty-three points below it.
 
-**the pool.** if you rotate between Claude accounts, the number you are actually flying is the pool: the mean of the useds against the mean of the phases. both are means of coordinates already on the frame, so the pool lands on the same beam as everything else, as ✳ CLAUDE POOL. Σ TOTAL POOL does it across every subscription you hold. you are not one account. you are many. the pool is the one you fly.
+**the pool.** if you rotate between Claude accounts, the sum of all those accounts 7 day limit is the pool.
 
 <p align="center"><img src="docs/screenshots/deck-plot.png" alt="the Detail view: approach plot with trails, the legend row beneath it, and the deviation register listing every window's distance from its own slope"></p>
 <p align="center"><sub><i>the Detail view. the same frame with trails, and the key in the row beneath it: ○ 7 DAY budget, △ 5 HOUR throttle, ◇ Fable, letter = account, ✳ Claude pool. on the right, the deviation register: every window's distance from its own slope, as a bar you can read from across the room.</i></sub></p>
