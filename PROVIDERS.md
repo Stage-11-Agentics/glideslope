@@ -47,7 +47,7 @@ Two conventions the renderers depend on:
 | Source | `claude-account status --json` → `<store>/account-snapshot.json` |
 | Windows | `session` (5h), `weekly_all` (7d), `weekly_fable` (7d, often the binding one) |
 | Units | integer percent, 1% steps |
-| Credential | **none held.** Borrows Claude Code's live access token, read-only |
+| Credential | **none held.** Borrows Claude Code's live access token, read-only; an operator's meter token where one is placed (see **Meter tokens** below) |
 | Request | the same GET Claude Code's own `/usage` makes, sent with the CLI's `User-Agent` and `anthropic-beta` header; the endpoint is not documented and answers the CLI's identity, so a 429 is possible under a fast cadence — a rate-limited read is served from cache, marked stale, and never retried on its own |
 
 **The plan comes from the roster's tier, not from a constant.** The usage
@@ -216,6 +216,59 @@ satellite is therefore an honesty fix before it is a feature.
 
 Failure is soft and local: an unreachable satellite costs its own row and a warning, never the
 position. A beacon older than an hour stops being a reading at all.
+
+---
+
+## Meter tokens — every account, logged in or not (added 2026-09-28)
+
+| | |
+|---|---|
+| Source | `claude-account status` / `whose`, on the satellite that keeps the tokens |
+| Credential | operator-minted setup-tokens, `~/.claude/accounts/meter-tokens/*.token`, `0600`, read only |
+| Request | `POST /v1/messages`, 1 output token, a Fable model first (Haiku if the plan has no Fable), the CLI's `User-Agent` at the installed Claude Code's version |
+| Read | response headers: `anthropic-ratelimit-unified-{5h,7d,7d_oi}-{utilization,reset}` and `anthropic-organization-id` |
+| Join key | **organization ID** → the roster's `org_uuid` → email |
+
+**Why.** A login is only readable while some machine holds it and Claude Code keeps its token
+fresh. Anything else that spends an account under a token (a cloud sandbox, a CI job, a VM
+fleet) is invisible: the account reads **unread** everywhere while its weekly climbs. It
+happened (2026-09-26): two days of remote agent seats on a token labelled for one account
+that billed another, with the board showing neither.
+
+**What a meter token is.** `claude setup-token` mints a year-long, inference-only token for
+whichever account the approving browser is signed in to. It cannot read `/usage` (403,
+`user:profile` scope missing) and nothing in it names its account. But every inference
+response carries the billed account's own unified rate-limit headers and its organization ID,
+so one 1-token request reads all three meters exactly: `5h` is the session, `7d` the weekly,
+`7d_oi` the Fable weekly (verified against `/usage` on the same account, same minute). An
+absent claim is unknown, never zero; a Haiku fallback has no `7d_oi`.
+
+**The account is read, never believed.** File names and comments are typed by hand, and the
+approving browser decides the account, so neither is evidence. The roster's `org_uuid` is
+learned from Claude Code's own login record (`oauthAccount.organizationUuid`) whenever a home
+holds that account; for an account no home here holds, `claude-account note <email> --org
+<id>` records it, and a later login that disagrees corrects it with a warning. A token whose
+org the roster does not know is reported and its reading dropped. A token whose file name
+names one account and bills another is reported by name.
+
+**Where it runs.** Keep the tokens on one always-on satellite. Its beacon's snapshot then
+carries a fresh row per account with `"source": "meter-token"`, and the reader takes such a
+row as a live reading even though no satellite is logged in to that account; the email join
+and the older-loses merge rule are unchanged. A meter reading is preferred only where no home
+here reads the account live. The beacon forwards `claude-account`'s warnings (`warnings` in
+the beacon) and its log line counts rows by login, by meter token and stale, so a stale
+publish is never logged as a success.
+
+**Cost and side effects.** One request per token per beacon tick (every 300 s): a few dozen
+input tokens and one output token. A probe starts a 5h window if none is running, so an
+otherwise idle account's session clock rolls continuously; its weekly reset is unaffected.
+
+**Verifying a token before trusting it with work.** `claude-account whose <file> --expect
+<account> --json` reports the org, email, call-sign and meters for a token and exits `0` when
+it bills the expected account, `3` when it bills another, `4` when its org is unknown, `2`
+when the probe fails. A launcher that hands tokens to remote agents should refuse to launch
+on anything but `0`, and record the verified account with the job so its spend can be
+credited to the account that paid it.
 
 ---
 
@@ -486,7 +539,8 @@ Static keys come from the environment first, then from the configured `keys_file
 (default `<store>/keys.txt`, `KEY=value` lines, mode `0600`): `OPENROUTER_API_KEY`,
 `KIMI_API_KEY`. The file fallback is what lets the launchd sampler work at all — it carries
 no shell environment. **Only static keys are ever read this way.** Claude's OAuth blob is
-read by `claude-account` alone, and only ever read. Grok is the exception: its consumer
+read by `claude-account` alone, and only ever read; so are meter tokens (see **Meter
+tokens** above), which are files the operator placed. Grok is the other exception: its consumer
 meter has no static key, so the sampler refreshes the Grok Build session in
 `~/.grok/auth.json` in place — see **Grok** above.
 

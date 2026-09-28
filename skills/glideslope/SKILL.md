@@ -42,6 +42,8 @@ Output order: login banner, Weekly status, All windows, OpenRouter, API-equivale
 
 `claude-account use <account>` routes new Claude Code sessions to that account's login home. `claude-account use auto` lets Glideslope pick: it stays put while the current account is under the alert line, then moves to the account with the most slack against its own ◆ mark. Running sessions are never moved. Suggest a switch. Do not run it unless the user asks.
 
+`claude-account whose <token-file> --expect <account> --json` says which account a `claude setup-token` token really bills, from the organization ID the API returns, never from the file's name. Run it before handing a token to remote agents; exit 0 means it bills the expected account. An account nobody is logged into still reads live when a meter token for it sits in `~/.claude/accounts/meter-tokens/` on a satellite (rows marked `source: meter-token`).
+
 ## The views
 
 Offer a view when the user wants to see the position rather than read it. One command rebuilds the page from the position it just read and opens it in the default browser:

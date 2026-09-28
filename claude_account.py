@@ -3,7 +3,18 @@
 
 For anyone who runs several Claude accounts and moves between them as limits burn down.
 
-THIS TOOL HOLDS NO CREDENTIALS AND MINTS NO TOKENS.
+THIS TOOL MINTS NO TOKENS, AND THE ONLY CREDENTIALS IT READS ARE ONES IT NEVER WRITES.
+
+Meter tokens (added 2026-09-28) are the one credential this tool reads from a file:
+setup-tokens the operator minted (`claude setup-token`) and placed, one per account, in
+~/.claude/accounts/meter-tokens/ (0600, on the one machine that probes). Each read is a
+single 1-token request whose response headers carry the billed account's own 5h, weekly
+and Fable meters and its organization ID. The ID, not the file name, says whose meters
+they are: it is joined to the roster's `org_uuid`, which is learned from Claude Code's
+own login record. A setup-token is inference-only and cannot read /usage, so without
+this an account nobody is logged into anywhere is unreadable, and spend on it is
+invisible until someone logs in (2026-09-26: two days of Prime seats on a token labelled
+"Charlie" that billed Bravo). Nothing here refreshes, rotates or stores a meter token.
 
 Login homes (added 2026-09-12). Claude Code keeps one login per config directory:
 with CLAUDE_CONFIG_DIR unset it uses ~/.claude + ~/.claude.json + the keychain item
@@ -39,7 +50,14 @@ Commands
     list                     the roster (identities only — there are no credentials here)
     which                    the account new sessions go to, and where it is logged in
     save [alias]             record every logged-in account's identity in the roster
+    note <email> --org <id>  record an account's identity with no login here [--alias name]
     remove <alias>           drop an account from the roster
+    whose [file...] [--expect <account>] [--json]
+                             which account a setup-token bills, verified by its org ID, and
+                             that account's meters; no file = every meter token. Exit 0 when
+                             every token is known (and is the expected account), 3 when one
+                             bills another account, 4 when one bills an org the roster lacks,
+                             2 when a probe fails
 
 An <account> is a call-sign (Bravo), a roster alias (personal) or an email.
 CLAUDE_ACCOUNT=<account> overrides the selection for one launch.
@@ -81,6 +99,17 @@ BACKOFF_MIN_S = 60
 BACKOFF_MAX_S = 1800
 READ_SPACING_S = 2.0
 SELECTION = STORE / "selection.json"      # which account new sessions use — no token
+METER_TOKENS = STORE / "meter-tokens"     # operator-minted setup-tokens, one per account, 0600
+MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+# Fable first: only a Fable request answers with the Fable weekly. Haiku is the fallback
+# for an account whose plan has no Fable (it still answers 5h and weekly).
+METER_MODELS = ("claude-fable-5-1", "claude-haiku-4-5-20251001")
+# Response-header claim -> the limit label the usage read uses. `7d_oi` is the Fable
+# weekly (verified against /usage on the same account, 2026-09-28: 7d 0.13 = weekly 13%,
+# 7d_oi 0.02 = Fable 2%). A claim absent from the headers is unknown, never zero.
+METER_CLAIMS = {"5h": "session (5h)", "7d": "weekly (all models)", "7d_oi": "weekly (Fable)"}
+CLI_CANDIDATES = (Path.home() / ".local" / "bin" / "claude", Path("/opt/homebrew/bin/claude"),
+                  Path("/usr/local/bin/claude"))
 GLIDESLOPE = Path(__file__).resolve().parent / "glideslope.py"
 
 # Call-signs come from Glideslope's config ([claude] call_signs), keyed by email
@@ -393,10 +422,16 @@ def roster_note(account: dict, alias: str | None = None) -> str | None:
     alias = alias or next((a for a, e in roster.items() if e.get("email") == email),
                           default_alias(email))
     entry = dict(roster.get(alias) or {})
+    org_uuid = account.get("organizationUuid")
+    if org_uuid and entry.get("org_uuid") and entry["org_uuid"] != org_uuid:
+        # A login is the truth about its own org; a noted one was evidence. Say so, then correct it.
+        warn(f"roster had {email} as org {entry['org_uuid'][:8]}…, but its login says "
+             f"{org_uuid[:8]}…; meter readings now follow the login")
     entry.update({
         "email": email,
         "tier": account.get("organizationRateLimitTier") or entry.get("tier"),
         "org": account.get("organizationName") or entry.get("org"),
+        "org_uuid": org_uuid or entry.get("org_uuid"),
         "last_seen": datetime.now(timezone.utc).isoformat(),
     })
     entry.setdefault("first_seen", entry["last_seen"])
@@ -407,6 +442,13 @@ def roster_note(account: dict, alias: str | None = None) -> str | None:
 
 def alias_for(email: str, roster: dict) -> str | None:
     return next((a for a, e in roster.items() if e.get("email") == email), None)
+
+
+def alias_for_org(org_uuid: str | None, roster: dict) -> str | None:
+    """The roster alias whose organization is ORG_UUID. The join a meter reading rides on."""
+    if not org_uuid:
+        return None
+    return next((a for a, e in roster.items() if e.get("org_uuid") == org_uuid), None)
 
 
 # ---------------------------------------------------------------- selection
@@ -626,6 +668,146 @@ def limit_rows(usage: dict) -> list[tuple[str, float, str]]:
     return rows
 
 
+# ---------------------------------------------------------------- meter tokens
+# One account's meters without a login: a 1-token request under an operator-minted
+# setup-token, read from the rate-limit headers every response carries. See the
+# module docstring for why this exists and PROVIDERS.md for the contract.
+
+_CLI_VERSION: list[str] = []  # memo: the installed Claude Code version, found once per run
+
+
+def cli_version() -> str:
+    """The installed Claude Code's version. Newer models refuse an older client identity."""
+    if _CLI_VERSION:
+        return _CLI_VERSION[0]
+    version = UA.split("/")[1].split()[0]
+    for candidate in CLI_CANDIDATES:
+        if not os.access(candidate, os.X_OK):
+            continue
+        try:
+            out = subprocess.run([str(candidate), "--version"], capture_output=True, text=True,
+                                 timeout=15, check=False).stdout.split()
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if out and out[0][:1].isdigit():
+            version = out[0]
+            break
+    _CLI_VERSION.append(version)
+    return version
+
+
+def meter_token_files() -> list[Path]:
+    try:
+        return sorted(p for p in METER_TOKENS.iterdir() if p.suffix == ".token" and p.is_file())
+    except OSError:
+        return []
+
+
+def read_token_file(path: Path) -> str:
+    """The token in a token file: its last line that is not blank and not a '#' comment."""
+    lines = [line.strip() for line in path.read_text().splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+    if not lines:
+        raise RuntimeError(f"{path.name} holds no token")
+    return lines[-1]
+
+
+def token_fingerprint(token: str) -> str:
+    """Safe to print: enough to tell two tokens apart, useless for anything else."""
+    return hashlib.sha256(token.encode()).hexdigest()[:10]
+
+
+def meter_rows(headers) -> list[dict]:
+    """The unified rate-limit headers → limit rows in the usage read's shape."""
+    rows = []
+    for claim, label in METER_CLAIMS.items():
+        utilization = headers.get(f"anthropic-ratelimit-unified-{claim}-utilization")
+        if utilization is None:
+            continue
+        try:
+            percent = round(float(utilization) * 100, 1)
+        except ValueError:
+            continue
+        reset = headers.get(f"anthropic-ratelimit-unified-{claim}-reset")
+        try:
+            resets_at = datetime.fromtimestamp(int(float(reset)), timezone.utc).isoformat()
+        except (TypeError, ValueError):
+            resets_at = None
+        rows.append({"label": label, "percent": percent, "resets_at": resets_at})
+    return rows
+
+
+def probe_token(token: str) -> tuple[str, list[dict]]:
+    """(organization ID, limit rows) for the account TOKEN bills. One request per model tried.
+
+    A 429 still carries the headers, so an account at its limit reads as at its limit.
+    A 401/403 is a dead token. A 400 on the Fable model (a plan without Fable, a client
+    too old for it) falls back to Haiku, which still answers 5h and weekly.
+    """
+    last_error = "no response"
+    for model in METER_MODELS:
+        body = json.dumps({
+            "model": model, "max_tokens": 1,
+            "system": [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."}],
+            "messages": [{"role": "user", "content": "."}],
+        }).encode()
+        req = urllib.request.Request(MESSAGES_URL, data=body, method="POST", headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "content-type": "application/json",
+            "User-Agent": f"claude-cli/{cli_version()} (external, cli)",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                headers = response.headers
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise RuntimeError(f"meter token rejected (HTTP {exc.code}): revoked or not a "
+                                   "setup-token") from exc
+            headers = exc.headers
+            if exc.code != 429:
+                last_error = f"HTTP {exc.code} on {model}"
+                continue
+        except (urllib.error.URLError, OSError) as exc:
+            raise RuntimeError(f"meter probe failed: {exc}") from exc
+        org = headers.get("anthropic-organization-id")
+        rows = meter_rows(headers)
+        if org and rows:
+            return org, rows
+        last_error = f"{model} answered without rate-limit headers"
+    raise RuntimeError(f"meter probe failed: {last_error}")
+
+
+def meter_reads(roster: dict) -> tuple[dict[str, dict], list[str]]:
+    """Probe every meter token → ({alias: reading}, warnings). Unknown orgs are warned, not dropped silently."""
+    reads: dict[str, dict] = {}
+    notes: list[str] = []
+    for path in meter_token_files():
+        try:
+            token = read_token_file(path)
+            org, rows = probe_token(token)
+        except (OSError, RuntimeError) as exc:
+            notes.append(f"meter token {path.name}: {exc}")
+            continue
+        alias = alias_for_org(org, roster)
+        if alias is None:
+            notes.append(f"meter token {path.name} ({token_fingerprint(token)}) bills org {org}, which "
+                         "no roster entry names; its reading is dropped until one does "
+                         "(claude-account note <email> --org <id>)")
+            continue
+        email = roster[alias].get("email")
+        named = resolve_email(path.stem, roster)
+        if named and email and named.lower() != email.lower():
+            notes.append(f"meter token {path.name} is named for {label_for(named, roster)} but bills "
+                         f"{label_for(email, roster)}; the reading is credited to {label_for(email, roster)}")
+        if alias in reads:
+            notes.append(f"meter tokens {reads[alias]['read_via']} and {path.name} bill the same account; "
+                         f"reading {path.name}")
+        reads[alias] = {"org_uuid": org, "rows": rows, "read_via": path.name, "fetched_at": now_iso()}
+    return reads, notes
+
+
 # ---------------------------------------------------------------- presentation
 
 def local_time(iso: str | None) -> str:
@@ -794,6 +976,89 @@ def cmd_save(args: list[str]) -> None:
         print(f"{C['green']}recorded{C['off']} {line} {C['dim']}(identity only — no credentials){C['off']}")
 
 
+def cmd_note(args: list[str]) -> None:
+    """Record an account's identity without a login here, so a meter token can be joined to it.
+
+    Evidence, not a guess: take the org ID from that account's own login record
+    (`claude auth status --json` in a home holding it) or from `whose` on a token whose
+    account is otherwise established. A later login here corrects a wrong note, loudly.
+    """
+    email = args[0] if args and "@" in args[0] else None
+    org = args[args.index("--org") + 1] if "--org" in args and args.index("--org") + 1 < len(args) else None
+    alias = args[args.index("--alias") + 1] if "--alias" in args and args.index("--alias") + 1 < len(args) else None
+    if not email or not org:
+        die("usage: claude-account note <email> --org <organization-uuid> [--alias <alias>]")
+    roster = roster_read()
+    alias = alias or alias_for(email, roster) or default_alias(email)
+    holder = alias_for_org(org, roster)
+    if holder and roster[holder].get("email") != email:
+        die(f"org {org[:8]}… already belongs to {roster[holder].get('email')} ('{holder}')")
+    if alias in roster and roster[alias].get("email") not in (None, email):
+        die(f"alias '{alias}' already names {roster[alias].get('email')}; pass --alias")
+    entry = dict(roster.get(alias) or {})
+    entry.update({"email": email, "org_uuid": org})
+    entry.setdefault("first_seen", datetime.now(timezone.utc).isoformat())
+    roster[alias] = entry
+    roster_write(roster)
+    print(f"{C['green']}noted{C['off']} {email} as '{alias}', org {org} "
+          f"{C['dim']}(identity only — no credentials){C['off']}")
+
+
+def cmd_whose(args: list[str]) -> None:
+    as_json = "--json" in args
+    expect = args[args.index("--expect") + 1] if "--expect" in args and args.index("--expect") + 1 < len(args) else None
+    skip = {"--json", "--expect", expect}
+    files = [Path(a).expanduser() for a in args if a not in skip] or meter_token_files()
+    if not files:
+        die(f"no token files given and none in {METER_TOKENS}")
+    roster = roster_read()
+    expected = resolve_email(expect, roster) if expect else None
+    if expect and not expected:
+        die(f"unknown account '{expect}'. try a call-sign or an alias")
+    results, worst = [], 0
+    for path in files:
+        row: dict = {"file": str(path), "org_uuid": None, "email": None, "call_sign": None,
+                     "alias": None, "limits": [], "verified": False}
+        try:
+            token = read_token_file(path)
+            row["fingerprint"] = token_fingerprint(token)
+            org, rows = probe_token(token)
+        except (OSError, RuntimeError) as exc:
+            row["error"] = str(exc)
+            worst = max(worst, 2)
+            results.append(row)
+            continue
+        alias = alias_for_org(org, roster)
+        email = (roster.get(alias) or {}).get("email") if alias else None
+        row.update({"org_uuid": org, "alias": alias, "email": email, "limits": rows,
+                    "call_sign": call_sign_for(email) if email else None,
+                    "observed_at": now_iso()})
+        if email is None:
+            row["error"] = f"bills org {org}, which no roster entry names"
+            worst = max(worst, 4)
+        elif expected and email.lower() != expected.lower():
+            row["error"] = f"bills {label_for(email, roster)}, not {label_for(expected, roster)}"
+            worst = max(worst, 3)
+        else:
+            row["verified"] = True
+        results.append(row)
+    if as_json:
+        print(json.dumps(results, indent=2))
+    else:
+        for row in results:
+            who = (f"{row['call_sign'] or row['alias']} · {row['email']}" if row["email"]
+                   else f"org {row['org_uuid']}" if row["org_uuid"] else "—")
+            mark = f"{C['green']}✓{C['off']}" if row["verified"] else f"{C['red']}✗{C['off']}"
+            print(f"{mark} {C['bold']}{Path(row['file']).name}{C['off']}  {who}  "
+                  f"{C['dim']}{row.get('fingerprint', '')}{C['off']}")
+            if row.get("error"):
+                print(f"  {C['red']}{row['error']}{C['off']}")
+            for lim in row["limits"]:
+                print(f"  {lim['label']:<21} {bar(lim['percent'])} {lim['percent']:5.1f}%   "
+                      f"{C['dim']}resets {local_time(lim['resets_at'])}{C['off']}")
+    sys.exit(worst)
+
+
 def cmd_remove(args: list[str]) -> None:
     if not args:
         die("usage: claude-account remove <alias>")
@@ -836,6 +1101,9 @@ def cmd_status(args: list[str]) -> None:
     report: dict[str, dict] = {}
     paused_until = backoff_until()
     reads = 0
+    meters, meter_notes = meter_reads(roster)
+    for note in meter_notes:
+        warn(note)
 
     for alias, entry in sorted(roster.items()):
         email = entry.get("email", "?")
@@ -876,7 +1144,23 @@ def cmd_status(args: list[str]) -> None:
                 if not as_json:
                     print(f"\n{C['bold']}{alias}{C['off']}  {email}  {C['dim']}home {home.name}{C['off']}")
                     print(f"  {C['red']}unavailable:{C['off']} {ex}")
-                # fall through so a cached read can still fill the numbers in
+                # fall through so a meter or cached read can still fill the numbers in
+        meter = meters.get(alias)
+        if meter is not None:
+            # As fresh as a home read, and it needs no login: `logged_in` keeps saying
+            # whether a home here holds the account, `source` says how it was read.
+            cache_put(alias, email, [(r["label"], r["percent"], r["resets_at"]) for r in meter["rows"]])
+            report[alias] = {**base, "limits": meter["rows"], "fetched_at": meter["fetched_at"],
+                             "source": "meter-token", "read_via": meter["read_via"],
+                             "org_uuid": meter["org_uuid"]}
+            if not as_json:
+                tag = f"{C['green']}▶ new sessions{C['off']}" if is_active else f"{C['green']}◆ meter token{C['off']}"
+                print(f"\n{C['bold']}{alias}{C['off']}  {C['cyan']}{email}{C['off']}  {tag}  "
+                      f"{C['dim']}{meter['read_via']}{C['off']}")
+                for row in meter["rows"]:
+                    print(f"  {row['label']:<21} {bar(row['percent'])} {row['percent']:5.1f}%   "
+                          f"{C['dim']}resets {local_time(row['resets_at'])}{C['off']}")
+            continue
         cached = cache_get(alias)
         if cached and cached.get("limits"):
             report[alias] = {
@@ -909,7 +1193,8 @@ def cmd_status(args: list[str]) -> None:
 COMMANDS = {
     "status": cmd_status, "homes": cmd_homes, "use": cmd_use, "home": cmd_home,
     "exec": cmd_exec, "login": cmd_login, "link": cmd_link, "list": cmd_list,
-    "which": cmd_which, "save": cmd_save, "remove": cmd_remove,
+    "which": cmd_which, "save": cmd_save, "remove": cmd_remove, "note": cmd_note,
+    "whose": cmd_whose,
 }
 
 

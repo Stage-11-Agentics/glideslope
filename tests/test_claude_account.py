@@ -198,3 +198,103 @@ class UsageBackoffTests(ToolCase):
         self.assertEqual(self.tool.start_backoff(10**6, now=now), now + self.tool.BACKOFF_MAX_S)
         self.assertEqual(self.tool.start_backoff(None, now=now), now + self.tool.BACKOFF_DEFAULT_S)
         self.assertIsNone(self.tool.backoff_until(now=now + self.tool.BACKOFF_DEFAULT_S + 1))
+
+
+class MeterTokenTests(ToolCase):
+    """An account nobody is logged into is read through an operator-minted token, by org ID."""
+
+    HEADERS = {
+        "anthropic-organization-id": "org-lab",
+        "anthropic-ratelimit-unified-5h-utilization": "0.14",
+        "anthropic-ratelimit-unified-5h-reset": "1790569200",
+        "anthropic-ratelimit-unified-7d-utilization": "0.13",
+        "anthropic-ratelimit-unified-7d-reset": "1790845200",
+        "anthropic-ratelimit-unified-7d_oi-utilization": "0.02",
+        "anthropic-ratelimit-unified-7d_oi-reset": "1790845200",
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.tool.roster_write({"lab": {"email": "lab@example.com", "org_uuid": "org-lab"},
+                                "personal": {"email": "personal@example.com", "org_uuid": "org-personal"}})
+        self.tool.METER_TOKENS.mkdir(parents=True)
+
+    def token(self, name, value="sk-ant-oat01-secret"):
+        path = self.tool.METER_TOKENS / name
+        path.write_text(f"# whatever a human typed here\n{value}\n")
+        return path
+
+    def run_cmd(self, fn, args, probe):
+        import contextlib, io
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        with mock.patch.object(self.tool, "probe_token", side_effect=probe), \
+             mock.patch.object(self.tool, "live_token", side_effect=RuntimeError("expired")), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                fn(args)
+            except SystemExit as exc:
+                code = exc.code or 0
+        return out.getvalue(), err.getvalue(), code
+
+    def test_headers_become_the_usage_reads_rows_and_an_absent_claim_is_unknown(self):
+        rows = self.tool.meter_rows(self.HEADERS)
+        self.assertEqual([(r["label"], r["percent"]) for r in rows],
+                         [("session (5h)", 14.0), ("weekly (all models)", 13.0), ("weekly (Fable)", 2.0)])
+        self.assertTrue(rows[1]["resets_at"].startswith("2026-10-01T09:00:00"))
+        partial = {k: v for k, v in self.HEADERS.items() if "7d_oi" not in k}
+        self.assertNotIn("weekly (Fable)", [r["label"] for r in self.tool.meter_rows(partial)])
+
+    def test_status_reads_an_account_no_home_holds(self):
+        self.token("lab.token")
+        out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
+                                 lambda token: ("org-lab", self.tool.meter_rows(self.HEADERS)))
+        row = json.loads(out)["lab"]
+        self.assertEqual(row["source"], "meter-token")
+        self.assertFalse(row.get("stale"))
+        self.assertFalse(row["logged_in"])
+        self.assertEqual(row["limits"][1]["percent"], 13.0)
+        self.assertNotIn("secret", out)
+
+    def test_an_unknown_org_is_warned_and_never_credited(self):
+        self.token("lab.token")
+        out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
+                                   lambda token: ("org-stranger", self.tool.meter_rows(self.HEADERS)))
+        self.assertIn("org-stranger", err)
+        self.assertNotEqual(json.loads(out)["lab"].get("source"), "meter-token")
+
+    def test_a_token_named_for_one_account_that_bills_another_says_so(self):
+        """The 2026-09-25 failure: a file called charlie.token that billed Bravo."""
+        self.token("charlie.token")  # Charlie is lab@example.com in the fixture call-signs
+        out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
+                                   lambda token: ("org-personal", self.tool.meter_rows(self.HEADERS)))
+        self.assertIn("named for Charlie but bills Bravo", err)
+        self.assertEqual(json.loads(out)["personal"]["read_via"], "charlie.token")
+
+    def test_whose_verifies_against_the_expected_account(self):
+        path = str(self.token("seat.token"))
+        probe = lambda token: ("org-personal", self.tool.meter_rows(self.HEADERS))
+        out, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--expect", "bravo", "--json"], probe)
+        self.assertEqual(code, 0)
+        row = json.loads(out)[0]
+        self.assertEqual((row["call_sign"], row["verified"]), ("Bravo", True))
+        self.assertNotIn("secret", out)
+        _, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--expect", "charlie", "--json"], probe)
+        self.assertEqual(code, 3)
+        _, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--json"],
+                                  lambda token: ("org-stranger", []))
+        self.assertEqual(code, 4)
+
+    def test_a_login_corrects_a_wrong_note_loudly(self):
+        import contextlib, io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.tool.roster_note({"emailAddress": "lab@example.com", "organizationUuid": "org-real"})
+        self.assertEqual(self.tool.roster_read()["lab"]["org_uuid"], "org-real")
+        self.assertIn("login says", err.getvalue())
+
+    def test_note_refuses_an_org_another_account_owns(self):
+        _, err, code = self.run_cmd(self.tool.cmd_note,
+                                    ["work@example.com", "--org", "org-lab"], lambda token: None)
+        self.assertEqual(code, 1)
+        self.assertIn("already belongs", err)

@@ -14,6 +14,12 @@ So this writes one small file, `~/.glideslope/satellite.json`:
      "snapshot": { "<alias>": { "email": …, "active": true, "limits": [...] } },
      "holds": { "Codex": "…", "Grok": "…" }}
 
+A snapshot row read through a meter token (`"source": "meter-token"`, see
+claude_account.py) is a live reading of an account no home here needs to hold: the
+satellite that keeps the operator's meter tokens reads every account, logged in or not.
+`warnings` carries what claude-account said on stderr (an unknown org, a token named for
+one account that bills another), so a problem found here is read where the position is.
+
 `holds` names the single-account providers this satellite is also signed into
 (email only: Codex, Grok) — for a provider whose meters are server-side and
 account-global, knowing WHO holds it is what lets the fleet read one shared
@@ -115,24 +121,37 @@ def reader() -> Path | None:
     return next((path for path in CANDIDATES if path.exists() and os.access(path, os.X_OK)), None)
 
 
-def gauge() -> tuple[dict, str | None]:
-    """This satellite's live gauge, or an empty snapshot and the reason why."""
+def gauge() -> tuple[dict, str | None, list[str]]:
+    """This satellite's live gauge (or an empty snapshot and the reason why), and claude-account's warnings."""
     executable = reader()
     if executable is None:
-        return {}, "claude-account is not installed on this satellite"
+        return {}, "claude-account is not installed on this satellite", []
     try:
         result = subprocess.run([sys.executable, str(executable), "status", "--json"],
                                 capture_output=True, text=True, timeout=TIMEOUT, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return {}, f"claude-account failed: {exc}"
+        return {}, f"claude-account failed: {exc}", []
+    notes = [line.split("claude-account: ", 1)[1] for line in result.stderr.splitlines()
+             if line.startswith("claude-account: ")]
     if result.returncode:
         detail = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "unknown error"
-        return {}, f"claude-account failed: {detail}"
+        return {}, f"claude-account failed: {detail}", notes
     try:
         snapshot = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        return {}, f"claude-account returned invalid JSON: {exc}"
-    return (snapshot, None) if isinstance(snapshot, dict) else ({}, "claude-account returned a non-object")
+        return {}, f"claude-account returned invalid JSON: {exc}", notes
+    if not isinstance(snapshot, dict):
+        return {}, "claude-account returned a non-object", notes
+    return snapshot, None, notes
+
+
+def tally(snapshot: dict) -> str:
+    """How each published account was read. A stale row is counted, never folded into 'published'."""
+    live = sum(1 for row in snapshot.values() if isinstance(row, dict) and not row.get("stale")
+               and row.get("source") != "meter-token" and row.get("limits"))
+    metered = sum(1 for row in snapshot.values() if isinstance(row, dict) and row.get("source") == "meter-token")
+    stale = sum(1 for row in snapshot.values() if isinstance(row, dict) and row.get("stale"))
+    return f"{live} by login, {metered} by meter token, {stale} stale"
 
 
 def publish(payload: dict) -> None:
@@ -158,14 +177,14 @@ def publish(payload: dict) -> None:
 
 def main() -> int:
     name = os.environ.get("GLIDESLOPE_SATELLITE") or os.uname().nodename.split(".")[0]
-    snapshot, error = gauge()
+    snapshot, error, notes = gauge()
     # The login is published even when the gauge read fails. Knowing WHICH account
     # a satellite holds is what stops the fleet presuming that account unspent —
     # the one lie this instrument must never tell — and it costs no API call, so
     # it must not be lost along with the numbers.
     logins = login_emails()
     payload = {
-        "schema": 3,
+        "schema": 4,
         "satellite": name,
         "observed_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "login_email": selected_email(logins),
@@ -175,8 +194,14 @@ def main() -> int:
     }
     if error:
         payload["error"] = error
+    if notes:
+        payload["warnings"] = notes
     publish(payload)
-    print(f"{name}: published {len(snapshot)} account(s)" + (f" · {error}" if error else ""))
+    stamp = payload["observed_at"]
+    print(f"{stamp} {name}: published {len(snapshot)} account(s): {tally(snapshot)}"
+          + (f" · {error}" if error else ""))
+    for note in notes:
+        print(f"{stamp} {name}: warning: {note}")
     return 0
 
 

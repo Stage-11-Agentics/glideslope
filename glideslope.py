@@ -671,6 +671,9 @@ def read_satellites(
         # -old reading by our own clock would understate its freshness; using our
         # clock when the beacon has stopped would overstate it, which is worse.
         taken_at = parse_timestamp(beacon.get("observed_at")) or observed_at
+        for note in beacon.get("warnings") or []:
+            if isinstance(note, str) and note:
+                warnings.append(f"{name}: {note}")
         found.append({
             "name": name,
             "host": host,
@@ -691,8 +694,9 @@ def merge_satellite_claude(
 ) -> dict[str, Any]:
     """Fold each satellite's live account into this machine's Claude snapshot.
 
-    Every satellite reads exactly one account live, so between them the fleet can
-    see more of the position than any one machine can. The join is on **email**:
+    Every satellite reads the accounts it holds logins for, and the one holding the
+    operator's meter tokens reads every account (PROVIDERS.md, Meter tokens), so
+    between them the fleet sees more of the position than any one machine can. The join is on **email**:
     store aliases are per-machine bookkeeping (`work` here, `work-laptop`
     there) and joining on them would silently match nothing.
 
@@ -706,8 +710,9 @@ def merge_satellite_claude(
     for satellite in satellites:
         for raw in (satellite.get("snapshot") or {}).values():
             if (not isinstance(raw, dict) or raw.get("stale")
-                    or not (raw.get("logged_in") or raw.get("active"))):
-                continue  # only an account that satellite holds a login for is a live read
+                    or not (raw.get("logged_in") or raw.get("active")
+                            or raw.get("source") == "meter-token")):
+                continue  # a live read is a login's, or a meter token's; the rest is journal
             if not isinstance(raw.get("limits"), list) or not raw["limits"]:
                 continue
             alias = by_email.get(raw.get("email"))
@@ -726,6 +731,8 @@ def merge_satellite_claude(
             local["stale"] = False
             local["fetched_at"] = iso_utc(satellite["observed_at"])
             local["read_by"] = satellite["name"]
+            if raw.get("source") == "meter-token":
+                local["source"] = "meter-token"
             local.pop("error", None)
     return snapshot
 

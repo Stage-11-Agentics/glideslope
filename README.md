@@ -96,7 +96,7 @@ developing Glideslope with an agent: [`CLAUDE.md`](CLAUDE.md).
 | **Grok** | SuperGrok weekly compute pool | the Grok Build login |
 | **OpenRouter** | rolling 7-day dollars (metered, so no slope) | a static API key |
 
-read paths, units, failure modes and the checklist for adding the next one: [`PROVIDERS.md`](PROVIDERS.md). Glideslope holds no credentials and mints no tokens; the promises, as invariants: [`SECURITY.md`](SECURITY.md).
+read paths, units, failure modes and the checklist for adding the next one: [`PROVIDERS.md`](PROVIDERS.md). Glideslope mints no tokens and holds no credentials of its own; the promises and their two scoped exceptions, as invariants: [`SECURITY.md`](SECURITY.md).
 
 ## several Claude logins on one machine.
 
@@ -109,6 +109,8 @@ claude-account use auto           # let the glide slope pick the account with ro
 ```
 
 running sessions never move, and nothing here stores a token. `claude-account --help` has the rest.
+
+accounts spent where no login lives (a cloud sandbox fleet, CI) stay readable through **meter tokens**: mint one per account with `claude setup-token`, drop it in `~/.claude/accounts/meter-tokens/` on an always-on satellite, and every account reads live whether or not anyone is logged in. `claude-account whose <file> --expect <account>` says which account a token really bills, by its organization ID, so a launcher can refuse a mislabelled one. details in [`PROVIDERS.md`](PROVIDERS.md#meter-tokens--every-account-logged-in-or-not-added-2026-09-28).
 
 one honest gap: we only jump between Claude accounts, so `claude-account` only knows Claude. multi-account switching for Codex is not built. it is the same shape, one login home per account, and it should be a short job for your agent. we would welcome that pull request.
 

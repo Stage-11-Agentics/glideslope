@@ -1266,6 +1266,27 @@ class SatelliteTests(unittest.TestCase):
         glideslope.merge_satellite_claude(snapshot, [self.beacon(active=False)], NOW)
         self.assertEqual(snapshot["personal"]["limits"][0]["percent"], 5.0)
 
+    def test_a_meter_token_reading_counts_though_no_satellite_is_logged_in(self):
+        """The satellite holding the meter tokens reads accounts nobody is logged into."""
+        snapshot = claude_snapshot()
+        snapshot["personal"]["stale"] = True
+        beacon = self.beacon(active=False)
+        beacon["snapshot"]["home"]["source"] = "meter-token"
+        glideslope.merge_satellite_claude(snapshot, [beacon], NOW)
+        self.assertEqual(snapshot["personal"]["limits"][0]["percent"], 61.0)
+        self.assertEqual(snapshot["personal"]["source"], "meter-token")
+
+    def test_a_beacons_warnings_reach_the_position(self):
+        """A mislabelled token found on the satellite is read where the position is read."""
+        beacon = {"observed_at": glideslope.iso_utc(NOW), "login_email": None, "snapshot": {},
+                  "warnings": ["meter token charlie.token is named for Charlie but bills Bravo"]}
+        warnings = []
+        with mock.patch.object(glideslope, "query_satellite", return_value=beacon), \
+             mock.patch.object(glideslope, "cached_provider_read", return_value=None), \
+             mock.patch.object(glideslope, "cache_provider_read"):
+            glideslope.read_satellites(NOW, warnings, satellites=({"name": "studio", "host": "studio"},))
+        self.assertIn("studio: meter token charlie.token is named for Charlie but bills Bravo", warnings)
+
     def test_an_account_this_machine_has_never_seen_warns_instead_of_guessing(self):
         warnings = []
         glideslope.merge_satellite_claude(
