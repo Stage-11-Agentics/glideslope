@@ -253,7 +253,7 @@ class MeterTokenTests(MeterCase):
     def test_status_reads_an_account_no_home_holds(self):
         self.token("lab.token")
         out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
-                                 lambda token: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
+                                 lambda token, **_: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
         row = json.loads(out)["lab"]
         self.assertEqual(row["source"], "meter-token")
         self.assertFalse(row.get("stale"))
@@ -264,7 +264,7 @@ class MeterTokenTests(MeterCase):
     def test_an_unknown_org_is_warned_and_never_credited(self):
         self.token("lab.token")
         out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
-                                   lambda token: ("org-stranger", self.tool.meter_rows(self.HEADERS), None))
+                                   lambda token, **_: ("org-stranger", self.tool.meter_rows(self.HEADERS), None))
         self.assertIn("org-stranger", err)
         self.assertNotEqual(json.loads(out)["lab"].get("source"), "meter-token")
 
@@ -272,13 +272,13 @@ class MeterTokenTests(MeterCase):
         """The 2026-09-25 failure: a file called charlie.token that billed Bravo."""
         self.token("charlie.token")  # Charlie is lab@example.com in the fixture call-signs
         out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
-                                   lambda token: ("org-personal", self.tool.meter_rows(self.HEADERS), None))
+                                   lambda token, **_: ("org-personal", self.tool.meter_rows(self.HEADERS), None))
         self.assertIn("named for Charlie but bills Bravo", err)
         self.assertEqual(json.loads(out)["personal"]["read_via"], "charlie.token")
 
     def test_whose_verifies_against_the_expected_account(self):
         path = str(self.token("seat.token"))
-        probe = lambda token: ("org-personal", self.tool.meter_rows(self.HEADERS), None)
+        probe = lambda token, **_: ("org-personal", self.tool.meter_rows(self.HEADERS), None)
         out, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--expect", "bravo", "--json"], probe)
         self.assertEqual(code, 0)
         row = json.loads(out)[0]
@@ -287,7 +287,7 @@ class MeterTokenTests(MeterCase):
         _, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--expect", "charlie", "--json"], probe)
         self.assertEqual(code, 3)
         _, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--json"],
-                                  lambda token: ("org-stranger", [], None))
+                                  lambda token, **_: ("org-stranger", [], None))
         self.assertEqual(code, 4)
 
     def test_a_login_corrects_a_wrong_note_loudly(self):
@@ -300,7 +300,7 @@ class MeterTokenTests(MeterCase):
 
     def test_note_refuses_an_org_another_account_owns(self):
         _, err, code = self.run_cmd(self.tool.cmd_note,
-                                    ["work@example.com", "--org", "org-lab"], lambda token: None)
+                                    ["work@example.com", "--org", "org-lab"], lambda token, **_: None)
         self.assertEqual(code, 1)
         self.assertIn("already belongs", err)
 
@@ -362,6 +362,22 @@ class ProbeTests(ToolCase):
         self.assertIn("refused", fallback)
         self.assertNotIn("weekly (Fable)", [r["label"] for r in rows])
 
+    def test_verification_survives_an_overloaded_fable(self):
+        """whose needs the organization, not the Fable meter: a 529 must not block a launch."""
+        haiku = {k: v for k, v in self.HEADERS.items() if "7d_oi" not in k}
+        calls = []
+
+        def fake_open(req, timeout):
+            calls.append(json.loads(req.data)["model"])
+            if len(calls) == 1:
+                raise self.http_error(529)
+            return self.Response(haiku)
+        with mock.patch.object(self.tool, "_open", side_effect=fake_open), \
+             mock.patch.object(self.tool, "cli_version", return_value="9.9.9"):
+            org, rows, fallback = self.tool.probe_token("t", identity_only=True)
+        self.assertEqual((org, len(calls)), ("org-lab", 2))
+        self.assertIn("529", fallback)
+
     def test_a_throttled_account_reads_as_throttled_and_a_bare_429_sends_nothing_more(self):
         (org, rows, _), calls = self.probe(self.http_error(429, self.HEADERS))
         self.assertEqual((org, len(calls)), ("org-lab", 1))
@@ -378,7 +394,7 @@ class MeterRobustnessTests(MeterCase):
         (self.tool.METER_TOKENS / "worse.token").write_bytes(b"\xff\xfe\x00garbage")
         self.token("lab.token")
         out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
-                                   lambda token: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
+                                   lambda token, **_: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
         self.assertEqual(json.loads(out)["lab"]["source"], "meter-token")
         self.assertIn("bad.token", err)
         self.assertIn("worse.token", err)
@@ -389,7 +405,7 @@ class MeterRobustnessTests(MeterCase):
         roster["personal"]["org_uuid"] = "org-lab"
         self.tool.roster_write(roster)
         path = str(self.token("seat.token"))
-        probe = lambda token: ("org-lab", self.tool.meter_rows(self.HEADERS), None)
+        probe = lambda token, **_: ("org-lab", self.tool.meter_rows(self.HEADERS), None)
         out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"], probe)
         self.assertIn("share", err)
         self.assertFalse(any(r.get("source") == "meter-token" for r in json.loads(out).values()))
@@ -414,9 +430,9 @@ class MeterRobustnessTests(MeterCase):
 
     def test_expect_needs_a_value_and_note_stores_lowercase(self):
         _, err, code = self.run_cmd(self.tool.cmd_whose, [str(self.token("x.token")), "--expect", ""],
-                                    lambda token: None)
+                                    lambda token, **_: None)
         self.assertEqual(code, 1)
-        self.run_cmd(self.tool.cmd_note, ["Team@Example.com", "--org", "ORG-TEAM"], lambda token: None)
+        self.run_cmd(self.tool.cmd_note, ["Team@Example.com", "--org", "ORG-TEAM"], lambda token, **_: None)
         entry = self.tool.roster_read()["team"]
         self.assertEqual((entry["email"], entry["org_uuid"]), ("team@example.com", "org-team"))
 

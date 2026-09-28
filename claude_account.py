@@ -797,7 +797,7 @@ def meter_rows(headers) -> list[dict]:
     return rows
 
 
-def probe_token(token: str) -> tuple[str, list[dict], str | None]:
+def probe_token(token: str, *, identity_only: bool = False) -> tuple[str, list[dict], str | None]:
     """(organization ID, limit rows, why Fable is missing or None) for the account TOKEN bills.
 
     A 429 still carries the headers, so an account at its limit reads as at its limit;
@@ -806,6 +806,10 @@ def probe_token(token: str) -> tuple[str, list[dict], str | None]:
     without Fable, a client too old for it) moves on to Haiku, which answers 5h and weekly
     but not Fable; a 5xx or a network failure is a failed read, and the caller serves the
     last one it has.
+
+    IDENTITY_ONLY (for `whose`, which needs the organization, not the Fable meter): any
+    failure but a dead token moves on to the next model, so an overloaded Fable (529)
+    cannot block a verification.
     """
     fallback = None
     for index, model in enumerate(METER_MODELS):
@@ -829,8 +833,8 @@ def probe_token(token: str) -> tuple[str, list[dict], str | None]:
             code = exc.code
             if code == 401 or (code == 403 and last):
                 raise RuntimeError(f"meter token rejected (HTTP {code}): revoked or not a setup-token") from None
-            if code in (400, 403, 404) and not last:
-                fallback = f"{model} refused (HTTP {code})"
+            if not last and (code in (400, 403, 404) or (identity_only and code != 429)):
+                fallback = f"{model} refused (HTTP {code})" if code in (400, 403, 404) else f"{model} failed (HTTP {code})"
                 continue
             if code != 429:
                 raise RuntimeError(f"meter probe failed: HTTP {code} on {model}") from None
@@ -838,6 +842,9 @@ def probe_token(token: str) -> tuple[str, list[dict], str | None]:
             if not meter_rows(headers or {}):
                 raise RuntimeError(f"meter probe throttled (HTTP 429) with no meter headers") from None
         except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
+            if identity_only and not last:
+                fallback = f"{model} failed ({type(exc).__name__})"
+                continue
             raise RuntimeError(f"meter probe failed: {type(exc).__name__}") from None
         org = (headers.get("anthropic-organization-id") or "").strip().lower()
         rows = meter_rows(headers)
@@ -1135,7 +1142,7 @@ def cmd_whose(args: list[str]) -> None:
         try:
             token = read_token_file(path)
             row["fingerprint"] = token_fingerprint(token)
-            org, rows, fallback = probe_token(token)
+            org, rows, fallback = probe_token(token, identity_only=True)
         except Exception as exc:
             row["error"] = safe_error(exc)
             worst = max(worst, 2)
