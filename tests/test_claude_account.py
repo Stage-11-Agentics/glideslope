@@ -200,8 +200,8 @@ class UsageBackoffTests(ToolCase):
         self.assertIsNone(self.tool.backoff_until(now=now + self.tool.BACKOFF_DEFAULT_S + 1))
 
 
-class MeterTokenTests(ToolCase):
-    """An account nobody is logged into is read through an operator-minted token, by org ID."""
+class MeterCase(ToolCase):
+    """A roster that knows two orgs, an empty meter-token directory, and a command runner."""
 
     HEADERS = {
         "anthropic-organization-id": "org-lab",
@@ -237,6 +237,11 @@ class MeterTokenTests(ToolCase):
                 code = exc.code or 0
         return out.getvalue(), err.getvalue(), code
 
+
+
+class MeterTokenTests(MeterCase):
+    """An account nobody is logged into is read through an operator-minted token, by org ID."""
+
     def test_headers_become_the_usage_reads_rows_and_an_absent_claim_is_unknown(self):
         rows = self.tool.meter_rows(self.HEADERS)
         self.assertEqual([(r["label"], r["percent"]) for r in rows],
@@ -248,7 +253,7 @@ class MeterTokenTests(ToolCase):
     def test_status_reads_an_account_no_home_holds(self):
         self.token("lab.token")
         out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
-                                 lambda token: ("org-lab", self.tool.meter_rows(self.HEADERS)))
+                                 lambda token: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
         row = json.loads(out)["lab"]
         self.assertEqual(row["source"], "meter-token")
         self.assertFalse(row.get("stale"))
@@ -259,7 +264,7 @@ class MeterTokenTests(ToolCase):
     def test_an_unknown_org_is_warned_and_never_credited(self):
         self.token("lab.token")
         out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
-                                   lambda token: ("org-stranger", self.tool.meter_rows(self.HEADERS)))
+                                   lambda token: ("org-stranger", self.tool.meter_rows(self.HEADERS), None))
         self.assertIn("org-stranger", err)
         self.assertNotEqual(json.loads(out)["lab"].get("source"), "meter-token")
 
@@ -267,13 +272,13 @@ class MeterTokenTests(ToolCase):
         """The 2026-09-25 failure: a file called charlie.token that billed Bravo."""
         self.token("charlie.token")  # Charlie is lab@example.com in the fixture call-signs
         out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
-                                   lambda token: ("org-personal", self.tool.meter_rows(self.HEADERS)))
+                                   lambda token: ("org-personal", self.tool.meter_rows(self.HEADERS), None))
         self.assertIn("named for Charlie but bills Bravo", err)
         self.assertEqual(json.loads(out)["personal"]["read_via"], "charlie.token")
 
     def test_whose_verifies_against_the_expected_account(self):
         path = str(self.token("seat.token"))
-        probe = lambda token: ("org-personal", self.tool.meter_rows(self.HEADERS))
+        probe = lambda token: ("org-personal", self.tool.meter_rows(self.HEADERS), None)
         out, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--expect", "bravo", "--json"], probe)
         self.assertEqual(code, 0)
         row = json.loads(out)[0]
@@ -282,7 +287,7 @@ class MeterTokenTests(ToolCase):
         _, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--expect", "charlie", "--json"], probe)
         self.assertEqual(code, 3)
         _, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--json"],
-                                  lambda token: ("org-stranger", []))
+                                  lambda token: ("org-stranger", [], None))
         self.assertEqual(code, 4)
 
     def test_a_login_corrects_a_wrong_note_loudly(self):
@@ -298,3 +303,126 @@ class MeterTokenTests(ToolCase):
                                     ["work@example.com", "--org", "org-lab"], lambda token: None)
         self.assertEqual(code, 1)
         self.assertIn("already belongs", err)
+
+
+class ProbeTests(ToolCase):
+    """The probe's HTTP handling: what reads, what fails, and what never sends a second request."""
+
+    HEADERS = MeterCase.HEADERS
+
+    class Response:
+        def __init__(self, headers):
+            self.headers = headers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def http_error(self, code, headers=None):
+        import urllib.error
+        return urllib.error.HTTPError("https://example.test", code, "x", headers or {}, None)
+
+    def probe(self, *answers):
+        calls = []
+
+        def fake_open(req, timeout):
+            calls.append(json.loads(req.data)["model"])
+            answer = answers[len(calls) - 1]
+            if isinstance(answer, Exception):
+                raise answer
+            return self.Response(answer)
+        with mock.patch.object(self.tool, "_open", side_effect=fake_open), \
+             mock.patch.object(self.tool, "cli_version", return_value="9.9.9"):
+            try:
+                return self.tool.probe_token("sk-ant-oat01-secret"), calls
+            except RuntimeError as exc:
+                self.assertNotIn("secret", str(exc))
+                return exc, calls
+
+    def test_a_good_answer_is_a_reading(self):
+        (org, rows, fallback), calls = self.probe(self.HEADERS)
+        self.assertEqual((org, len(rows), fallback, len(calls)), ("org-lab", 3, None, 1))
+
+    def test_a_dead_token_says_so_and_stops(self):
+        exc, calls = self.probe(self.http_error(401))
+        self.assertIn("revoked", str(exc))
+        self.assertEqual(len(calls), 1)
+
+    def test_a_server_error_on_fable_is_a_failed_read_not_a_haiku_read(self):
+        exc, calls = self.probe(self.http_error(529))
+        self.assertIsInstance(exc, RuntimeError)
+        self.assertEqual(len(calls), 1)
+
+    def test_a_refused_model_falls_back_to_haiku_and_says_fable_is_unread(self):
+        haiku = {k: v for k, v in self.HEADERS.items() if "7d_oi" not in k}
+        (org, rows, fallback), calls = self.probe(self.http_error(400), haiku)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("refused", fallback)
+        self.assertNotIn("weekly (Fable)", [r["label"] for r in rows])
+
+    def test_a_throttled_account_reads_as_throttled_and_a_bare_429_sends_nothing_more(self):
+        (org, rows, _), calls = self.probe(self.http_error(429, self.HEADERS))
+        self.assertEqual((org, len(calls)), ("org-lab", 1))
+        exc, calls = self.probe(self.http_error(429))
+        self.assertIsInstance(exc, RuntimeError)
+        self.assertEqual(len(calls), 1)
+
+
+class MeterRobustnessTests(MeterCase):
+    """One bad file, one ambiguous org, or one covered account never costs the others."""
+
+    def test_a_malformed_token_file_costs_only_itself(self):
+        (self.tool.METER_TOKENS / "bad.token").write_text("sk-ant-oat01-se​cret\n")
+        (self.tool.METER_TOKENS / "worse.token").write_bytes(b"\xff\xfe\x00garbage")
+        self.token("lab.token")
+        out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
+                                   lambda token: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
+        self.assertEqual(json.loads(out)["lab"]["source"], "meter-token")
+        self.assertIn("bad.token", err)
+        self.assertIn("worse.token", err)
+        self.assertNotIn("secret", err + out)
+
+    def test_two_entries_sharing_an_org_are_ambiguous_never_guessed(self):
+        roster = self.tool.roster_read()
+        roster["personal"]["org_uuid"] = "org-lab"
+        self.tool.roster_write(roster)
+        path = str(self.token("seat.token"))
+        probe = lambda token: ("org-lab", self.tool.meter_rows(self.HEADERS), None)
+        out, err, _ = self.run_cmd(self.tool.cmd_status, ["--json"], probe)
+        self.assertIn("share", err)
+        self.assertFalse(any(r.get("source") == "meter-token" for r in json.loads(out).values()))
+        _, _, code = self.run_cmd(self.tool.cmd_whose, [path, "--expect", "charlie", "--json"], probe)
+        self.assertEqual(code, 4)
+
+    def test_a_token_a_login_already_covers_is_not_probed(self):
+        profile = self.tool.ensure_profile("charlie")
+        write_config(profile / ".claude.json", "lab@example.com")
+        token = self.token("lab.token")
+        fingerprint = self.tool.token_fingerprint(self.tool.read_token_file(token))
+        self.tool.write_json_atomic(self.tool.METER_ORGS, {fingerprint: "org-lab"})
+        import contextlib, io
+        out = io.StringIO()
+        with mock.patch.object(self.tool, "live_token", return_value="login"), \
+             mock.patch.object(self.tool, "fetch_usage", return_value={"limits": []}), \
+             mock.patch.object(self.tool, "probe_token") as probed, \
+             mock.patch.object(self.tool.time, "sleep"), contextlib.redirect_stdout(out):
+            self.tool.cmd_status(["--json"])
+        probed.assert_not_called()
+        self.assertIn("fetched_at", json.loads(out.getvalue())["lab"])
+
+    def test_expect_needs_a_value_and_note_stores_lowercase(self):
+        _, err, code = self.run_cmd(self.tool.cmd_whose, [str(self.token("x.token")), "--expect", ""],
+                                    lambda token: None)
+        self.assertEqual(code, 1)
+        self.run_cmd(self.tool.cmd_note, ["Team@Example.com", "--org", "ORG-TEAM"], lambda token: None)
+        entry = self.tool.roster_read()["team"]
+        self.assertEqual((entry["email"], entry["org_uuid"]), ("team@example.com", "org-team"))
+
+    def test_call_signs_read_without_tomllib(self):
+        config = self.home / "config.toml"
+        config.write_text('[satellite]\nname = "x"\n\n[claude]\n'
+                          'call_signs = { "work@example.com" = "Alpha", personal = "Bravo" }\n\n[codex]\nplan = "p"\n')
+        self.assertEqual(self.tool._call_signs_without_tomllib(config),
+                         {"work@example.com": "Alpha", "personal": "Bravo"})

@@ -225,7 +225,7 @@ position. A beacon older than an hour stops being a reading at all.
 |---|---|
 | Source | `claude-account status` / `whose`, on the satellite that keeps the tokens |
 | Credential | operator-minted setup-tokens, `~/.claude/accounts/meter-tokens/*.token`, `0600`, read only |
-| Request | `POST /v1/messages`, 1 output token, a Fable model first (Haiku if the plan has no Fable), the CLI's `User-Agent` at the installed Claude Code's version |
+| Request | `POST /v1/messages`, 1 output token, a Fable model first (Haiku only if that model is refused: 400/403/404), the CLI's `User-Agent` at the installed Claude Code's version, no redirects, 10 s timeout, 25 s for all probes in a run |
 | Read | response headers: `anthropic-ratelimit-unified-{5h,7d,7d_oi}-{utilization,reset}` and `anthropic-organization-id` |
 | Join key | **organization ID** → the roster's `org_uuid` → email |
 
@@ -251,17 +251,32 @@ holds that account; for an account no home here holds, `claude-account note <ema
 org the roster does not know is reported and its reading dropped. A token whose file name
 names one account and bills another is reported by name.
 
-**Where it runs.** Keep the tokens on one always-on satellite. Its beacon's snapshot then
-carries a fresh row per account with `"source": "meter-token"`, and the reader takes such a
-row as a live reading even though no satellite is logged in to that account; the email join
-and the older-loses merge rule are unchanged. A meter reading is preferred only where no home
-here reads the account live. The beacon forwards `claude-account`'s warnings (`warnings` in
-the beacon) and its log line counts rows by login, by meter token and stale, so a stale
-publish is never logged as a success.
+**Where it runs.** Keep the tokens on one always-on satellite. `status` reads every login
+home first and probes a token only for an account those reads left unread; a token already
+known (by hash, `.meter-orgs.json`) to bill a live-read account is not sent at all. The
+satellite's beacon then carries a fresh row per such account with `"source": "meter-token"`,
+and the reader takes that row for an account it holds no live read of, even though no
+satellite is logged in to it. **A meter row never displaces a live login read**, on either
+machine; it only fills a stale or unread one. The beacon forwards `claude-account`'s warnings
+(`warnings` in the beacon) and its log line counts rows by login, by meter token and stale,
+so a stale publish is never logged as a success.
 
-**Cost and side effects.** One request per token per beacon tick (every 300 s): a few dozen
-input tokens and one output token. A probe starts a 5h window if none is running, so an
-otherwise idle account's session clock rolls continuously; its weekly reset is unaffected.
+**Failure.** A dead token (401) says so. A 5xx, a network failure or a 429 without meter
+headers is a failed read: nothing more is sent this run and the cached read serves, marked
+stale. A bad token file (not UTF-8, invisible characters) costs only its own account. A Fable
+refusal that falls back to Haiku leaves the Fable weekly out of that reading and says so; it
+never reads as zero.
+
+**Cost and side effects.** At most one request per token per `status` call (two when the Fable
+model is refused), only for accounts no login read: a few dozen input tokens and one output
+token. On a satellite with no live logins that is one per account per beacon tick (300 s). A
+probe starts a 5h window if none is running, so an otherwise idle account's session clock
+rolls continuously; its weekly reset is unaffected. A probe presents Claude Code's identity to
+the Messages API, as the `/usage` read already does; weigh that before running it at a
+faster cadence.
+
+**Team plans.** Seats on one Team plan share an organization, so an org ID cannot tell them
+apart. Two roster entries with the same org are ambiguous and are never credited.
 
 **Verifying a token before trusting it with work.** `claude-account whose <file> --expect
 <account> --json` reports the org, email, call-sign and meters for a token and exits `0` when

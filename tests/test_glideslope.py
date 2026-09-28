@@ -1276,6 +1276,18 @@ class SatelliteTests(unittest.TestCase):
         self.assertEqual(snapshot["personal"]["limits"][0]["percent"], 61.0)
         self.assertEqual(snapshot["personal"]["source"], "meter-token")
 
+    def test_a_meter_reading_never_displaces_a_live_login_read(self):
+        """The real status row shape: a live login row, possibly with no fetched_at of its own."""
+        snapshot = claude_snapshot()
+        snapshot["personal"].pop("fetched_at", None)
+        snapshot["personal"].pop("stale", None)
+        beacon = self.beacon(active=False)
+        beacon["snapshot"]["home"]["source"] = "meter-token"
+        glideslope.merge_satellite_claude(snapshot, [beacon], NOW)
+        self.assertEqual(snapshot["personal"]["limits"][0]["percent"], 5.0)
+        glideslope.merge_satellite_claude(snapshot, [self.beacon(age_seconds=30)], NOW)
+        self.assertEqual(snapshot["personal"]["limits"][0]["percent"], 5.0)  # no clock: it is this run's own
+
     def test_a_beacons_warnings_reach_the_position(self):
         """A mislabelled token found on the satellite is read where the position is read."""
         beacon = {"observed_at": glideslope.iso_utc(NOW), "login_email": None, "snapshot": {},

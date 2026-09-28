@@ -725,8 +725,11 @@ def merge_satellite_claude(
                 continue  # too old to be a reading; the local journal is no worse
             local = snapshot[alias]
             local_at = parse_timestamp(local.get("fetched_at"))
-            if not local.get("stale") and local_at is not None and local_at >= satellite["observed_at"]:
-                continue
+            if not local.get("stale") and local.get("limits"):
+                if raw.get("source") == "meter-token":
+                    continue  # a meter reading fills an unread account; it never displaces a login's read
+                if local_at is None or local_at >= satellite["observed_at"]:
+                    continue  # a live read with no clock is this run's own, and no beacon is newer
             local["limits"] = raw["limits"]
             local["stale"] = False
             local["fetched_at"] = iso_utc(satellite["observed_at"])

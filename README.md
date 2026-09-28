@@ -110,8 +110,6 @@ claude-account use auto           # let the glide slope pick the account with ro
 
 running sessions never move, and nothing here stores a token. `claude-account --help` has the rest.
 
-accounts spent where no login lives (a cloud sandbox fleet, CI) stay readable through **meter tokens**: mint one per account with `claude setup-token`, drop it in `~/.claude/accounts/meter-tokens/` on an always-on satellite, and every account reads live whether or not anyone is logged in. `claude-account whose <file> --expect <account>` says which account a token really bills, by its organization ID, so a launcher can refuse a mislabelled one. details in [`PROVIDERS.md`](PROVIDERS.md#meter-tokens--every-account-logged-in-or-not-added-2026-09-28).
-
 one honest gap: we only jump between Claude accounts, so `claude-account` only knows Claude. multi-account switching for Codex is not built. it is the same shape, one login home per account, and it should be a short job for your agent. we would welcome that pull request.
 
 ---
