@@ -857,6 +857,8 @@
       <div class="acct-status" id="acct-status" role="status" aria-live="polite"></div>
       <div class="acct-actions">
         <button class="acct-btn quiet" id="acct-relogin" type="button">Log in again</button>
+        <button class="acct-btn quiet" id="acct-moveall" type="button"
+                title="Log the shared default home in as this account. Every session running there follows at its next token read.">Move all sessions</button>
         <span class="spacer"></span>
         <button class="acct-btn" id="acct-cancel" type="button">Cancel</button>
         <button class="acct-btn primary" id="acct-confirm" type="button"></button>
@@ -2177,9 +2179,11 @@ refreshButton.addEventListener("click", requestRefresh);
 
 /* ── switching accounts ──
    Switching points NEW sessions on this machine at an account; a running session
-   never moves. The page holds no command: it sends the host one manifest action
-   label, "Use <Account>" or "Log in <Account>", and the host decides what runs.
-   Nothing is sent until the dialog's confirm button is pressed. */
+   never moves. "Move all sessions" is the global switch: it opens /login in the
+   shared default home, and every session running there follows once the browser
+   authorizes. The page holds no command: it sends the host one manifest action
+   label, "Use <Account>", "Log in <Account>" or "Move all <Account>", and the host
+   decides what runs. Nothing is sent until a dialog button is pressed. */
 const dialog = document.getElementById("account-dialog");
 const dialogKicker = document.getElementById("acct-kicker");
 const dialogTitle = document.getElementById("acct-title");
@@ -2189,6 +2193,7 @@ const dialogStatus = document.getElementById("acct-status");
 const dialogConfirm = document.getElementById("acct-confirm");
 const dialogCancel = document.getElementById("acct-cancel");
 const dialogRelogin = document.getElementById("acct-relogin");
+const dialogMoveAll = document.getElementById("acct-moveall");
 const HOT_PERCENT = 90;
 let dialogAccount = null;
 let dialogMode = null;      // "switch" | "here" | "login"
@@ -2225,6 +2230,7 @@ function openAccountDialog(account) {
   dialogMeters.innerHTML = meterCells(account);
   setDialogStatus("", "");
   dialogRelogin.hidden = false;
+  dialogMoveAll.hidden = false;
   dialogCancel.textContent = "Cancel";
   dialogConfirm.hidden = false;
   dialogConfirm.disabled = false;
@@ -2239,7 +2245,8 @@ function openAccountDialog(account) {
     dialogMode = "switch";
     dialogTitle.innerHTML = `<span class="acct-swatch"></span>Switch to ${name}?`;
     dialogBody.textContent = `New sessions on ${hereName} will start as ${account.display}.`
-      + (current ? ` Sessions already running stay on ${current.display}.` : "");
+      + (current ? ` Sessions already running stay on ${current.display}`
+        + ` unless you move all of them.` : "");
     dialogConfirm.textContent = `Switch to ${account.display}`;
     const hot = DIALOG_METERS.map(([id, label]) => [label,
       meterUsed((account.limits || []).find(limit => limit.meter_id === id))])
@@ -2272,6 +2279,8 @@ function sendAccountAction(kind) {
     const who = dialogAccount.display.toLowerCase();
     setDialogStatus("error", kind === "Use"
       ? `NO HOST HERE — run: claude-account use ${who}`
+      : kind === "Move all"
+      ? `NO HOST HERE — run: tools/claude-login-pane --default ${who}`
       : `NO HOST HERE — run: tools/claude-login-pane ${who}`);
     return;
   }
@@ -2279,6 +2288,7 @@ function sendAccountAction(kind) {
   dialogConfirm.disabled = true;
   dialogCancel.disabled = true;
   dialogRelogin.disabled = true;
+  dialogMoveAll.disabled = true;
   setDialogStatus("working", kind === "Use" ? "SWITCHING…" : "OPENING A LOGIN PANE…");
 }
 function accountActionResult(result) {
@@ -2286,6 +2296,7 @@ function accountActionResult(result) {
   dialogPending = null;
   dialogCancel.disabled = false;
   dialogRelogin.disabled = false;
+  dialogMoveAll.disabled = false;
   if (!result.ok) {
     dialogConfirm.disabled = false;
     setDialogStatus("error", `FAILED — ${result.message || "action failed"}`);
@@ -2293,6 +2304,7 @@ function accountActionResult(result) {
   }
   dialogConfirm.hidden = true;
   dialogRelogin.hidden = true;
+  dialogMoveAll.hidden = true;
   dialogCancel.textContent = "Close";
   if (label.startsWith("Use ")) {
     const name = label.slice(4);
@@ -2303,6 +2315,9 @@ function accountActionResult(result) {
     refreshButton.disabled = true;
     setRefreshState("working", `SWITCHED TO ${name.toUpperCase()} · UPDATING…`);
     waitForRefresh();
+  } else if (label.startsWith("Move all ")) {
+    setDialogStatus("ok", "Login pane opened on the shared home. Type /login there;"
+      + " every session in that home follows once the browser authorizes.");
   } else {
     setDialogStatus("ok", "Login pane opened. Type /login there.");
   }
@@ -2311,6 +2326,7 @@ dialogConfirm.addEventListener("click", () => {
   sendAccountAction(dialogMode === "switch" ? "Use" : "Log in");
 });
 dialogRelogin.addEventListener("click", () => sendAccountAction("Log in"));
+dialogMoveAll.addEventListener("click", () => sendAccountAction("Move all"));
 dialogCancel.addEventListener("click", closeAccountDialog);
 dialog.addEventListener("click", event => { if (event.target === dialog) closeAccountDialog(); });
 document.addEventListener("keydown", event => {

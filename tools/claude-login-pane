@@ -2,8 +2,14 @@
 #
 # Open a terminal waiting at Claude Code's /login for one account's login home.
 #
-#   claude-login-pane <account>          open a c11 workspace (or Terminal.app) for the login
-#   claude-login-pane --here <account>   what runs inside it: prompt, then Claude Code
+#   claude-login-pane <account>             open a c11 workspace (or Terminal.app) for the login
+#   claude-login-pane --default <account>   the same, but log in to the DEFAULT home (~/.claude)
+#   claude-login-pane --here [--default] <account>   what runs inside it: prompt, then Claude Code
+#
+# --default is the global switch. Every session started without CLAUDE_CONFIG_DIR
+# shares the default home's keychain item, so a /login there moves all of them, the
+# running ones included, at their next token read. It also moves new sessions there
+# whenever the default home holds the selected account (home_for checks it first).
 #
 # Built for the Glideslope popup, which runs it through a host action; the browser
 # half of the login is always a human's. With no home yet, `claude-account login`
@@ -16,13 +22,31 @@ PY=/opt/homebrew/bin/python3
 [ -x "$PY" ] || PY=python3
 ACCOUNT_TOOL="$(cd "$(dirname "$SELF")" && pwd)/claude-account"
 
-usage() { echo "usage: claude-login-pane [--here] <account>" >&2; exit 2; }
+usage() { echo "usage: claude-login-pane [--here] [--default] <account>" >&2; exit 2; }
 
-if [ "${1:-}" = "--here" ]; then
-    [ -n "${2:-}" ] || usage
-    account="$2"
+here=0 default=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --here) here=1 ;;
+        --default) default=1 ;;
+        -*) usage ;;
+        *) break ;;
+    esac
+    shift
+done
+
+if [ "$here" = 1 ]; then
+    [ -n "${1:-}" ] || usage
+    account="$1"
     # A login pane must never inherit another session's home.
     unset CLAUDE_CONFIG_DIR CLAUDE_ACCOUNT_HOME CLAUDE_ACCOUNT
+    if [ "$default" = 1 ]; then
+        printf '\n  \033[1mClaude login · %s · default home\033[0m\n' "$account"
+        printf '  Type /login, pick the Claude subscription, and authorize in the browser.\n'
+        printf '  The browser must be signed in to claude.ai as %s first.\n' "$account"
+        printf '  Every session in the default home (~/.claude) moves to %s.\n\n' "$account"
+        exec claude
+    fi
     home=$("$PY" "$ACCOUNT_TOOL" homes --json | "$PY" -c '
 import json, sys
 wanted = sys.argv[1].lower()
@@ -31,7 +55,7 @@ for row in json.load(sys.stdin):
         print(row["home"]); break' "$account")
     # A home that holds a login (live or lapsed) re-logs in place; anything else goes
     # through `claude-account login`, which makes or reuses the account's own profile
-    # home. Never fall through to a launch in the default home: that is Charlie's.
+    # home. Never fall through to a launch in the default home: that takes --default.
     printf '\n  \033[1mClaude login · %s\033[0m\n' "$account"
     printf '  Type /login, pick the Claude subscription, and authorize in the browser.\n'
     printf '  The browser must be signed in to claude.ai as %s first.\n\n' "$account"
@@ -44,12 +68,18 @@ fi
 [ -n "${1:-}" ] || usage
 account="$1"
 case "$account" in *[!A-Za-z0-9._@-]*) echo "bad account name: $account" >&2; exit 2 ;; esac
-inner="'$SELF' --here '$account'"
+flags="--here"
+title="Claude login · $account"
+if [ "$default" = 1 ]; then
+    flags="--here --default"
+    title="Claude login · $account · default home"
+fi
+inner="'$SELF' $flags '$account'"
 
 C11=/Applications/c11.app/Contents/Resources/bin/c11
 if [ -x "$C11" ]; then
     env -u C11_SURFACE_ID -u C11_WORKSPACE_ID -u C11_SHELL_INTEGRATION \
-        "$C11" new-workspace --cwd "$HOME" --title "Claude login · $account" \
+        "$C11" new-workspace --cwd "$HOME" --title "$title" \
         --command "$inner" >/dev/null 2>&1 && {
         open -a c11 >/dev/null 2>&1 || true
         echo "login pane opened in c11 for $account"

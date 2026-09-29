@@ -93,6 +93,16 @@ gone falls back to the default home's account, in the launcher and in Glideslope
 `claude` actually gets. Running sessions are never moved; a switch only changes where the
 next one starts.
 
+**Two switches, on purpose (2026-09-29).** A running session holds its home for life, but not
+its credential: Claude Code re-reads its home's keychain item, so a `/login` inside a home moves
+every session running there. The default home is the one most sessions share (anything launched
+without `CLAUDE_CONFIG_DIR`, including c11's restored sessions), which makes a `/login` there the
+**global switch**: `tools/claude-login-pane --default <account>`, the popup's "Move all sessions".
+`use` is the **new-sessions switch**. Once the default home holds the selected account, new
+sessions start there too, because `home_for` checks the default home first. Verified live: 25
+running sessions stuck at Bravo's weekly limit moved to Alpha on one default-home `/login`, no
+restarts.
+
 **Logged in means selected.** A satellite may hold several login homes but is logged in to one
 account: its selection. `logins` names the satellites whose selection an account is (a beacon's
 `login_email`); `held_on` names every satellite holding a home for it (`login_emails`). The
