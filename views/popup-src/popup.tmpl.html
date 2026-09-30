@@ -322,7 +322,7 @@
      start, midpoint, reset. Same three places, so nothing moves. */
   .ils-axis-pct { transition: opacity .12s ease; }
   #ils:has(.selection-reticle.selection-selected .reticle-clock) .ils-axis-pct { opacity: 0; }
-  .selection-reticle .reticle-clock { fill: var(--ink-2); font: 600 8.5px var(--mono);
+  .selection-reticle .reticle-clock { fill: var(--ink-2); font: 600 10.5px var(--mono);
     letter-spacing: .04em; }
   .selection-reticle .reticle-clock.clock-yield { opacity: 0; }
   /* ── where a forecast meets the wall ──
@@ -332,13 +332,13 @@
      2026-09-30): the line only claims what it measured, and so does its text.
      One label at rest, the soonest wall; pointing at a line shows its own. */
   .selection-reticle .wall-label {
-    fill: var(--significant); font: 600 8px var(--mono); letter-spacing: .05em; opacity: .9;
+    fill: var(--ink); font: 600 11px var(--mono); letter-spacing: .04em; opacity: .92;
     paint-order: stroke; stroke: var(--void); stroke-width: 3px; stroke-linejoin: round;
     pointer-events: none; transition: opacity .12s ease;
   }
   .selection-reticle .wall-label.wall-alt { opacity: 0; }
   .selection-reticle.wall-focused .wall-label { opacity: 0; }
-  .selection-reticle.wall-focused .wall-label.wall-focus { opacity: .9; }
+  .selection-reticle.wall-focused .wall-label.wall-focus { opacity: .92; }
 
   /* Two columns, filled DOWN then across (the row count is set from JS): nine
      windows cost five rows of the card's height instead of nine, and the plot
@@ -1740,7 +1740,7 @@ function renderPlot() {
       node.setAttribute("x", clamp(x(endE), M.l + half, M.l + W - half).toFixed(1));
     } else {
       const above = endU < 92;
-      node = mk("text", { x: x(100) - 4, y: above ? y(endU) - 7 : y(endU) + 13,
+      node = mk("text", { x: x(100) - 4, y: above ? y(endU) - 7 : y(endU) + 16,
         "text-anchor": "end", class: "wall-label", "data-horizon": horizon.id },
         `~${Math.round(endU)}% AT RESET`, reticle);
     }
