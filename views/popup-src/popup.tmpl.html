@@ -1105,7 +1105,11 @@ const budgetPaceOf = window => {
 const needMultiple = window => {
   const left = leftMs(window);
   if (left == null || left <= 0 || window.used_percent == null || !window.window_minutes) return null;
-  return ((100 - window.used_percent) / 100 * window.window_minutes * MIN) / left;
+  /* the budget's span, not the window's: after an early reset a full budget is
+     meant to last from the reset to the deadline, and even burn over that span
+     is the pace this reads against (the same beam the plot draws for it) */
+  const span = endOf(window) - budgetStartOf(window);
+  return ((100 - window.used_percent) / 100 * span) / left;
 };
 /* When this window runs out if the rate it has burned so far simply continues —
    null when it does not run out before the reset, which is a different and

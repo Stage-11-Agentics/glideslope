@@ -1487,7 +1487,10 @@ function paceOf(w) {
 function needMultiple(w) {
   const lm = leftMs(w);
   if (lm == null || lm <= 0 || w.pct == null || !w.minutes) return null;
-  return ((100 - w.pct) / 100 * w.minutes * MIN) / lm;
+  /* the budget's span, not the window's: after an early reset a full budget is
+     meant to last from the reset to the deadline (the beam the plot draws for it) */
+  const span = endOf(w) - budgetStartOf(w);
+  return ((100 - w.pct) / 100 * span) / lm;
 }
 function exhaustAt(w) {
   const s = budgetStartOf(w);
