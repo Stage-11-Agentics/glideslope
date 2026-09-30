@@ -63,13 +63,94 @@ MONO = ("/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Monaco.ttf")
 
 # ------------------------------------------------------------------ dedup state
 
+def clock_key(when: dt.datetime) -> str:
+    """A reset instant as a key: to the nearest minute. The provider reports the
+    same deadline as 02:59:59, 03:00:00 or 03:00:01 from one read to the next, and
+    keying on the raw second made one window three instances, each free to warn."""
+    return iso_utc((when + dt.timedelta(seconds=30)).replace(second=0, microsecond=0))
+
+
+def _normalized(key: str) -> str:
+    head, _, clock = key.rpartition("|")
+    when = parse_timestamp(clock)
+    return f"{head}|{clock_key(when)}" if head and when is not None else key
+
+
 def window_key(alert: dict[str, Any]) -> str:
     """One alert per window INSTANCE — the reset instant is what makes it one.
 
     Keying on account+meter alone would silence the next window too; keying on
-    the clock as well means a fresh window is a fresh chance to warn.
+    the clock as well means a fresh window is a fresh chance to warn. An early
+    reset keeps the clock but starts a new budget, so it names the instance too:
+    without it, the 90% already sent before the reset silenced the second climb.
+    The reset instant rides on the meter so the clock stays the key's last field,
+    which is what `prune` reads.
     """
-    return f"{alert['account']}|{alert['meter_id']}|{iso_utc(alert['resets_at'])}"
+    meter = alert["meter_id"]
+    rebased = parse_timestamp(alert.get("rebased_at"))
+    if rebased is not None:
+        meter = f"{meter}@{clock_key(rebased)}"
+    return f"{alert['account']}|{meter}|{clock_key(alert['resets_at'])}"
+
+
+# ------------------------------------------------------------------ early resets
+# A used reset is news the moment it lands and stale an hour later: the banner
+# is the flash, and a sampler that was down through it should not fire it late.
+RESET_BANNER_WINDOW = dt.timedelta(hours=2)
+
+
+def reset_alerts(accounts: list[dict[str, Any]], now: dt.datetime) -> list[dict[str, Any]]:
+    """One alert per account whose budget was reset early within the banner window.
+
+    Any account, not just the one logged in here: a reset is something the
+    operator did on purpose, and seeing it land is the confirmation. The weekly
+    all-models meter speaks for the account when it has the event; siblings that
+    only inherited it never speak first.
+    """
+    alerts: list[dict[str, Any]] = []
+    for account in accounts:
+        if account.get("dormant"):
+            continue
+        candidates = []
+        for limit in account.get("limits", []):
+            resets = limit.get("early_resets") or []
+            reset = parse_timestamp(limit.get("resets_at"))
+            duration = limit.get("window_minutes") or 0
+            if not resets or reset is None or reset <= now or duration < 24 * 60:
+                continue
+            last = resets[-1]
+            at = parse_timestamp(last.get("at"))
+            if at is None or now - at > RESET_BANNER_WINDOW:
+                continue
+            rank = (bool(last.get("inherited")), limit.get("meter_id") != "weekly_all")
+            candidates.append((rank, limit, last, at, reset))
+        if not candidates:
+            continue
+        _, limit, last, at, reset = min(candidates, key=lambda c: c[0])
+        percent = limit.get("used_percent")
+        alerts.append({
+            "kind": "reset",
+            "account": account.get("display"),
+            "alias": account.get("account"),
+            "provider": account.get("provider"),
+            "meter_id": limit.get("meter_id"),
+            "label": limit.get("label"),
+            "used_percent": float(percent) if percent is not None else float(last.get("to_percent") or 0),
+            "resets_at": reset,
+            "window_minutes": limit.get("window_minutes"),
+            "rebased_at": at,
+            "early_resets": limit.get("early_resets") or [],
+            "from_percent": float(last.get("from_percent") or 0),
+            "exhausts_at": None,
+            "floor": False,
+        })
+    return alerts
+
+
+def reset_key(alert: dict[str, Any]) -> str:
+    """Once per reset. The window's clock stays last so `prune` forgets it at the deadline."""
+    return (f"{alert['account']}|{alert['meter_id']}!reset@{clock_key(alert['rebased_at'])}"
+            f"|{clock_key(alert['resets_at'])}")
 
 
 def load_state(path: Path = STATE_PATH) -> dict[str, str]:
@@ -77,7 +158,9 @@ def load_state(path: Path = STATE_PATH) -> dict[str, str]:
         value = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
-    return {str(k): str(v) for k, v in value.items()} if isinstance(value, dict) else {}
+    # keys written before clock_key existed carry the raw second; read them rounded
+    return ({_normalized(str(k)): str(v) for k, v in value.items()}
+            if isinstance(value, dict) else {})
 
 
 def prune(state: dict[str, str], now: dt.datetime) -> dict[str, str]:
@@ -148,6 +231,23 @@ def compose(alert: dict[str, Any], alternative: dict[str, Any] | None,
         parts.append(f"{alternative['display']} has the most room{on_fable} —"
                      f" {format_percent(alternative['used_percent'])} against a"
                      f" ◆ {format_percent(alternative['pace_percent'])}.")
+    return title, " ".join(parts)
+
+
+def compose_reset(alert: dict[str, Any], now: dt.datetime) -> tuple[str, str]:
+    """Title and body for a used reset: what it cleared, how long the fresh budget
+    runs, and how much faster than a week's even burn it can now be spent."""
+    window = "7 DAY · Fable" if alert["meter_id"] == "weekly_fable" else "7 DAY"
+    title = f"{alert['account']} · reset used"
+    span = (alert["resets_at"] - alert["rebased_at"]).total_seconds()
+    parts = [f"{window} was {format_percent(alert['from_percent'])},"
+             f" now {format_percent(alert['used_percent'])}."]
+    parts.append(f"A fresh budget until {_clock(alert['resets_at'], now)}"
+                 f" ({format_countdown(alert['resets_at'] - now)} left).")
+    if span > 0 and alert.get("window_minutes"):
+        multiple = alert["window_minutes"] * 60 / span
+        if multiple >= 1.05:
+            parts.append(f"Even burn now runs {multiple:.1f}× the weekly pace.")
     return title, " ".join(parts)
 
 
@@ -260,8 +360,19 @@ def draw_approach(alert: dict[str, Any], now: dt.datetime, size: int = 512) -> P
         draw.line([(frame[0], py(value)), (frame[2], py(value))], fill=GRID, width=1)
     # the ceiling: the thing the red path terminates at, drawn as a place
     draw.line([(frame[0], py(100)), (frame[2], py(100))], fill=CAPPED_DIM, width=3)
-    # the beam — reference, not subject, so it stays dim and thin under the track
-    _dashed(draw, (px(0), py(0)), (px(100), py(100)), BEAM, 3, on=4, off=9)
+    # the beam — reference, not subject, so it stays dim and thin under the track.
+    # After an early reset the budget is judged against its own beam, from the
+    # reset to the deadline; the window's original beam stays as a ghost.
+    rebased = parse_timestamp(alert.get("rebased_at"))
+    origin = (0.0, 0.0)
+    if rebased is not None and start < rebased < reset:
+        resets = alert.get("early_resets") or []
+        floor = float((resets[-1] if resets else {}).get("to_percent") or 0)
+        origin = ((rebased - start).total_seconds() / span * 100, floor)
+        _dashed(draw, (px(0), py(0)), (px(100), py(100)), GRID, 2, on=4, off=9)
+        _dashed(draw, (px(origin[0]), py(origin[1])), (px(100), py(100)), BEAM, 3, on=4, off=9)
+    else:
+        _dashed(draw, (px(0), py(0)), (px(100), py(100)), BEAM, 3, on=4, off=9)
 
     hue = ACCOUNT_HUES.get(str(alert["account"]), INK)
     track = [point for point in approach_track(alert) if point[1] is not None]
@@ -269,12 +380,24 @@ def draw_approach(alert: dict[str, Any], now: dt.datetime, size: int = 512) -> P
         draw.line([(px(e), py(u)) for e, u in track] + [(px(elapsed), py(used))],
                   fill=hue, width=max(3, int(size * 0.009)), joint="curve")
 
-    # the flight path — forward from the mark, at the rate burned so far
-    if used > 0 and elapsed > 0.1:
-        hit = 100 * elapsed / used
+    # the checkered drop: every early reset, hung from where the meter fell from
+    for event in alert.get("early_resets") or []:
+        at = parse_timestamp(event.get("at"))
+        if at is None or not start < at < reset:
+            continue
+        _checkered_drop(draw, px((at - start).total_seconds() / span * 100),
+                        py(float(event.get("from_percent") or 0)),
+                        py(float(event.get("to_percent") or 0)), size)
+
+    # the flight path — forward from the mark, at the rate burned since the
+    # budget began (the window's start, or its latest reset)
+    run_e, run_u = elapsed - origin[0], used - origin[1]
+    if run_u > 0 and run_e > 0.1:
+        slope = run_u / run_e
+        hit = elapsed + (100 - used) / slope
         exhausts = hit <= 100
         end = ((px(min(hit, 100)), py(100)) if exhausts
-               else (px(100), py(min(used * 100 / elapsed, 100))))
+               else (px(100), py(min(used + slope * (100 - elapsed), 100))))
         _dashed(draw, (px(elapsed), py(used)), end, CAPPED if exhausts else BANK,
                 max(4, int(size * 0.012)), on=11, off=9)
         if exhausts:
@@ -309,9 +432,30 @@ def draw_approach(alert: dict[str, Any], now: dt.datetime, size: int = 512) -> P
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(IMAGE_DIR, 0o700)
     # One file per account/meter: overwritten on redraw, never accumulating.
-    path = IMAGE_DIR / f"{alert['account']}-{alert['meter_id']}.png".lower()
+    kind = "-reset" if alert.get("kind") == "reset" else ""
+    path = IMAGE_DIR / f"{alert['account']}-{alert['meter_id']}{kind}.png".lower()
     image.save(path, "PNG")
     return path
+
+
+def _checkered_drop(draw, x: float, top: float, bottom: float, size: int) -> None:
+    """A thin chequered cloth from `top` down to `bottom`, with a flag at its head:
+    the same mark the views hang where a reset cleared the meter."""
+    cell = max(3, round(size * 0.012))
+    left = x - cell
+    rows = max(1, int((bottom - top) / cell))
+    for row in range(rows):
+        for column in range(2):
+            colour = INK if (row + column) % 2 == 0 else VOID
+            y0 = top + row * cell
+            draw.rectangle([left + column * cell, y0, left + (column + 1) * cell, y0 + cell],
+                           fill=colour)
+    for row in range(3):
+        for column in range(4):
+            colour = INK if (row + column) % 2 == 0 else VOID
+            x0, y0 = x + cell + column * cell, top + row * cell
+            draw.rectangle([x0, y0, x0 + cell, y0 + cell], fill=colour)
+    draw.rectangle([left, top, left + 2 * cell, top + rows * cell], outline=MUTED, width=1)
 
 
 # --------------------------------------------------------------------- delivery
@@ -373,6 +517,14 @@ def run(accounts: list[dict[str, Any]], now: dt.datetime, *,
         if deliver(title, body, draw_approach(alert, now), url=url):
             state[key] = iso_utc(now)
             sent.append(key)
+    for alert in reset_alerts(accounts, now):
+        key = reset_key(alert)
+        if key in state:
+            continue
+        title, body = compose_reset(alert, now)
+        if deliver(title, body, draw_approach(alert, now), url=url):
+            state[key] = iso_utc(now)
+            sent.append(key)
     save_state(state, state_path)
     return sent
 
@@ -402,6 +554,10 @@ def main() -> int:
                                            threshold=args.threshold)
             title, body = compose(alert, alternative, now)
             already = window_key(alert) in load_state()
+            print(f"{'[already sent] ' if already else ''}{title}\n  {body}")
+        for alert in reset_alerts(accounts, now):
+            title, body = compose_reset(alert, now)
+            already = reset_key(alert) in load_state()
             print(f"{'[already sent] ' if already else ''}{title}\n  {body}")
         return 0
     for key in run(accounts, now, threshold=args.threshold):
