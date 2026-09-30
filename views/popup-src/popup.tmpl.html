@@ -315,6 +315,30 @@
     fill: var(--ink); font: 700 8px var(--mono); letter-spacing: .04em;
     paint-order: stroke; stroke: var(--void); stroke-width: 3px; stroke-linejoin: round;
   }
+  /* ── the selected window's clock ──
+     Percent of the window is the frame's shared language, because a 5 HOUR and
+     a 7 DAY window cannot share a clock. A selected mark has one window, so
+     while it is selected the elapsed ticks speak that window's calendar time:
+     start, midpoint, reset. Same three places, so nothing moves. */
+  .ils-axis-pct { transition: opacity .12s ease; }
+  #ils:has(.selection-reticle.selection-selected .reticle-clock) .ils-axis-pct { opacity: 0; }
+  .selection-reticle .reticle-clock { fill: var(--ink-2); font: 600 8.5px var(--mono);
+    letter-spacing: .04em; }
+  .selection-reticle .reticle-clock.clock-yield { opacity: 0; }
+  /* ── where a forecast meets the wall ──
+     A forecast that reaches the ceiling says when, on the frame's top edge; one
+     that reaches the reset says where it lands, beside the right edge. A
+     forecast that ran out of measured time first says nothing (operator,
+     2026-09-30): the line only claims what it measured, and so does its text.
+     One label at rest, the soonest wall; pointing at a line shows its own. */
+  .selection-reticle .wall-label {
+    fill: var(--significant); font: 600 8px var(--mono); letter-spacing: .05em; opacity: .9;
+    paint-order: stroke; stroke: var(--void); stroke-width: 3px; stroke-linejoin: round;
+    pointer-events: none; transition: opacity .12s ease;
+  }
+  .selection-reticle .wall-label.wall-alt { opacity: 0; }
+  .selection-reticle.wall-focused .wall-label { opacity: 0; }
+  .selection-reticle.wall-focused .wall-label.wall-focus { opacity: .9; }
 
   /* Two columns, filled DOWN then across (the row count is set from JS): nine
      windows cost five rows of the card's height instead of nine, and the plot
@@ -1188,6 +1212,17 @@ const TZclock = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "2-digit",
 });
+const TZweekday = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" });
+const TZmonthDay = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "numeric", day: "numeric" });
+/* a point in a window, as short as the window allows: a 5 HOUR window needs
+   only the clock, a 7 DAY one needs the day too. The axis also needs the date,
+   because a 7 DAY window starts and resets on the same weekday at the same time. */
+const windowTime = (ms, window, dated = false) => {
+  const date = new Date(ms);
+  if (window.window_minutes < 24 * 60) return TZclock.format(date);
+  const day = dated ? `${TZweekday.format(date)} ${TZmonthDay.format(date)}` : TZweekday.format(date);
+  return `${day} ${TZclock.format(date)}`;
+};
 const whenHTML = at =>
   `<time datetime="${escapeHTML(at.iso)}"><b>${TZdate.format(at.date)}</b>` +
   `<i>${`${TZclock.format(at.date)} ${escapeHTML(tzName(at.date))}`.trim()}</i></time>`;
@@ -1576,7 +1611,7 @@ function renderPlot() {
      has to translate */
   for (const value of [0, 50, 100]) {
     mk("text", { x: M.l - 6, y: y(value) + 3, "text-anchor": "end", class: "ils-axis" }, `${value}%`);
-    mk("text", { x: x(value), y: M.t + H + 14, "text-anchor": "middle", class: "ils-axis" }, `${value}%`);
+    mk("text", { x: x(value), y: M.t + H + 14, "text-anchor": "middle", class: "ils-axis ils-axis-pct" }, `${value}%`);
   }
 
   for (const entry of entries) {
@@ -1622,7 +1657,7 @@ function renderPlot() {
     mk("line", { x1: x(e), y1: y(u), x2: x(e), y2: M.t + H }, null, reticle);
     mk("line", { x1: M.l, y1: y(u), x2: x(e), y2: y(u) }, null, reticle);
     mk("circle", { cx: x(e), cy: y(u), r: 9, class: "reticle-ring" }, null, reticle);
-    mk("text", { x: x(e), y: VH - 7, "text-anchor": "middle", class: "reticle-readout" },
+    mk("text", { x: x(e), y: VH - 7, "text-anchor": "middle", class: "reticle-readout reticle-elapsed" },
       `ELAPSED ${e.toFixed(1)}%`, reticle);
     mk("text", { x: M.l + 3, y: y(u) - 5, class: "reticle-readout" },
       `USED ${Math.round(u)}%`, reticle);
@@ -1635,6 +1670,9 @@ function renderPlot() {
      so the pooled mark draws the SAME forecast rather than a second copy of it
      that can drift (operator, 2026-08-17). */
   function drawFlightPath(reticle, entry, markId, e, u) {
+    // every reticle draws its forecast here, so this is where it gets its clock
+    drawWindowClock(reticle, entry.window);
+    const walls = [];
     for (const horizon of horizonsFor(entry)) {
       const projection = projectionFor(horizon, entry);
       if (!projection) continue;
@@ -1666,6 +1704,70 @@ function renderPlot() {
         mk("circle", { ...attrs, cx: x(endE), cy: y(endU), r: 8,
           class: "ils-projection-dot-hit" }, null, reticle);
       }
+      const wall = wallLabel(reticle, entry.window, horizon, endE, endU, forwardMs);
+      if (wall) walls.push(wall);
+    }
+    if (!walls.length) return;
+    /* at rest, the soonest ceiling; with none, the highest landing at reset */
+    const ceilings = walls.filter(wall => wall.ceiling).sort((a, b) => a.at - b.at);
+    const primary = ceilings[0]
+      || walls.slice().sort((a, b) => b.endU - a.endU)[0];
+    for (const wall of walls) wall.node.classList.toggle("wall-alt", wall !== primary);
+    for (const hit of reticle.querySelectorAll(".ils-projection-hit, .ils-projection-dot-hit")) {
+      hit.addEventListener("pointerenter", () => {
+        const own = walls.find(wall => wall.horizon === hit.dataset.horizon);
+        reticle.classList.toggle("wall-focused", Boolean(own));
+        for (const wall of walls) wall.node.classList.toggle("wall-focus", wall === own);
+      });
+      hit.addEventListener("pointerleave", () => reticle.classList.remove("wall-focused"));
+    }
+  }
+
+  /* A forecast that ends on the ceiling gets the calendar time it arrives; one
+     that ends at the reset gets where it lands. Anything else ran out of
+     measured time and gets no text. */
+  function wallLabel(reticle, window, horizon, endE, endU, forwardMs) {
+    const ceiling = endU >= 99.95;
+    if (!ceiling && endE < 99.95) return null;
+    const at = Date.now() + forwardMs;
+    let node;
+    if (ceiling) {
+      node = mk("text", { x: x(endE), y: M.t - 4, "text-anchor": "middle",
+        class: "wall-label", "data-horizon": horizon.id },
+        `LIMIT ~${windowTime(at, window)}`, reticle);
+      /* keep the whole label on the glass, however close to a corner it lands */
+      const half = node.getComputedTextLength() / 2;
+      node.setAttribute("x", clamp(x(endE), M.l + half, M.l + W - half).toFixed(1));
+    } else {
+      const above = endU < 92;
+      node = mk("text", { x: x(100) - 4, y: above ? y(endU) - 7 : y(endU) + 13,
+        "text-anchor": "end", class: "wall-label", "data-horizon": horizon.id },
+        `~${Math.round(endU)}% AT RESET`, reticle);
+    }
+    return { node, horizon: horizon.id, ceiling, at, endU };
+  }
+
+  /* While a mark is selected, the elapsed ticks read in its window's calendar
+     time: the same three places the percent ticks hold, start and reset
+     anchored inward so neither leaves the glass. */
+  function drawWindowClock(reticle, window) {
+    const start = startOf(window), end = endOf(window);
+    if (start == null || end == null || !(end > start)) return;
+    /* the mark's own ELAPSED readout sits on this row too; a tick it would
+       overprint steps aside rather than moving */
+    const readout = reticle.querySelector(".reticle-elapsed");
+    const span = (node, anchor) => {
+      const width = node.getComputedTextLength(), at = Number(node.getAttribute("x"));
+      const left = anchor === "start" ? at : anchor === "end" ? at - width : at - width / 2;
+      return [left - 6, left + width + 6];
+    };
+    const taken = readout ? span(readout, "middle") : null;
+    for (const [value, anchor] of [[0, "start"], [50, "middle"], [100, "end"]]) {
+      const tick = mk("text", { x: x(value), y: M.t + H + 14, "text-anchor": anchor,
+        class: "reticle-clock" }, windowTime(start + (end - start) * value / 100, window, true), reticle);
+      if (!taken) continue;
+      const [a, b] = span(tick, anchor);
+      if (a < taken[1] && b > taken[0]) tick.classList.add("clock-yield");
     }
   }
 
@@ -1742,7 +1844,7 @@ function renderPlot() {
       mk("line", { x1: px2, y1: py2, x2: px2, y2: M.t + H }, null, reticle);
       mk("line", { x1: M.l, y1: py2, x2: px2, y2: py2 }, null, reticle);
       mk("circle", { cx: px2, cy: py2, r: 10, class: "reticle-ring" }, null, reticle);
-      mk("text", { x: px2, y: VH - 7, "text-anchor": "middle", class: "reticle-readout" },
+      mk("text", { x: px2, y: VH - 7, "text-anchor": "middle", class: "reticle-readout reticle-elapsed" },
         `ELAPSED ${pool.pace_percent.toFixed(1)}%`, reticle);
       mk("text", { x: M.l + 3, y: py2 - 5, class: "reticle-readout" },
         `USED ${Math.round(pool.used_percent)}%`, reticle);
@@ -1818,7 +1920,7 @@ function renderPlot() {
       mk("line", { x1: tx, y1: ty, x2: tx, y2: M.t + H }, null, reticle);
       mk("line", { x1: M.l, y1: ty, x2: tx, y2: ty }, null, reticle);
       mk("circle", { cx: tx, cy: ty, r: 10, class: "reticle-ring" }, null, reticle);
-      mk("text", { x: tx, y: VH - 7, "text-anchor": "middle", class: "reticle-readout" },
+      mk("text", { x: tx, y: VH - 7, "text-anchor": "middle", class: "reticle-readout reticle-elapsed" },
         `ELAPSED ${total.pace_percent.toFixed(1)}%`, reticle);
       mk("text", { x: M.l + 3, y: ty - 5, class: "reticle-readout" },
         `USED ${Math.round(total.used_percent)}%`, reticle);
