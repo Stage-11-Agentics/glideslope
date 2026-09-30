@@ -618,12 +618,14 @@
   @media (max-width: 1560px) { .reg-axis { display: none; } }
   .reg-row { display: grid; grid-template-columns: 17px minmax(150px, 210px) 1fr 52px;
              gap: 12px; align-items: center; padding: 9px 8px; border-radius: 7px; }
-  .reg-row, .ils-trail, .ils-mark, .ils-pool-trail, .ils-pool-mark { transition: opacity .12s ease; }
+  .reg-row, .ils-trail, .ils-mark, .ils-pool-trail, .ils-pool-mark, .ils-reset { transition: opacity .12s ease; }
   .reg-row:hover { background: var(--panel-2); }
   .reg-row.selection-dimmed, .ils-trail.selection-dimmed, .ils-mark.selection-dimmed,
-  .ils-pool-trail.selection-dimmed, .ils-pool-mark.selection-dimmed { opacity: .3; }
+  .ils-pool-trail.selection-dimmed, .ils-pool-mark.selection-dimmed,
+  .ils-reset.selection-dimmed { opacity: .3; }
   .reg-row.selection-selected, .ils-trail.selection-selected, .ils-mark.selection-selected,
-  .ils-pool-trail.selection-selected, .ils-pool-mark.selection-selected { opacity: 1; }
+  .ils-pool-trail.selection-selected, .ils-pool-mark.selection-selected,
+  .ils-reset.selection-selected { opacity: 1; }
   .reg-row + .reg-row { border-top: 1px solid rgba(29,40,54,.6); }
   /* ── the register name, in three columns ──
      As one text run the account name decided where everything after it landed,
@@ -794,7 +796,7 @@
      .4, .presumed at .5, .last-known at .72), or the ones already dim would
      quietly refuse to step back at all — same specificity, last rule wins. */
   .reg-row.solo-dimmed, .ils-trail.solo-dimmed, .ils-mark.solo-dimmed,
-  .ils-pool-trail.solo-dimmed, .ils-pool-mark.solo-dimmed { opacity: .2; }
+  .ils-pool-trail.solo-dimmed, .ils-pool-mark.solo-dimmed, .ils-reset.solo-dimmed { opacity: .2; }
   /* ── a switched-off class ──
      On the frame it is GONE, because the whole point of the switch is a frame with
      less on it; in the register it only recedes, because the register is a family
@@ -803,7 +805,7 @@
      opacity outright, so this needs no ordering against the dims above; the
      register half does, and is last. */
   .ils-trail.facet-off, .ils-mark.facet-off, .selection-reticle.facet-off,
-  .ils-pool-trail.facet-off, .ils-pool-mark.facet-off { display: none; }
+  .ils-pool-trail.facet-off, .ils-pool-mark.facet-off, .ils-reset.facet-off { display: none; }
   .reg-row.facet-off { opacity: .25; }
   /* the register key is the plot's meter badge (see badgeSVG) — no swatch */
   .reg-row .provider-key.badge-key, .reg-row.session .provider-key.badge-key {
@@ -904,6 +906,50 @@
   .selection-reticle .wall-label.wall-alt { opacity: 0; }
   .selection-reticle.wall-focused .wall-label { opacity: 0; }
   .selection-reticle.wall-focused .wall-label.wall-focus { opacity: .92; }
+  /* ── the checkered drop ──
+     One account's reset, not an event on the whole frame, so it is drawn small
+     and in that account's own hue: the light squares wear the colour its trail
+     wears, the dark ones are void, and nothing on it is ink or the red the frame
+     keeps for capacity. It belongs to its mark in every other way too: at rest it
+     sits at the trail's own opacity, it dims with the trail when another mark is
+     selected, and it comes up to full only when its own mark is (the selection,
+     solo and facet rules above list it beside the trail). */
+  .checker-dark { fill: var(--void); }
+  .ils-reset { pointer-events: all; opacity: .5; }
+  .ils-reset .reset-hit { fill: transparent; }
+  /* a fresh reset unfurls from the height it fell from and the flag at its head
+     grows in beside it, once, without overshoot. `fresh` is set only on the first
+     draw of a reset under twelve hours old, so the minute-ly re-render leaves it
+     hanging where it is. */
+  .ils-reset.fresh .reset-cloth { transform-box: fill-box; transform-origin: top;
+    animation: reset-unfurl .8s ease-out both; }
+  .ils-reset.fresh .reset-flag { transform-box: fill-box; transform-origin: left center;
+    animation: reset-flag-in .8s ease-out both; }
+  @keyframes reset-unfurl { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  @keyframes reset-flag-in { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    .ils-reset.fresh .reset-cloth, .ils-reset.fresh .reset-flag { animation: none; }
+  }
+  /* the reset window's own glideslope: even burn from the reset to the deadline,
+     dotted because the frame's beam is the one solid reference on the glass */
+  .selection-reticle .ils-rebeam { stroke: var(--ink-2); stroke-width: 1.4; stroke-dasharray: 3 4;
+    opacity: .9; }
+  .selection-reticle .reset-label {
+    fill: var(--ink); font: 600 12px var(--mono); letter-spacing: .04em;
+    paint-order: stroke; stroke: var(--void); stroke-width: 3px; stroke-linejoin: round;
+    pointer-events: none;
+  }
+  /* The register's and the ledger's echo of it: the same chequer in the row's
+     own hue (--acc, set on every register and ledger row), with an edge in that
+     hue at low alpha. The glyph alone: the register's name columns are fixed
+     advances, and a word here would push every number behind it out of line.
+     The time and the old height are in the title. At 8px and 4px off the text
+     it fits the countdown cell's 66px beside the widest weekly countdown. */
+  .reset-chip { display: inline-block; margin-left: 4px; line-height: 0; vertical-align: 1px; }
+  .lreset .reset-chip { margin-left: 7px; }
+  .reset-chip i { display: inline-block; width: 8px; height: 8px;
+    border: .5px solid color-mix(in oklab, var(--acc) 45%, transparent);
+    background: repeating-conic-gradient(var(--acc) 0 25%, var(--void) 0 50%) 0 0 / 4px 4px; }
   .ils-tag { font: 660 11px var(--mono); }
   .ils-tag-pct { font: 720 11px var(--mono); }
   .dev-hot { color: var(--status-hot); } .dev-bank { color: var(--status-bank); }
@@ -1155,8 +1201,20 @@ const registerName = (p, w) => {
   return `<span class="reg-acct">${esc(p.display)}</span>` +
     `<span class="reg-win">${windowChip(w)}${
       namedMeter ? `<i class="reg-code">${namedMeter.code}</i>` : ""}</span>` +
-    `<span class="reg-clock">${resetCountdown(w)}</span>`;
+    `<span class="reg-clock">${resetCountdown(w)}${resetChip(w)}</span>`;
 };
+/* The echo of the plot's checkered drop, for as long as the window it cleared
+   still runs: a small chequer and nothing else, because this column is a fixed
+   advance and a word would push it out of line. The time and the height it fell
+   from are in the title. It rides inside the clock cell, never beside it: a
+   fourth child of the three-column name grid would wrap onto a line of its own. */
+function resetChip(w) {
+  const resets = w.earlyResets || [];
+  if (rebasedOf(w) == null || !resets.length) return "";
+  const last = resets[resets.length - 1];
+  return `<span class="reset-chip" title="Reset used ${esc(windowTime(Date.parse(last.at), w))}` +
+    ` · was ${Math.round(Number(last.from_percent))}%"><i></i></span>`;
+}
 /* the frame's gutter has room to spell the model out, so it does — the letter is
    the register's economy, not a vocabulary of its own */
 const shortName = w =>
@@ -1212,6 +1270,9 @@ const providers = SNAP.accounts.map(a => ({
     id: l.meter_id, label: prettyLabel(l.label), pct: l.used_percent,
     resets: l.resets_at, minutes: l.window_minutes, anchored: l.anchored,
     presumed: Boolean(l.presumed), rolledPeriods: l.rolled_periods || 0,
+    /* an early reset (glideslope.mark_early_resets): the latest one is where
+       pace is measured from, and every one is drawn where it happened */
+    rebasedAt: l.rebased_at || null, earlyResets: l.early_resets || [],
   })),
 }));
 /* ── a dormant account ──
@@ -1356,6 +1417,10 @@ function initialPlotTheater() {
 
 let NOW = Date.now();
 let firstRender = true;
+/* every early reset this page has already drawn once: the plot is rebuilt every
+   minute and on every expand, and a cloth that unfurled again each time would be
+   a clock ticking where an event should simply hang */
+const unfurledResets = new Set();
 let plotExpanded = initialPlotExpanded();
 let plotTheater = initialPlotTheater();
 function setPlotTheater(on) {
@@ -1382,10 +1447,42 @@ const endOf = w => w.resets ? Date.parse(w.resets) : null;
 const startOf = w => w.resets && w.minutes ? Date.parse(w.resets) - w.minutes * MIN : null;
 const rolled = w => endOf(w) != null && endOf(w) < NOW;
 const leftMs = w => endOf(w) == null ? null : endOf(w) - NOW;
-function paceOf(w) {
+/* ── an early reset ──
+   A plan reset (or a Codex reset credit) clears the meter mid-window and leaves
+   the deadline where it was (glideslope.mark_early_resets). From that instant the
+   window is a fresh budget with a shorter span. So there are two notions of pace
+   here, and they are kept apart on purpose: the plot's x axis stays on the
+   window's own clock (clockPaceOf), because that is the axis every other mark
+   shares, while every READING of pace — the ◆ figures, the deviation, the state
+   words, the burn-clock bars, the forecasts — is measured from the reset
+   (paceOf). A rebase outside the window's own span is not one it can have had. */
+const rebasedOf = w => {
+  const at = Date.parse(w.rebasedAt || ""), s = startOf(w), e = endOf(w);
+  return Number.isFinite(at) && s != null && at > s && at < e ? at : null;
+};
+const budgetStartOf = w => rebasedOf(w) ?? startOf(w);
+/* the window's own elapsed percent at an instant: where it sits on the plot */
+const elapsedAt = (w, t) => {
+  const s = startOf(w), e = endOf(w);
+  return s == null || e == null ? null : (t - s) / (e - s) * 100;
+};
+/* a plot position's elapsed percent, restated against the budget's own span */
+const budgetElapsed = (w, e) => {
+  const rebased = rebasedOf(w);
+  if (rebased == null || e == null) return e;
+  const from = elapsedAt(w, rebased);
+  return clamp((e - from) / (100 - from) * 100, 0, 100);
+};
+/* where the mark sits across the frame: the window's own clock, reset or not */
+function clockPaceOf(w) {
   const s = startOf(w), e = endOf(w);
   if (s == null || w.pct == null) return null;
   return clamp((NOW - s) / (e - s) * 100, 0, 100);
+}
+/* the ◆ reading: the share of the budget's own span already gone */
+function paceOf(w) {
+  const pace = clockPaceOf(w);
+  return pace == null ? null : budgetElapsed(w, pace);
 }
 function needMultiple(w) {
   const lm = leftMs(w);
@@ -1393,7 +1490,7 @@ function needMultiple(w) {
   return ((100 - w.pct) / 100 * w.minutes * MIN) / lm;
 }
 function exhaustAt(w) {
-  const s = startOf(w);
+  const s = budgetStartOf(w);
   if (s == null || w.pct == null || w.pct >= 100 || rolled(w)) return null;
   const rate = w.pct / (NOW - s);
   if (rate <= 0) return null;
@@ -1466,9 +1563,16 @@ function projectionFor(horizon, mark) {
       || mark.u == null || mark.u <= 0 || mark.u >= 99.5
       || mark.e == null || mark.e <= 0.1 || !w.minutes) return null;
 
-  let baseE = 0, baseU = 0, baseAt = startOf(w);
+  /* after an early reset the window's history starts over: "since start" means
+     since the reset, and no recent lens may reach back across it — the burn
+     before it was spent from a budget that no longer exists */
+  const rebased = rebasedOf(w);
+  const resets = w.earlyResets || [];
+  let baseE = rebased == null ? 0 : elapsedAt(w, rebased);
+  let baseU = rebased == null ? 0 : Number(resets[resets.length - 1]?.to_percent) || 0;
+  let baseAt = budgetStartOf(w);
   if (horizon.lookback != null) {
-    const cutoff = NOW - horizon.lookback;
+    const cutoff = Math.max(NOW - horizon.lookback, rebased ?? -Infinity);
     const samples = (mark.samples || [])
       .filter(sample => Number.isFinite(sample.at) && sample.at >= cutoff
         && sample.at < NOW - 1_000 && sample.e >= 0 && sample.e < mark.e
@@ -1500,7 +1604,8 @@ function projectionFor(horizon, mark) {
 
   const windowMs = endOf(w) - startOf(w);
   const remainingMs = endOf(w) - NOW;
-  const measuredMs = horizon.lookback == null ? NOW - startOf(w) : horizon.lookback;
+  const measuredMs = horizon.lookback == null ? NOW - budgetStartOf(w)
+    : Math.min(horizon.lookback, NOW - budgetStartOf(w));
   const forecastMs = Math.min(measuredMs, remainingMs);
   if (!(windowMs > 0) || !(forecastMs > 0)) return null;
   const requestedEndE = Math.min(100, mark.e + forecastMs / windowMs * 100);
@@ -1794,7 +1899,8 @@ function applyEmphasis() {
       ".ils-trail[data-mark], .ils-mark[data-mark], .selection-reticle[data-mark], " +
       ".ils-projection[data-mark], .ils-projection-hit[data-mark], " +
       ".ils-projection-dot[data-mark], .ils-projection-dot-hit[data-mark], " +
-      ".ils-pool-trail[data-mark], .ils-pool-mark[data-mark], .reg-row[data-mark]")) {
+      ".ils-pool-trail[data-mark], .ils-pool-mark[data-mark], .reg-row[data-mark], " +
+      ".ils-reset[data-mark]")) {
     /* the reticle is a readout, not a series: it is either drawn or it is not */
     const reticle = node.classList.contains("selection-reticle");
     const selected = Boolean(selectedMark) && node.dataset.mark === selectedMark;
@@ -2069,7 +2175,7 @@ function render() {
       // the column says "resets in" — the cell says how long, and then exactly when
       const reset = w.pct == null || !w.resets ? "—"
         : rolled(w) ? `ended <b>${fmtDur(-lm)}</b> ago`
-        : `<b>${fmtDur(lm)}</b>`;
+        : `<b>${fmtDur(lm)}</b>${resetChip(w)}`;
       /* the ◆ read is dashed, not dropped, when the position cannot be computed
          for a window that is still running — but a last-known floor and a
          rolled window are silent by contract: neither has a position to miss */
@@ -2576,6 +2682,7 @@ function render() {
     function drawFlightPath(g, mark, markId) {
       // every reticle draws its forecast here, so this is where it gets its clock
       drawWindowClock(g, mark.w);
+      drawRebase(g, mark.w);
       const walls = [];
       for (const horizon of horizonsFor(mark)) {
         const projection = projectionFor(horizon, mark);
@@ -2678,6 +2785,28 @@ function render() {
       }
     }
 
+    /* A reset window is judged against its own beam: even burn from the reset
+       to the deadline, drawn while the mark is selected, with the reset named
+       beside the flag at the head of its chequered drop. The label goes right of
+       the flag unless that would carry it out of the frame, then left of it. */
+    function drawRebase(g, w) {
+      const rebased = rebasedOf(w);
+      if (rebased == null) return;
+      const e = elapsedAt(w, rebased);
+      const resets = w.earlyResets || [];
+      const last = resets[resets.length - 1];
+      const floor = Number(last?.to_percent) || 0;
+      mk("line", { x1: x(e), y1: y(floor), x2: x(100), y2: y(100), class: "ils-rebeam" }, null, g);
+      const top = y(Number(last?.from_percent ?? 100));
+      const label = mk("text", { x: x(e) + 16, y: Math.max(M.t + 10, top + 8),
+        "text-anchor": "start", class: "reset-label" },
+        `RESET · ${windowTime(rebased, w)}`, g);
+      if (x(e) + 16 + label.getComputedTextLength() > M.l + W - 4) {
+        label.setAttribute("x", (x(e) - 8).toFixed(1));
+        label.setAttribute("text-anchor", "end");
+      }
+    }
+
     const marks = [];
     for (const p of activeProviders) {
       const windows = [...p.windows].filter(w => REGISTER_METERS.has(w.id)).sort((a, b) =>
@@ -2701,7 +2830,10 @@ function render() {
         let plottable = false;
         let position = null;
         if (w.pct != null && !rolled(w) && !state.unknown && Boolean(w.resets)) {
-          const pace = paceOf(w);
+          /* the position is the window's own clock, not the rebased reading: a
+             reset window stays where its calendar puts it, and its deviation is
+             restated from the reset where the register computes it */
+          const pace = clockPaceOf(w);
           if (pace != null) {
             /* A last-known read is pinned to its observation, not dragged along
                to now: the clock moved, the cached number did not. */
@@ -2739,6 +2871,47 @@ function render() {
         "data-mark": `${m.p.display}/${m.w.id}`, "data-provider": m.p.provider,
         "data-facet": m.facet, "data-here": String(isHere(m.p)), "data-there": String(isThere(m.p)),
         stroke: `var(--${ck(m.p.display)})`, style: `color:var(--${ck(m.p.display)})` });
+    }
+    /* ── the checkered drop ──
+       An early reset is one account's event: its meter fell from where it was to
+       nothing, and the fall is drawn as a thin chequered cloth in that account's
+       hue, hung from that height, with a small flag at its head. It is drawn
+       after the trails, so it covers the vertical stroke the trail makes of the
+       same fall, and before the marks, so its hit pad can never swallow a mark
+       that sits at its foot. A fresh one unfurls downward the first time this
+       page draws it; after that, and once it is old, it just hangs there. */
+    for (const m of marks) {
+      if (!m.plottable) continue;
+      const markId = `${m.p.display}/${m.w.id}`;
+      for (const [index, event] of (m.w.earlyResets || []).entries()) {
+        const at = Date.parse(event.at);
+        const e = elapsedAt(m.w, at);
+        if (!Number.isFinite(at) || e == null || e <= 0 || e >= 100) continue;
+        const cx = x(e), top = y(Number(event.from_percent)), bottom = y(Number(event.to_percent) || 0);
+        if (!Number.isFinite(top)) continue;
+        const key = `${markId}@${event.at}`;
+        const fresh = NOW - at < 12 * HOUR && !unfurledResets.has(key);
+        unfurledResets.add(key);
+        const group = mk("g", { class: `ils-reset${fresh ? " fresh" : ""}`, "data-mark": markId,
+          "data-provider": m.p.provider, "data-facet": m.facet });
+        const id = `reset-${markId.replace(/[^a-z0-9]/gi, "-")}-${index}`;
+        /* 2px squares, the light ones in the trail's own hue. The pattern is
+           anchored on the cloth's own corner, so the flag beside it continues the
+           same chequer rather than starting a new one. */
+        const hue = `var(--${ck(m.p.display)})`;
+        const pattern = mk("pattern", { id, width: 4, height: 4, patternUnits: "userSpaceOnUse",
+          x: (cx - 2).toFixed(1), y: top.toFixed(1) }, null, defs);
+        mk("rect", { width: 4, height: 4, class: "checker-dark" }, null, pattern);
+        mk("rect", { width: 2, height: 2, style: `fill:${hue}` }, null, pattern);
+        mk("rect", { x: 2, y: 2, width: 2, height: 2, style: `fill:${hue}` }, null, pattern);
+        mk("rect", { x: (cx - 2).toFixed(1), y: top.toFixed(1), width: 4,
+          height: Math.max(0, bottom - top).toFixed(1), fill: `url(#${id})`, class: "reset-cloth" },
+          null, group);
+        mk("rect", { x: (cx + 2).toFixed(1), y: top.toFixed(1), width: 8, height: 6,
+          fill: `url(#${id})`, class: "reset-flag" }, null, group);
+        mk("rect", { x: (cx - 5).toFixed(1), y: top.toFixed(1), width: 16,
+          height: Math.max(6, bottom - top).toFixed(1), class: "reset-hit" }, null, group);
+      }
     }
     const legend = plotWrap.querySelector("#plot-legend");
     const plotTags = marks.filter(m => m.at != null && m.w.pct != null)
@@ -2973,7 +3146,10 @@ function render() {
         row.dataset.here = String(isHere(t.m.p));
         row.dataset.there = String(isThere(t.m.p));
         row.style.setProperty("--acc", `var(--${ck(t.m.p.display)})`);
-        const dev = t.e == null || t.m.w.pct == null ? null : t.m.w.pct - t.e;
+        /* the mark sits on the window's own clock; its deviation is read from
+           the budget, which after an early reset starts at the reset */
+        const dev = t.e == null || t.m.w.pct == null ? null
+          : t.m.w.pct - budgetElapsed(t.m.w, t.e);
         const mag = dev == null ? 0 : Math.min(Math.abs(dev), 50);
         const side = capped ? "side-cap" : st.dev === "dev-hot" ? "side-hot"
           : st.dev === "dev-bank" ? "side-bank" : dev == null || dev >= 0 ? "side-even-r" : "side-even-l";
@@ -3009,6 +3185,9 @@ function render() {
           (t.e == null ? (t.m.w.resets ? "This window is not currently plottable." : "No reset clock — not plotted.") :
           (t.m.lastKnown ? `Last known read, ${fmtDur(observedAge(t.m.p))} ago — plotted where it was observed.<br>` : "") +
           `${t.e.toFixed(1)}% of the window elapsed · ${esc(t.m.w.pct)}% used<br>` +
+          (rebasedOf(t.m.w) != null
+            ? `Reset used ${windowTime(rebasedOf(t.m.w), t.m.w)}: even burn since then would sit at ` +
+              `<b>${budgetElapsed(t.m.w, t.e).toFixed(1)}%</b>.<br>` : "") +
           (t.m.session
             ? `A 5 HOUR session is a throttle, not a budget — above the line only means the next hours are slower.`
             : `${capped ? "At the ceiling until reset." : (dev >= 0 ? "Ahead of" : "Trailing") + " the glideslope by " + Math.abs(dev).toFixed(0) + " points."}`))));
@@ -3017,7 +3196,7 @@ function render() {
       legend.appendChild(box);
     }
     for (const node of plotWrap.querySelectorAll(
-        ".ils-trail[data-mark], .ils-mark[data-mark], .reg-row[data-mark], " +
+        ".ils-trail[data-mark], .ils-mark[data-mark], .reg-row[data-mark], .ils-reset[data-mark], " +
         ".ils-pool-trail[data-mark], .ils-pool-mark[data-mark], " +
         ".ils-projection[data-mark], .ils-projection-hit[data-mark], " +
         ".ils-projection-dot[data-mark], .ils-projection-dot-hit[data-mark]")) {
