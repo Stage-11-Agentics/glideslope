@@ -1975,16 +1975,132 @@ def roll_forward_windows(accounts: list[dict[str, Any]], now: dt.datetime) -> li
     return accounts
 
 
-def even_pace_percent(limit: dict[str, Any], now: dt.datetime) -> float | None:
-    """Where even burn would put you: the share of the window already elapsed."""
+# ---------------------------------------------------------------- early resets
+# A provider can clear a window before its clock runs out: Anthropic's plan
+# resets (first used 2026-09-30) and Codex's banked reset credits both zero the
+# meter mid-window and leave the reset instant where it was. Nothing in either
+# response says it happened, so it is read from the sample store: a meter that
+# falls from well above the floor to the floor, inside one window instance.
+RESET_DROP_POINTS = 15.0     # a fall this large is not rounding or a re-read
+RESET_FLOOR_PERCENT = 5.0    # a reset lands at zero; a few points of fresh burn allowed
+RESET_CLOCK_SLACK = dt.timedelta(minutes=5)   # the same window, give or take the provider's jitter
+
+
+def detect_early_resets(points: list[tuple[dt.datetime, float]]) -> list[dict[str, Any]]:
+    """Every early reset in one window instance's chronological (observed, used) readings.
+
+    Each event carries the first reading at the new level (`at`), the last one
+    before it, and the percent on either side. The reset happened somewhere
+    between the two readings; `at` is the earliest instant this program can
+    vouch for.
+    """
+    events: list[dict[str, Any]] = []
+    for (before, was), (after, now_used) in zip(points, points[1:]):
+        if was - now_used >= RESET_DROP_POINTS and now_used <= RESET_FLOOR_PERCENT:
+            events.append({"at": after, "last_before": before,
+                           "from_percent": float(was), "to_percent": float(now_used)})
+    return events
+
+
+def mark_early_resets(accounts: list[dict[str, Any]], now: dt.datetime,
+                      db: Path | None = None) -> list[dict[str, Any]]:
+    """Annotate every window that has been reset early with `early_resets` and
+    `rebased_at` (the latest reset). From that instant the window is a fresh
+    budget with the same deadline, so pace and exhaustion are measured from it.
+
+    Read-only and failure-isolated like every other store read: a missing or
+    locked store leaves the position exactly as it was.
+    """
+    path = db or STORE_DIR / "samples.db"
+    if not path.exists():
+        return accounts
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return accounts
+    try:
+        for account in accounts:
+            observed = parse_timestamp(account.get("observed_at")) or now
+            for limit in account.get("limits", []):
+                reset = limit.get("resets_at")
+                duration = limit.get("window_minutes")
+                used = limit.get("used_percent")
+                if (not isinstance(reset, dt.datetime) or not duration or used is None
+                        or limit.get("rolled_periods") or limit.get("presumed")):
+                    continue
+                start = reset - dt.timedelta(minutes=duration)
+                rows = conn.execute(
+                    "SELECT observed_at, used_percent, resets_at FROM samples"
+                    " WHERE provider = ? AND account = ? AND meter = ?"
+                    "   AND used_percent IS NOT NULL AND observed_at >= ?"
+                    " ORDER BY observed_at",
+                    (account.get("provider"), account.get("account"), limit.get("meter_id"),
+                     start.strftime("%Y-%m-%dT%H:%M:%SZ")),
+                ).fetchall()
+                points: list[tuple[dt.datetime, float]] = []
+                for observed_iso, percent, resets_iso in rows:
+                    at, clock = parse_timestamp(observed_iso), parse_timestamp(resets_iso)
+                    if at is None or clock is None or abs(clock - reset) > RESET_CLOCK_SLACK:
+                        continue
+                    points.append((at, float(percent)))
+                # the reading in hand may not be in the store yet: the sampler
+                # reads the position before it appends it
+                if not points or observed > points[-1][0]:
+                    points.append((observed, float(used)))
+                events = detect_early_resets(points)
+                if events:
+                    limit["early_resets"] = events
+                    limit["rebased_at"] = events[-1]["at"]
+            _share_early_resets(account)
+    except sqlite3.Error:
+        pass
+    finally:
+        conn.close()
+    return accounts
+
+
+def _share_early_resets(account: dict[str, Any]) -> None:
+    """A reset clears the account, not one meter: every window on the same clock
+    as a detected one was reset with it. A meter that had little to lose (Fable at
+    3%) cannot show the fall itself, so it inherits the event from its sibling."""
+    for limit in account.get("limits", []):
+        if limit.get("early_resets") or not isinstance(limit.get("resets_at"), dt.datetime):
+            continue
+        for sibling in account.get("limits", []):
+            if (sibling.get("early_resets") and isinstance(sibling.get("resets_at"), dt.datetime)
+                    and abs(sibling["resets_at"] - limit["resets_at"]) <= RESET_CLOCK_SLACK
+                    and not limit.get("rolled_periods") and not limit.get("presumed")):
+                limit["early_resets"] = [{**event, "inherited": True}
+                                         for event in sibling["early_resets"]]
+                limit["rebased_at"] = sibling["rebased_at"]
+                break
+
+
+def window_start(limit: dict[str, Any]) -> dt.datetime | None:
+    """Where this window's budget began: its nominal start, or its latest early reset."""
     reset = limit.get("resets_at")
     duration = limit.get("window_minutes")
     if not isinstance(reset, dt.datetime) or not duration:
         return None
+    start = reset - dt.timedelta(minutes=duration)
+    rebased = parse_timestamp(limit.get("rebased_at"))
+    return rebased if rebased is not None and start < rebased < reset else start
+
+
+def even_pace_percent(limit: dict[str, Any], now: dt.datetime) -> float | None:
+    """Where even burn would put you: the share of the budget's span already elapsed.
+
+    After an early reset the span is reset-to-deadline, not the whole window: a
+    full budget over half a week has to be spent twice as fast to land on 100%.
+    """
+    reset = limit.get("resets_at")
+    start = window_start(limit)
+    if not isinstance(reset, dt.datetime) or start is None:
+        return None
     remaining = (reset - now).total_seconds()
     if remaining < 0:
         return None
-    elapsed = 1 - remaining / (float(duration) * 60)
+    elapsed = 1 - remaining / (reset - start).total_seconds()
     return round(max(0.0, min(100.0, elapsed * 100)), 6)
 
 
@@ -2224,7 +2340,7 @@ def exhausts_at(limit: dict[str, Any], now: dt.datetime) -> dt.datetime | None:
         return None
     if percent is None or percent <= 0 or percent >= 100:
         return None
-    start = reset - dt.timedelta(minutes=duration)
+    start = window_start(limit)   # after an early reset, the rate since it
     elapsed = (now - start).total_seconds()
     if elapsed <= 0:
         return None
@@ -2276,6 +2392,9 @@ def notifiable_windows(
                 "window_minutes": limit.get("window_minutes"),
                 "exhausts_at": exhausts_at({**limit, "resets_at": reset}, now),
                 "floor": bool(account.get("stale")),
+                # an early reset makes the rest of the window a new instance
+                "rebased_at": parse_timestamp(limit.get("rebased_at")),
+                "early_resets": limit.get("early_resets") or [],
             })
     return alerts
 
@@ -3572,6 +3691,7 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     # popup all read the position after this, so a rolled window is advanced
     # exactly once, in one place, with one set of rules.
     roll_forward_windows(accounts, now)
+    mark_early_resets(accounts, now)
 
     switches = [] if args.no_switches else load_switches()
     # Who is spending on cloud sandboxes. Attribution only: never folded into a meter.

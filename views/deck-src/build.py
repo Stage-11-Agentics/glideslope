@@ -197,6 +197,17 @@ def build_snapshot(pos: dict) -> dict:
             # otherwise used_percent is None and the new window's burn is unread.
             "presumed": bool(l.get("presumed")),
             "rolled_periods": int(l.get("rolled_periods") or 0),
+            # An early reset (glideslope.mark_early_resets): the window's budget
+            # restarted at `rebased_at`, same deadline. Each event is drawn where
+            # it happened; the latest one is where pace is measured from.
+            "rebased_at": l.get("rebased_at"),
+            "early_resets": [{
+                "at": e.get("at"),
+                "last_before": e.get("last_before"),
+                "from_percent": e.get("from_percent"),
+                "to_percent": e.get("to_percent"),
+                "inherited": bool(e.get("inherited")),
+            } for e in (l.get("early_resets") or [])],
         } for l in a.get("limits", [])],
     } for a in pos.get("accounts", [])]
 
