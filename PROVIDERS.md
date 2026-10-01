@@ -570,13 +570,13 @@ seats written by whatever launches them.
 | | |
 |---|---|
 | Path | `[seats] file` in the config; none by default |
-| Beacon | a satellite with `[seats] file` set carries the file's live rows and its `generated_at` as `seats` in `satellite.json` |
+| Beacon | a satellite with `[seats] file` set carries the file's rows and its `generated_at` as `seats` in `satellite.json`: live rows (at most 500), then rows that ended within the last day (at most 500), plus `live_total` and, past the cap, `truncated: true` |
 | Output | one line after the login banner, `remote_seats` in `--json`, and the same line under Weekly status in the Detail view |
 | Credential | none. Glideslope only reads the file |
 
 ```jsonc
 {
-  "generated_at": "2026-10-01T10:00:00Z",  // the file's own clock; missing → the file's mtime
+  "generated_at": "2026-10-01T10:00:00Z",  // the file's own clock; absent → the file's mtime; unreadable → stale
   "source": "<launcher name>",              // ignored
   "seats": [{
     "agent": "grok",          // claude, codex, grok, opencode, or any other string (required)
@@ -584,7 +584,7 @@ seats written by whatever launches them.
     "model": "grok-4.7", "effort": "high",
     "project": "<project>", "ticket": "<ticket>", "role": "owner", "run": "<run id>",
     "started": "2026-10-01T09:57:00Z",
-    "deadline": "2026-10-01T12:00:00Z"      // or null; a row past it is over and is dropped
+    "deadline": "2026-10-01T12:00:00Z"      // or null; a seat past it is over
   }]
 }
 ```
@@ -593,23 +593,34 @@ Times are ISO-8601 or epoch seconds; a time with no zone is UTC, on the reader a
 alike. Other row keys (a sandbox id) are dropped, and text is cut to one 80-character line.
 A row without `agent` or `account` is skipped and counted in a warning; a row whose deadline
 cannot be read is kept (nothing proves it ended) and counted in a warning. An email in
-`account` never renders. The beacon carries at most 500 rows.
+`account` never renders.
 
 **Merge rule.** Seats come from this machine's own file and from each satellite's beacon,
-so the same seat can arrive twice. Rows are deduped on `(ticket, role, started, agent, run)`, and
-the copy from the source with the newest `generated_at` wins. A row with neither `ticket` nor
-`started` has nothing to match on and is never merged.
+so the same seat can arrive twice. Copies are settled on `(ticket, role, started, agent, run)`,
+the one from the source with the newest `generated_at` winning, and only then is a seat past
+its deadline dropped. That order matters: an older copy with a later deadline must never
+outlive a newer copy that says the seat is over, which is why the beacon carries rows that
+ended in the last day instead of dropping them. A row with neither `ticket` nor `started` has
+nothing to match on and is never merged.
+
+**Caps.** A source marked `truncated` (a beacon past its 500-row cap) left seats out, so every
+group it contributes to renders as a floor (`500+ Grok (Grok)`), `--json` says
+`"incomplete": true`, and a warning names the source.
 
 **Staleness.** A source whose `generated_at` is more than an hour old is stale: its rows
 stay in `--json` with `"stale": true`, are counted under `stale_counts` rather than
 `counts`, and render dim after the word `stale` with their age. A source more than a day
-old is dropped with a warning. A file stamped more than five minutes in the future has a
-clock nobody can trust and reads as stale, age unknown. An absent or unreadable file costs only the seats line and
-a warning, on the reader and on the beacon alike; it never fails either one.
+old is dropped with a warning. A `generated_at` that is present but unreadable, or more than
+five minutes in the future, is a clock nobody can trust: the source reads as stale, age
+unknown, with a warning. The file's mtime stands in only when `generated_at` is absent, since
+a freshly copied file of old seats has a fresh mtime. An absent or unreadable file (any
+failure at all, on the beacon) costs only the seats and a warning; it never fails the beacon
+or the position.
 
-`--json` carries `remote_seats`: `rows` (each with its `source` satellite and `stale`),
-`counts` and `stale_counts` per billed account, `stale`, `stale_age_seconds`, `sources`
-(name, `generated_at`, age, row count), and `line`, the plain-text line. `null` when no
+`--json` carries `remote_seats`: `rows` (live seats only, each with its `source` satellite,
+`stale`, and `partial` when its source was capped), `counts` and `stale_counts` per billed
+account, `stale`, `incomplete`, `stale_age_seconds`, `sources` (name, `generated_at`, age,
+`truncated`, live row count), and `line`, the plain-text line. `null` when no
 source is configured. `--skip-seats` leaves it out.
 
 ---

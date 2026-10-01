@@ -3195,12 +3195,13 @@ def seat_account(account: str) -> str:
     return "unnamed account" if "@" in name else name
 
 
-def live_seats(document: Any, now: dt.datetime) -> tuple[list[dict[str, Any]], int, int]:
-    """The rows of one seat document still running at `now`, how many were malformed,
-    and how many were kept with a deadline nobody could read.
+def seat_rows(document: Any) -> tuple[list[dict[str, Any]], int, int]:
+    """Every well-formed row of one seat document, ended or not; how many were malformed;
+    and how many carry a deadline nobody could read.
 
-    A row needs an `agent` and an `account`. A row whose deadline has passed is over
-    and is dropped; a missing or unreadable deadline is no proof that it ended.
+    A row needs an `agent` and an `account`. Rows are NOT filtered by deadline here:
+    which copy of a seat is newest has to be settled first, or an older copy with a
+    later deadline would outlive the newer one that says the seat is over.
     """
     seats = document.get("seats") if isinstance(document, dict) else None
     rows: list[dict[str, Any]] = []
@@ -3214,8 +3215,6 @@ def live_seats(document: Any, now: dt.datetime) -> tuple[list[dict[str, Any]], i
             malformed += 1
             continue
         deadline = seat_time(item.get("deadline"))
-        if deadline is not None and deadline <= now:
-            continue
         if deadline is None and row["deadline"] is not None:
             undated += 1
         elif deadline is not None:
@@ -3226,18 +3225,25 @@ def live_seats(document: Any, now: dt.datetime) -> tuple[list[dict[str, Any]], i
     return rows, malformed, undated
 
 
+def seat_over(row: dict[str, Any], now: dt.datetime) -> bool:
+    """Past its deadline. A missing or unreadable deadline is no proof that it ended."""
+    deadline = seat_time(row.get("deadline"))
+    return deadline is not None and deadline <= now
+
+
 def read_seats_file(path: Path) -> dict[str, Any]:
-    """One seat file as {generated_at, seats}. A missing generated_at falls back to the mtime."""
+    """One seat file as {generated_at, seats}. The mtime stands in only for an ABSENT
+    generated_at; one that is present but unreadable is left for the caller to read as stale."""
     try:
         document = json.loads(path.read_text())
         mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc)
     except FileNotFoundError as exc:
         raise PositionError(f"remote seats: {path} not found") from exc
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise PositionError(f"remote seats: {path} is unreadable: {exc}") from exc
     if not isinstance(document, dict) or not isinstance(document.get("seats"), list):
         raise PositionError(f"remote seats: {path} has no seats list")
-    if seat_time(document.get("generated_at")) is None:
+    if document.get("generated_at") in (None, ""):
         document["generated_at"] = iso_utc(mtime)
     return document
 
@@ -3249,11 +3255,13 @@ def gather_remote_seats(
     """Every live remote seat, from this machine's seat file and each satellite's beacon.
 
     The same seat can reach us twice (the launcher's own satellite publishes the file
-    this machine may also read), so rows are deduped on (ticket, role, started, agent,
-    run) and the copy from the freshest source wins. A source older than an hour, or
-    with a clock that cannot be trusted, is stale: its rows are kept, marked stale,
-    and never counted as current. A source that cannot be read costs itself and a
-    warning, nothing more. None when no source is configured or carries anything.
+    this machine may also read), so copies are settled first, on (ticket, role,
+    started, agent, run), the freshest source winning, and only then is a seat past
+    its deadline dropped. A source older than an hour, or whose clock is unreadable or
+    in the future, is stale: its rows are kept, marked stale, and never counted as
+    current. A source that stopped at a row cap marks its counts as lower bounds. A
+    source that cannot be read costs itself and a warning, nothing more. None when no
+    source is configured or carries anything.
     """
     sources: list[tuple[str, Any]] = []
     if path is not None:
@@ -3269,9 +3277,13 @@ def gather_remote_seats(
     read: list[dict[str, Any]] = []
     for name, document in sources:
         try:
-            generated_at = seat_time(document.get("generated_at"))
+            stamp = document.get("generated_at")
+            generated_at = seat_time(stamp)
             age = (now - generated_at).total_seconds() if generated_at else None
-            if age is not None and age < -SEATS_CLOCK_SKEW_SECONDS:
+            if generated_at is None:
+                warnings.append(f"remote seats from {name} carry an unreadable generated_at "
+                                f"({_seat_text(stamp) or 'not a time'}); read as stale")
+            elif age < -SEATS_CLOCK_SKEW_SECONDS:
                 warnings.append(f"remote seats from {name} are stamped in the future; "
                                 "read as stale")
                 age = None
@@ -3279,7 +3291,8 @@ def gather_remote_seats(
                 warnings.append(f"remote seats from {name} are "
                                 f"{format_countdown(dt.timedelta(seconds=age))} old; ignored")
                 continue
-            rows, malformed, undated = live_seats(document, now)
+            rows, malformed, undated = seat_rows(document)
+            truncated = bool(document.get("truncated"))
         except Exception as exc:  # noqa: BLE001 — attribution must never take the position down
             warnings.append(f"remote seats from {name} could not be read: {exc}")
             continue
@@ -3288,22 +3301,27 @@ def gather_remote_seats(
         if undated:
             warnings.append(f"remote seats from {name}: {undated} row(s) with an unreadable "
                             "deadline kept")
+        if truncated:
+            warnings.append(f"remote seats from {name} stopped at a row cap; counts are lower bounds")
         stale = age is None or age > SEATS_STALE_SECONDS
         read.append({"name": name, "generated_at": generated_at,
                      "age_seconds": None if age is None else round(max(0.0, age), 1),
-                     "stale": stale, "seats": len(rows), "rows": rows})
+                     "stale": stale, "truncated": truncated,
+                     "seats": sum(1 for row in rows if not seat_over(row, now)), "rows": rows})
 
+    # Settle copies first, freshest source first, ended copies included: the newest
+    # word on a seat decides whether it is still running.
     chosen: dict[tuple[Any, ...], dict[str, Any]] = {}
-    # Freshest source first, so a duplicate keeps its most current copy.
     for source in sorted(read, key=lambda s: s["age_seconds"] if s["age_seconds"] is not None
                          else float("inf")):
         for index, row in enumerate(source["rows"]):
             key = (row["ticket"], row["role"], row["started"], row["agent"], row["run"])
             if row["ticket"] is None and row["started"] is None:
                 key = ("unkeyed", source["name"], index)  # nothing to match on: never merge it
-            chosen.setdefault(key, {**row, "source": source["name"], "stale": source["stale"]})
-    rows = sorted(chosen.values(), key=lambda r: (r["stale"], r["account"], r["agent"],
-                                                  r["started"] or ""))
+            chosen.setdefault(key, {**row, "source": source["name"], "stale": source["stale"],
+                                    "partial": source["truncated"]})
+    rows = sorted((row for row in chosen.values() if not seat_over(row, now)),
+                  key=lambda r: (r["stale"], r["account"], r["agent"], r["started"] or ""))
     # Per billed account; a stale seat is counted apart, never as current.
     counts: dict[str, int] = {}
     stale_counts: dict[str, int] = {}
@@ -3311,12 +3329,14 @@ def gather_remote_seats(
         bucket = stale_counts if row["stale"] else counts
         bucket[row["account"]] = bucket.get(row["account"], 0) + 1
     # How old the stale part is, by its oldest source; None when any of them cannot say.
-    stale_ages = [s["age_seconds"] for s in read if s["stale"] and s["rows"]]
+    stale_ages = [s["age_seconds"] for s in read if s["stale"] and s["seats"]]
     return {
         "rows": rows,
         "counts": counts,
         "stale_counts": stale_counts,
         "stale": bool(stale_counts),
+        # True when some source stopped at a row cap: every count is then a lower bound.
+        "incomplete": any(s["truncated"] for s in read),
         "stale_age_seconds": (max(stale_ages) if stale_ages and None not in stale_ages
                               else None),
         "sources": [{key: value for key, value in source.items() if key != "rows"}
@@ -3325,13 +3345,19 @@ def gather_remote_seats(
 
 
 def _seat_groups(rows: list[dict[str, Any]]) -> str:
-    """`6 Grok (Grok) · 1 Claude (Alpha)`: by agent kind, the billed account in parentheses."""
-    groups: dict[tuple[str, str], int] = {}
+    """`6 Grok (Grok) · 1 Claude (Alpha)`: by agent kind, the billed account in parentheses.
+
+    A group with any row from a source that stopped at its row cap reads `500+`: the
+    count is a floor, never exact."""
+    groups: dict[tuple[str, str], list[int]] = {}
     for row in rows:
         key = (SEAT_AGENT_NAMES.get(row["agent"], row["agent"]), row["account"])
-        groups[key] = groups.get(key, 0) + 1
-    ordered = sorted(groups.items(), key=lambda item: (-item[1], item[0]))
-    return " · ".join(f"{count} {agent} ({account})" for (agent, account), count in ordered)
+        tally = groups.setdefault(key, [0, 0])
+        tally[0] += 1
+        tally[1] |= bool(row.get("partial"))
+    ordered = sorted(groups.items(), key=lambda item: (-item[1][0], item[0]))
+    return " · ".join(f"{count}{'+' if partial else ''} {agent} ({account})"
+                      for (agent, account), (count, partial) in ordered)
 
 
 def remote_seats_line(seats: dict[str, Any] | None, *, color: bool = False, plain: bool = False) -> str:

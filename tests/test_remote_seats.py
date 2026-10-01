@@ -119,6 +119,41 @@ class SeatFileTests(unittest.TestCase):
         self.assertEqual(seats["counts"], {})
         self.assertIn("future", warnings[0])
 
+    def test_an_invalid_generated_at_in_a_fresh_file_is_stale_not_fresh(self):
+        warnings = []
+        seats = self.gather({"generated_at": "invalid", "seats": [seat()]}, warnings=warnings)
+        self.assertTrue(seats["stale"])
+        self.assertEqual(seats["counts"], {})
+        self.assertIsNone(seats["stale_age_seconds"])
+        self.assertTrue(any("unreadable generated_at (invalid)" in note for note in warnings))
+        self.assertIn("stale, age unknown", glideslope.remote_seats_line(seats))
+
+    def test_a_newer_copy_that_ended_the_seat_wins_over_an_older_live_copy(self):
+        started = stamp(-dt.timedelta(hours=1))
+        older = seat_file([seat(started=started, deadline=stamp(dt.timedelta(hours=2)))],
+                          age=dt.timedelta(minutes=20))
+        newer = seat_file([seat(started=started, deadline=stamp(-dt.timedelta(minutes=5)))],
+                          age=dt.timedelta(minutes=1))
+        seats = self.gather(older, satellites=[{"name": "studio", "seats": newer}])
+        self.assertEqual(seats["rows"], [])
+        self.assertEqual(seats["counts"], {})
+        # Whichever side carries it: the newer word decides.
+        seats = self.gather(newer, satellites=[{"name": "studio", "seats": older}])
+        self.assertEqual(seats["counts"], {})
+        # And a newer copy that extended an ended seat's deadline keeps it running.
+        ended = seat_file([seat(started=started, deadline=stamp(-dt.timedelta(minutes=5)))],
+                          age=dt.timedelta(minutes=20))
+        extended = seat_file([seat(started=started, deadline=stamp(dt.timedelta(hours=3)))],
+                             age=dt.timedelta(minutes=1))
+        seats = self.gather(ended, satellites=[{"name": "studio", "seats": extended}])
+        self.assertEqual(seats["counts"], {"Grok": 1})
+
+    def test_a_pathological_local_file_costs_a_warning(self):
+        self.path.write_text("[" * 200_000)
+        warnings = []
+        self.assertIsNone(self.gather(warnings=warnings))
+        self.assertIn("unreadable", warnings[0])
+
     def test_a_different_role_on_the_same_ticket_is_a_different_seat(self):
         seats = self.gather(seat_file([seat(role="owner"), seat(role="reviewer")]))
         self.assertEqual(len(seats["rows"]), 2)
@@ -227,7 +262,8 @@ class SeatLineTests(unittest.TestCase):
         self.assertEqual(len(seats["rows"]), 9)
         self.assertEqual(seats["line"],
                          "On remote seats: 6 Grok (Grok) · 2 Codex (Codex) · 1 Claude (Alpha)")
-        self.assertEqual(set(seats["rows"][0]), set(glideslope.SEAT_FIELDS) | {"source", "stale"})
+        self.assertEqual(set(seats["rows"][0]), set(glideslope.SEAT_FIELDS) | {"source", "stale", "partial"})
+        self.assertFalse(seats["incomplete"])
         self.assertEqual(seats["sources"][0]["generated_at"], stamp(-dt.timedelta(minutes=2)))
         self.assertIsNone(glideslope.snapshot_payload([], None, None, [], NOW, [], [])["remote_seats"])
 
@@ -291,10 +327,20 @@ class BeaconSeatTests(unittest.TestCase):
             seat(ticket="L-3", deadline=None)]}))
         published = self.publish()["seats"]
         self.assertEqual(published["generated_at"], "2026-10-01T10:00:00Z")
-        self.assertEqual([row["ticket"] for row in published["seats"]], ["L-1", "L-3"])
+        # Live rows first; the one that just ended rides after them, for the reader's dedupe.
+        self.assertEqual([row["ticket"] for row in published["seats"]], ["L-1", "L-3", "L-2"])
+        self.assertEqual(published["live_total"], 2)
+        self.assertNotIn("truncated", published)
         self.assertNotIn("box", published["seats"][0])
         self.assertEqual(published["seats"][0]["run"], "run-1")
         self.assertNotIn("deadline", published["seats"][1])  # null crosses as absent
+
+    def test_a_row_that_ended_long_ago_is_not_carried(self):
+        self.configure()
+        gone = glideslope.iso_utc(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2))
+        self.seats.write_text(json.dumps({"generated_at": "2026-10-01T10:00:00Z",
+                                          "seats": [seat(deadline=gone)]}))
+        self.assertEqual(self.publish()["seats"]["seats"], [])
 
     def test_the_beacon_bounds_what_it_carries(self):
         self.configure()
@@ -302,9 +348,78 @@ class BeaconSeatTests(unittest.TestCase):
         self.seats.write_text(json.dumps({"generated_at": "2026-10-01T10:00:00Z",
                                           "seats": [seat(project=long, ticket=f"T-{i}")
                                                     for i in range(beacon.SEATS_MAX_ROWS + 50)]}))
-        published = self.publish()["seats"]["seats"]
-        self.assertEqual(len(published), beacon.SEATS_MAX_ROWS)
-        self.assertEqual(len(published[0]["project"]), beacon.SEAT_TEXT_MAX)
+        carried = self.publish()["seats"]
+        self.assertEqual(len(carried["seats"]), beacon.SEATS_MAX_ROWS)
+        self.assertEqual(len(carried["seats"][0]["project"]), beacon.SEAT_TEXT_MAX)
+        self.assertTrue(carried["truncated"])
+        self.assertEqual(carried["live_total"], beacon.SEATS_MAX_ROWS + 50)
+        # Through the reader to the rendered line: a capped count is a floor, never exact.
+        warnings = []
+        seats = glideslope.gather_remote_seats(
+            dt.datetime.now(dt.timezone.utc), warnings,
+            [{"name": "studio", "seats": carried}], path=None)
+        self.assertTrue(seats["incomplete"])
+        self.assertTrue(any("lower bounds" in note for note in warnings))
+        self.assertIn(f"{beacon.SEATS_MAX_ROWS}+ Grok (Grok)",
+                      glideslope.remote_seats_line(seats, plain=True))
+
+    def test_a_capped_fresh_count_renders_as_a_floor(self):
+        self.configure()
+        now = dt.datetime.now(dt.timezone.utc)
+        self.seats.write_text(json.dumps({"generated_at": glideslope.iso_utc(now), "seats": [
+            seat(ticket=f"T-{i}") for i in range(beacon.SEATS_MAX_ROWS + 1)]}))
+        carried = self.publish()["seats"]
+        seats = glideslope.gather_remote_seats(now, [], [{"name": "studio", "seats": carried}],
+                                               path=None)
+        self.assertEqual(glideslope.remote_seats_line(seats, plain=True),
+                         f"On remote seats: {beacon.SEATS_MAX_ROWS}+ Grok (Grok)")
+        payload = glideslope.snapshot_payload([], None, None, [], now, [], [], remote_seats=seats)
+        self.assertTrue(payload["remote_seats"]["incomplete"])
+
+    def test_an_invalid_generated_at_is_carried_and_read_as_stale(self):
+        self.configure()
+        now = dt.datetime.now(dt.timezone.utc)
+        self.seats.write_text(json.dumps({"generated_at": "invalid", "seats": [seat()]}))
+        carried = self.publish()["seats"]
+        self.assertEqual(carried["generated_at"], "invalid")  # never swapped for the fresh mtime
+        warnings = []
+        seats = glideslope.gather_remote_seats(now, warnings, [{"name": "studio", "seats": carried}],
+                                               path=None)
+        self.assertTrue(seats["stale"])
+        self.assertEqual(seats["counts"], {})
+        self.assertTrue(any("unreadable generated_at" in note for note in warnings))
+
+    def test_a_beacon_carried_ending_beats_an_older_copy(self):
+        """The launcher's satellite says the seat ended; this machine's older file says it runs."""
+        self.configure()
+        now = dt.datetime.now(dt.timezone.utc)
+        started = glideslope.iso_utc(now - dt.timedelta(hours=1))
+        self.seats.write_text(json.dumps({"generated_at": glideslope.iso_utc(now), "seats": [
+            seat(started=started, deadline=glideslope.iso_utc(now - dt.timedelta(minutes=5)))]}))
+        carried = self.publish()["seats"]
+        local = Path(self._tmp.name) / "local-seats.json"
+        local.write_text(json.dumps({
+            "generated_at": glideslope.iso_utc(now - dt.timedelta(minutes=20)),
+            "seats": [seat(started=started, deadline=glideslope.iso_utc(now + dt.timedelta(hours=2)))]}))
+        seats = glideslope.gather_remote_seats(now, [], [{"name": "studio", "seats": carried}],
+                                               path=local)
+        self.assertEqual(seats["rows"], [])
+        self.assertEqual(glideslope.remote_seats_line(seats), "")
+
+    def test_a_pathological_seat_file_never_stops_the_beacon(self):
+        self.configure()
+        self.seats.write_text("[" * 200_000)  # deep enough to exhaust the JSON decoder's recursion
+        payload = self.publish()
+        self.assertTrue(self.out.exists())
+        self.assertNotIn("seats", payload)
+        self.assertTrue(any("remote seats" in note for note in payload["warnings"]))
+
+    def test_any_failure_reading_seats_still_publishes(self):
+        self.configure()
+        with mock.patch.object(beacon, "seat_document", side_effect=RuntimeError("boom")):
+            payload = self.publish()
+        self.assertNotIn("seats", payload)
+        self.assertIn("remote seats could not be read: RuntimeError: boom", payload["warnings"])
 
     def test_no_seats_key_without_the_config(self):
         self.assertNotIn("seats", self.publish())
