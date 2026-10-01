@@ -211,6 +211,10 @@
   .ils-trail { fill: none; stroke-width: 1.7; opacity: .55; stroke-linecap: round; pointer-events: stroke; }
   .ils-mark { pointer-events: all; }
   .ils-trail.weekly { stroke-dasharray: none; }
+  /* The 7 DAY budgets are the ones being flown (operator, 2026-10-01): their
+     trails carry more weight than Fable's dashes and the 5 HOUR dots. Width
+     only, so hover dims and filters still own the opacity. */
+  .ils-trail.weekly:not(.fable) { stroke-width: 2.5; }
   /* A throttle is a dotted flight path, not a loose dashed one: the dots are
      close enough to read as one disciplined instrument line. */
   .ils-trail.session { stroke-dasharray: 1 2.2; opacity: .4; stroke-linecap: round; }

@@ -741,6 +741,9 @@
   /* A 7 DAY budget is a solid flight line + solid triangle. A 5 HOUR throttle
      is a tight dotted line + hollow dashed circle. */
   .ils-trail.weekly { stroke-dasharray: none; }
+  /* The 7 DAY budgets are the ones being flown (operator, 2026-10-01): heavier
+     than Fable and the 5 HOUR dots. Width only; dims and facets own opacity. */
+  .ils-trail.weekly:not(.fable) { stroke-width: 2.4; }
   .ils-trail.session { stroke-dasharray: 1 2.2; opacity: .4; stroke-linecap: round; }
   /* ── the two window classes, in shape ──
      7 DAY = the budget: a solid disc. 5 HOUR = the throttle: a hollow dashed
@@ -2900,7 +2903,7 @@ function render() {
       /* the trail knows its source: which seat(s) flew this stretch of burn.
          `color` carries the account hue so the elsewhere-glow can radiate in
          the trail's own light (currentColor), not a borrowed one. */
-      mk("path", { d, class: `ils-trail ${m.session ? "session" : "weekly"}`,
+      mk("path", { d, class: `ils-trail ${m.session ? "session" : "weekly"}${m.w.id === "weekly_fable" ? " fable" : ""}`,
         "data-mark": `${m.p.display}/${m.w.id}`, "data-provider": m.p.provider,
         "data-facet": m.facet, "data-here": String(isHere(m.p)), "data-there": String(isThere(m.p)),
         stroke: `var(--${ck(m.p.display)})`, style: `color:var(--${ck(m.p.display)})` });
