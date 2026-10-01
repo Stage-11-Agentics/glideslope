@@ -50,6 +50,27 @@ class DetectTest(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["at"], t[2])
         self.assertEqual(events[0]["from_percent"], 100)
+        self.assertNotIn("from_plan", events[0])
+
+    def test_a_plan_change_across_the_drop_is_named(self):
+        t0, t1 = CLEARED - dt.timedelta(minutes=5), CLEARED
+        events = glideslope.detect_early_resets([
+            (t0, 70.0, "SuperGrok"), (t1, 1.0, "SuperGrok Plus")])
+        self.assertEqual(events[0]["from_plan"], "SuperGrok")
+        self.assertEqual(events[0]["to_plan"], "SuperGrok Plus")
+
+    def test_the_same_plan_and_a_missing_plan_stay_unnamed(self):
+        t0, t1 = CLEARED - dt.timedelta(minutes=5), CLEARED
+        same = glideslope.detect_early_resets([
+            (t0, 70.0, "SuperGrok Plus"), (t1, 1.0, "SuperGrok Plus")])
+        missing = glideslope.detect_early_resets([(t0, 70.0, None), (t1, 1.0, "SuperGrok Plus")])
+        blank = glideslope.detect_early_resets([(t0, 70.0, ""), (t1, 1.0, "SuperGrok Plus")])
+        pairs = glideslope.detect_early_resets([(t0, 70.0), (t1, 1.0)])
+        for events in (same, missing, blank, pairs):
+            self.assertEqual(len(events), 1)
+            self.assertNotIn("from_plan", events[0])
+            self.assertNotIn("to_plan", events[0])
+        self.assertEqual(pairs[0]["from_percent"], 70.0)
 
     def test_rounding_and_partial_falls_are_not(self):
         t = [CLEARED - dt.timedelta(minutes=m) for m in (15, 10, 5, 0)]
@@ -69,9 +90,74 @@ class MarkTest(unittest.TestCase):
         glideslope.mark_early_resets([account], now, db=self.db)
         weekly, fable = account["limits"]
         self.assertEqual(weekly["rebased_at"], CLEARED)
+        self.assertNotIn("from_plan", weekly["early_resets"][0])
         # Fable fell 3 points, too little to show a reset; it shares the clock, so it inherits it
         self.assertEqual(fable["rebased_at"], CLEARED)
         self.assertTrue(fable["early_resets"][0]["inherited"])
+
+    def test_a_journaled_plan_change_is_named_and_inherited(self):
+        path = Path(tempfile.mkdtemp(prefix="glideslope-reset-plan-")) / "samples.db"
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE samples (observed_at TEXT, provider TEXT, account TEXT,"
+                    " meter TEXT, used_percent REAL, resets_at TEXT, plan TEXT)")
+        before = CLEARED - dt.timedelta(minutes=4)
+        con.execute("INSERT INTO samples VALUES (?, 'Grok', 'grok', 'weekly_all', 70, ?, 'SuperGrok')",
+                    (iso(before), iso(RESET)))
+        con.execute("INSERT INTO samples VALUES (?, 'Grok', 'grok', 'weekly_fable', 3, ?, 'SuperGrok')",
+                    (iso(before), iso(RESET)))
+        con.commit()
+        con.close()
+        account = {"provider": "Grok", "account": "grok", "display": "Grok",
+                   "plan": "SuperGrok Plus", "observed_at": iso(CLEARED),
+                   "limits": [{"meter_id": "weekly_all", "window_minutes": WEEK,
+                               "resets_at": RESET, "used_percent": 1.0},
+                              {"meter_id": "weekly_fable", "window_minutes": WEEK,
+                               "resets_at": RESET, "used_percent": 0.0}]}
+        glideslope.mark_early_resets([account], CLEARED, db=path)
+        weekly, fable = account["limits"]
+        self.assertEqual(weekly["early_resets"][0]["from_plan"], "SuperGrok")
+        self.assertEqual(weekly["early_resets"][0]["to_plan"], "SuperGrok Plus")
+        self.assertEqual(fable["early_resets"][0]["from_plan"], "SuperGrok")
+        self.assertEqual(fable["early_resets"][0]["to_plan"], "SuperGrok Plus")
+        self.assertTrue(fable["early_resets"][0]["inherited"])
+
+    def test_a_config_plan_label_edit_is_not_a_plan_change(self):
+        path = Path(tempfile.mkdtemp(prefix="glideslope-reset-plan-")) / "samples.db"
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE samples (observed_at TEXT, provider TEXT, account TEXT,"
+                    " meter TEXT, used_percent REAL, resets_at TEXT, plan TEXT)")
+        con.execute("INSERT INTO samples VALUES (?, 'Codex', 'codex', 'weekly_all', 70, ?, '20x')",
+                    (iso(CLEARED - dt.timedelta(minutes=4)), iso(RESET)))
+        con.commit()
+        con.close()
+        account = {"provider": "Codex", "account": "codex", "display": "Codex",
+                   "plan": "Pro", "observed_at": iso(CLEARED),
+                   "limits": [{"meter_id": "weekly_all", "window_minutes": WEEK,
+                               "resets_at": RESET, "used_percent": 1.0}]}
+        glideslope.mark_early_resets([account], CLEARED, db=path)
+        event, = account["limits"][0]["early_resets"]
+        self.assertNotIn("from_plan", event)
+        self.assertNotIn("to_plan", event)
+
+    def test_a_missing_stored_plan_does_not_invent_a_change(self):
+        path = Path(tempfile.mkdtemp(prefix="glideslope-reset-plan-")) / "samples.db"
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE samples (observed_at TEXT, provider TEXT, account TEXT,"
+                    " meter TEXT, used_percent REAL, resets_at TEXT, plan TEXT)")
+        before = CLEARED - dt.timedelta(minutes=4)
+        con.execute("INSERT INTO samples VALUES (?, 'Grok', 'grok', 'weekly_all', 70, ?, NULL)",
+                    (iso(before), iso(RESET)))
+        con.commit()
+        con.close()
+        account = {"provider": "Grok", "account": "grok", "display": "Grok",
+                   "plan": "SuperGrok Plus", "observed_at": iso(CLEARED),
+                   "limits": [{"meter_id": "weekly_all", "window_minutes": WEEK,
+                               "resets_at": RESET, "used_percent": 1.0}]}
+        glideslope.mark_early_resets([account], CLEARED, db=path)
+        event = account["limits"][0]["early_resets"][0]
+        self.assertEqual(account["limits"][0]["rebased_at"], CLEARED)
+        self.assertNotIn("from_plan", event)
+        self.assertNotIn("to_plan", event)
 
     def test_the_reading_in_hand_counts_before_it_is_stored(self):
         store_only_before = store([(CLEARED - dt.timedelta(minutes=4), "weekly_all", 100, RESET)])
@@ -119,10 +205,27 @@ class NotifyTest(unittest.TestCase):
         title, body = notify.compose_reset(alerts[0], now)
         self.assertEqual(title, "Alpha · reset used")
         self.assertIn("was 100%", body)
+        self.assertNotIn("Plan ", body)
         self.assertIn("× the weekly pace", body)
         key = notify.reset_key(alerts[0])
         self.assertIn(key, notify.prune({key: "x"}, now))
         self.assertEqual(notify.reset_alerts([account], CLEARED + dt.timedelta(hours=3)), [])
+
+    def test_a_plan_change_leads_the_reset_banner(self):
+        now = CLEARED + dt.timedelta(minutes=20)
+        account = alpha(1, 0, now)
+        account["limits"][0]["rebased_at"] = CLEARED
+        account["limits"][0]["early_resets"] = [{
+            "at": iso(CLEARED), "from_percent": 70, "to_percent": 1,
+            "from_plan": "SuperGrok", "to_plan": "SuperGrok Plus",
+        }]
+        alerts = notify.reset_alerts([account], now)
+        self.assertEqual(alerts[0]["from_plan"], "SuperGrok")
+        self.assertEqual(alerts[0]["to_plan"], "SuperGrok Plus")
+        title, body = notify.compose_reset(alerts[0], now)
+        self.assertEqual(title, "Alpha · plan changed")
+        self.assertTrue(body.startswith("Plan SuperGrok → SuperGrok Plus."))
+        self.assertIn("was 70%", body)
 
     def test_a_jittering_deadline_is_one_window(self):
         alert = {"account": "Alpha", "meter_id": "weekly_all"}

@@ -141,6 +141,8 @@ def reset_alerts(accounts: list[dict[str, Any]], now: dt.datetime) -> list[dict[
             "rebased_at": at,
             "early_resets": limit.get("early_resets") or [],
             "from_percent": float(last.get("from_percent") or 0),
+            "from_plan": last.get("from_plan"),
+            "to_plan": last.get("to_plan"),
             "exhausts_at": None,
             "floor": False,
         })
@@ -238,10 +240,14 @@ def compose_reset(alert: dict[str, Any], now: dt.datetime) -> tuple[str, str]:
     """Title and body for a used reset: what it cleared, how long the fresh budget
     runs, and how much faster than a week's even burn it can now be spent."""
     window = "7 DAY · Fable" if alert["meter_id"] == "weekly_fable" else "7 DAY"
-    title = f"{alert['account']} · reset used"
+    changed = alert.get("from_plan") and alert.get("to_plan")
+    title = f"{alert['account']} · plan changed" if changed else f"{alert['account']} · reset used"
     span = (alert["resets_at"] - alert["rebased_at"]).total_seconds()
-    parts = [f"{window} was {format_percent(alert['from_percent'])},"
-             f" now {format_percent(alert['used_percent'])}."]
+    parts = []
+    if changed:
+        parts.append(f"Plan {alert['from_plan']} → {alert['to_plan']}.")
+    parts.append(f"{window} was {format_percent(alert['from_percent'])},"
+                 f" now {format_percent(alert['used_percent'])}.")
     parts.append(f"A fresh budget until {_clock(alert['resets_at'], now)}"
                  f" ({format_countdown(alert['resets_at'] - now)} left).")
     if span > 0 and alert.get("window_minutes"):

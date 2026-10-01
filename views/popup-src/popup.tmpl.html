@@ -767,6 +767,7 @@
     font-weight: 600;
     text-transform: uppercase;
   }
+  .used-read .extra-burn { margin-left: 6px; font-weight: 650; }
   .used-read.unknown {
     color: var(--muted);
     font-size: 9px;
@@ -1314,6 +1315,17 @@ function stateOf(account, window) {
   return { label: "On glideslope", tone: "" };
 }
 
+/* 💸 plus the dollars, only when this window's usage-credit delta is above zero.
+   The compact register does not call this: that column is a fixed percent. */
+function extraMark(amount, currency, floor) {
+  if (amount == null || amount === "") return "";
+  const code = String(currency || "USD").toUpperCase();
+  const symbol = { USD: "$", EUR: "€", GBP: "£" }[code];
+  const shown = symbol ? symbol + amount : `${amount} ${code}`;
+  const qual = floor ? `<span class="qual">floor</span>` : "";
+  return `<span class="extra-burn">💸 ${escapeHTML(shown)}</span>${qual}`;
+}
+
 function usedHTML(account, window) {
   if (sessionUnknown(account, window)) return `<span class="used-read unknown">unknown</span>`;
   if (unread(window)) return `<span class="used-read unknown">unread</span>`;
@@ -1326,7 +1338,9 @@ function usedHTML(account, window) {
     /* the ◆ read is a value like any other: when it cannot be computed the cell
        says so with a dash instead of closing up around the used percentage */
     `${pace == null ? `<span class="pace-missing">(◆—)</span>`
-      : `<span class="pace">(◆${pace.toFixed(0)}%)</span>`}</span>`;
+      : `<span class="pace">(◆${pace.toFixed(0)}%)</span>`}` +
+    extraMark(window.extra_amount, window.extra_currency, window.extra_floor) +
+    `</span>`;
 }
 
 function resetHTML(window) {
@@ -1577,8 +1591,14 @@ function resetChipHTML(window) {
   if (!rebasedOf(window) || !resets.length) return "";
   const last = resets[resets.length - 1];
   const when = windowTime(Date.parse(last.at), window);
+  const plans = resetPlanPhrase(last);
   return `<span class="reset-chip" title="Reset used ${escapeHTML(when)}` +
+    `${plans ? ` · ${escapeHTML(plans)}` : ""}` +
     ` · was ${Math.round(last.from_percent)}%"><i></i></span>`;
+}
+function resetPlanPhrase(event) {
+  const from = event && event.from_plan, to = event && event.to_plan;
+  return from && to && from !== to ? `${from} → ${to}` : "";
 }
 
 /* The register names what the frame can only colour. Every window in the lens
@@ -1868,10 +1888,15 @@ function renderPlot() {
     const floor = Number(last?.to_percent) || 0;
     mk("line", { x1: x(e), y1: y(floor), x2: x(100), y2: y(100), class: "ils-rebeam" }, null, reticle);
     const top = y(Number(last?.from_percent ?? 100));
-    const right = x(e) + 14 + 150 < M.l + W;
-    mk("text", { x: right ? x(e) + 14 : x(e) - 8, y: Math.max(M.t + 10, top + 7),
-      "text-anchor": right ? "start" : "end", class: "reset-label" },
-      `RESET · ${windowTime(rebased, window)}`, reticle);
+    const plans = resetPlanPhrase(last);
+    const label = mk("text", { x: x(e) + 14, y: Math.max(M.t + 10, top + 7),
+      "text-anchor": "start", class: "reset-label" },
+      plans ? `RESET · ${plans} · ${windowTime(rebased, window)}`
+            : `RESET · ${windowTime(rebased, window)}`, reticle);
+    if (x(e) + 14 + label.getComputedTextLength() > M.l + W - 4) {
+      label.setAttribute("x", (x(e) - 8).toFixed(1));
+      label.setAttribute("text-anchor", "end");
+    }
   }
 
   /* While a mark is selected, the elapsed ticks read in its window's calendar

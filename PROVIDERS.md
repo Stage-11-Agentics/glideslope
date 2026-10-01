@@ -65,6 +65,19 @@ which say something true only when the caps behind them match. So the pool is th
 group of accounts sharing one plan, and the row names it — `Claude · pooled (2 · Max 20x)`.
 A Pro account sits out rather than diluting two Max 20x budgets.
 
+**Usage credits are a suffix, not a meter.** The same usage GET carries
+`extra_usage` or `spend`: one month-to-date counter in minor units. Glideslope
+journals it (`samples.meter = extra_usage`, column `credit_minor`) and shows
+the rise during the current window on the cells that already exist — `💸 $18.20`
+on the 5-hour cell for that window, and on the 7-day all-models cell for that
+window — only when the rise is above zero. The 5-hour figure is inside the
+7-day figure; they are never added, and the pool does not take them. Fable is
+not marked. The amount clears when its window expires. `floor` after it means
+the baseline is the first sample inside the window, so the truth is that or
+higher. A meter-token read cannot see the counter and shows no suffix, and a
+missing block is never stored as zero. This is prepaid usage-credit spend. It
+is not the API-equivalent valuation in `spend.json`, not a percent, and not a ◆.
+
 **Only a logged-in account is readable.** `claude-account` reads the access token Claude Code
 already keeps in the keychain, and only while it is still valid — it never refreshes, never
 writes the keychain, and stores no token of its own. So a read is a pure reader: no lock, no
@@ -456,14 +469,16 @@ into one column.
 
 ---
 
-## Grok — SuperGrok weekly pool (added 2026-09-13)
+## Grok — weekly compute pool (added 2026-09-13)
 
 | | |
 |---|---|
-| Source | `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` — the same endpoint Grok Build's `/usage` modal uses |
-| Auth | Grok Build OIDC session in `~/.grok/auth.json`. Access token under `key`; refresh in place when expired |
+| Source | `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` — the weekly percent. This body no longer names the plan |
+| Plan | `GET https://cli-chat-proxy.grok.com/v1/user?include=subscription` → `subscriptionTier`, copied onto the billing payload. `SuperGrokPlus` → SuperGrok Plus, `SuperGrokLite` → SuperGrok Lite, `SuperGrokHeavy` → SuperGrok Heavy. An unknown string is kept. `[grok] plan` is the fallback when neither this read nor a previous cached payload names a tier |
+| Prices | SuperGrok $30/mo and SuperGrok Plus $100/mo (x.ai/pricing, 2026-10-01), the weights in `PLAN_PRICE_USD`. Lite and Heavy are named and left out of the pool until that page prints a dollar amount |
+| Auth | Grok Build OIDC session in `~/.grok/auth.json`. Access token under `key`; refresh in place when expired. The user GET uses the same token as billing |
 | Windows | plan quota (7d cycle, `USAGE_PERIOD_TYPE_WEEKLY`) → `weekly_all`. No 5h session is published today |
-| Units | `creditUsagePercent`, 0–100 |
+| Units | `creditUsagePercent`, 0–100. A missing percent is rejected, never read as zero |
 | Credential | the Grok CLI's own session. This program refreshes it the same way Grok does (OIDC `refresh_token` grant against `auth.x.ai`), atomically, under flock, never copying the token elsewhere |
 | Probe | `python3 tools/grok_probe.py` |
 | In-session boost | `~/.grok/hooks/glideslope-usage.json` → `tools/grok_hook.py` on `SessionStart` and `Stop` only |
@@ -510,13 +525,30 @@ a custom IdP is refused rather than guessed. Persist is temp-file + rename under
 refresh is not clobbered.
 
 **The Stop hook is a boost, not the backbone.** It writes
-`<store>/grok-billing.json` (numbers only). `query_grok()`
+`<store>/grok-billing.json`, with the tier attached the same way the sampler attaches it. `query_grok()`
 prefers that file when it is under 90 seconds old, then falls back to a live
-GET. The hook prints nothing on stdout (Stop stdout is a decision) and always
-exits 0.
+billing GET. The hook prints nothing on stdout (Stop stdout is a decision) and always
+exits 0. The hook and the sampler share one tier cache, so a Stop event costs one
+billing GET, and the user record is fetched at most once every six hours.
+
+**The tier is attached, and a miss does not fail the percent.** When the
+billing payload has no `subscriptionTier`, `query_grok` reuses the tier in
+`<store>/provider-cache/grok-tier.json` while it is under six hours old, and
+otherwise makes one user GET and refreshes that file. Only the field is copied
+onto the payload that gets cached. A user-record failure
+keeps the percent. If a previous cached Grok payload already named a tier, that
+tier is reused, so a blip does not relabel the row with the config fallback. A
+snapshot that cannot be signed for (no login) is returned as stored. The
+session settings cache and the JWT `tier` claim are not the plan.
+
+**The sample journals the display plan.** `samples.plan` is the name the row
+was wearing (`SuperGrok Plus`, not the raw `SuperGrokPlus`). Rows from before
+the column are NULL and are not backfilled. An early reset records `from_plan`
+and `to_plan` only when both sides are non-empty and differ, and the plot and
+the reset banner say so. A clear whose samples have no plan stays a plain RESET.
 
 **Not the developer API.** Console prepaid credits, RPS/TPM tiers, and
-`XAI_API_KEY` are a different meter. Glideslope reads the SuperGrok weekly pool.
+`XAI_API_KEY` are a different meter. Glideslope reads the weekly compute pool.
 
 ---
 

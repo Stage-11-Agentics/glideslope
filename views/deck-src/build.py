@@ -164,6 +164,26 @@ def trails_from_store(accounts: list[dict]) -> tuple[dict[str, list[list[float]]
     return trails, round(span_hours, 1)
 
 
+def credit_view(limit: dict) -> dict:
+    """The usage-credit suffix, copied only when this window actually burned.
+
+    Quiet windows omit the keys, so a snapshot with no spend stays the shape
+    the pages already know. Fable never carries them.
+    """
+    amount = limit.get("extra_amount")
+    if not amount:
+        return {}
+    places = limit.get("extra_places")
+    if isinstance(places, bool) or not isinstance(places, int):
+        places = 2
+    return {
+        "extra_amount": str(amount),
+        "extra_currency": str(limit.get("extra_currency") or "USD"),
+        "extra_places": places,
+        "extra_floor": bool(limit.get("extra_floor")),
+    }
+
+
 def build_snapshot(pos: dict) -> dict:
     alias_to_display = {a["account"]: a["display"] for a in pos.get("accounts", [])}
     # The configured zone by IANA name; None lets the page use the viewer's own.
@@ -207,7 +227,10 @@ def build_snapshot(pos: dict) -> dict:
                 "from_percent": e.get("from_percent"),
                 "to_percent": e.get("to_percent"),
                 "inherited": bool(e.get("inherited")),
+                **({"from_plan": e["from_plan"], "to_plan": e["to_plan"]}
+                   if e.get("from_plan") and e.get("to_plan") else {}),
             } for e in (l.get("early_resets") or [])],
+            **credit_view(l),
         } for l in a.get("limits", [])],
     } for a in pos.get("accounts", [])]
 

@@ -582,17 +582,24 @@ def resolve_launch_home(requested: str | None) -> Home:
 # Every successful read is journaled here, so an account whose token has lapsed
 # still has last-known numbers. No secrets — percentages and reset times only.
 
-def cache_put(alias: str, email: str, rows: list[tuple[str, float, str]]) -> None:
+def cache_put(alias: str, email: str, rows: list[tuple[str, float, str]],
+              extra_usage: dict | None = None) -> None:
     try:
         USAGE_CACHE.mkdir(parents=True, exist_ok=True)
         os.chmod(USAGE_CACHE, 0o700)
         p = USAGE_CACHE / f"{alias}.json"
         tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps({
+        payload = {
             "email": email,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "limits": [{"label": l, "percent": pc, "resets_at": r} for l, pc, r in rows],
-        }, indent=2))
+        }
+        # Absent on a meter-token write, on purpose: that read cannot see the
+        # counter, and leaving the previous login's number here would pair it
+        # with fresh percents from a different source.
+        if extra_usage is not None:
+            payload["extra_usage"] = extra_usage
+        tmp.write_text(json.dumps(payload, indent=2))
         os.chmod(tmp, 0o600)
         os.replace(tmp, p)
     except Exception:
@@ -686,7 +693,11 @@ def _throttled_note(until: float) -> str:
 
 
 def limit_rows(usage: dict) -> list[tuple[str, float, str]]:
-    """(label, percent, resets_at) for session / weekly-all / each scoped weekly."""
+    """(label, percent, resets_at) for session / weekly-all / each scoped weekly.
+
+    Usage credits are not one of these rows. `parse_extra_usage` reads that
+    counter off the same payload.
+    """
     rows = []
     for lim in usage.get("limits") or []:
         kind = lim.get("kind")
@@ -701,6 +712,97 @@ def limit_rows(usage: dict) -> list[tuple[str, float, str]]:
             label = kind or "?"
         rows.append((label, float(lim.get("percent") or 0), lim.get("resets_at")))
     return rows
+
+
+def _minor_units(value: object) -> int | None:
+    """A non-negative integer count of minor currency units, or None when the field is unusable."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        minor = value
+    elif isinstance(value, float) and value.is_integer():
+        minor = int(value)
+    else:
+        return None
+    return minor if minor >= 0 else None
+
+
+def _exponent(value: object) -> int:
+    if isinstance(value, bool):
+        return 2
+    if isinstance(value, int) and 0 <= value <= 8:
+        return value
+    if isinstance(value, float) and value.is_integer() and 0 <= int(value) <= 8:
+        return int(value)
+    return 2
+
+
+def _currency_code(value: object) -> str:
+    if isinstance(value, str):
+        code = value.strip().upper()
+        if 3 <= len(code) <= 8 and code.isalpha():
+            return code
+    return "USD"
+
+
+def valid_extra_usage(value: object) -> dict | None:
+    """The parsed usage-credit counter, or None when the cache shape is not one.
+
+    `monthly_limit` is deliberately not required: null means the cap is
+    unlimited, and dropping the block on that used to hide real spend.
+    """
+    if not isinstance(value, dict):
+        return None
+    minor = _minor_units(value.get("used_minor"))
+    if minor is None:
+        return None
+    places = value.get("exponent", 2)
+    if isinstance(places, bool) or not isinstance(places, int) or not 0 <= places <= 8:
+        places = 2
+    return {
+        "enabled": bool(value.get("enabled")),
+        "used_minor": minor,
+        "currency": _currency_code(value.get("currency")),
+        "exponent": places,
+    }
+
+
+def parse_extra_usage(usage: dict) -> dict | None:
+    """The month-to-date usage-credit counter on one `/api/oauth/usage` payload.
+
+    `spend` wins when it carries an amount, because its exponent is explicit.
+    Otherwise `extra_usage.used_credits`, with `decimal_places` or 2. A missing
+    block is None — never a fabricated zero. Enabled-but-zero is a real reading:
+    the next rise needs a baseline of zero.
+    """
+    if not isinstance(usage, dict):
+        return None
+    spend = usage.get("spend")
+    if isinstance(spend, dict) and isinstance(spend.get("used"), dict):
+        used = spend["used"]
+        minor = used.get("amount_minor")
+        if minor is None:
+            minor = used.get("amount_minor_units")
+        parsed = _minor_units(minor)
+        if parsed is not None:
+            return valid_extra_usage({
+                "enabled": spend.get("enabled"),
+                "used_minor": parsed,
+                "currency": used.get("currency") or spend.get("currency"),
+                "exponent": _exponent(used.get("exponent")),
+            })
+    extra = usage.get("extra_usage")
+    if not isinstance(extra, dict):
+        return None
+    parsed = _minor_units(extra.get("used_credits"))
+    if parsed is None:
+        return None
+    return valid_extra_usage({
+        "enabled": extra.get("is_enabled"),
+        "used_minor": parsed,
+        "currency": extra.get("currency"),
+        "exponent": _exponent(extra.get("decimal_places")),
+    })
 
 
 # ---------------------------------------------------------------- meter tokens
@@ -1251,10 +1353,14 @@ def cmd_status(args: list[str]) -> None:
             if reads:
                 time.sleep(READ_SPACING_S)
             reads += 1
-            rows = limit_rows(fetch_usage(live_token(home)))
-            cache_put(alias, email, rows)
+            usage = fetch_usage(live_token(home))
+            rows = limit_rows(usage)
+            extra = parse_extra_usage(usage)
+            cache_put(alias, email, rows, extra)
             limits = [{"label": l, "percent": p, "resets_at": r} for l, p, r in rows]
             report[alias] = {**base, "limits": limits, "fetched_at": now_iso()}
+            if extra is not None:
+                report[alias]["extra_usage"] = extra
             tag = f"{C['green']}▶ new sessions{C['off']}" if is_active else f"{C['green']}● live{C['off']}"
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {C['cyan']}{email}{C['off']}  {tag}  "
                              f"{C['dim']}home {home.name}{C['off']}"] + lines(limits)
@@ -1298,6 +1404,9 @@ def cmd_status(args: list[str]) -> None:
                 "error": report.get(alias, {}).get("error", "not logged in on this machine"),
                 "limits": cached["limits"],
             }
+            extra = valid_extra_usage(cached.get("extra_usage"))
+            if extra is not None:
+                report[alias]["extra_usage"] = extra
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {C['cyan']}{email}{C['off']}  "
                              f"{C['dim']}○ last known ({age_str(cached.get('fetched_at'))} ago){C['off']}"
                              ] + lines(cached["limits"])

@@ -254,10 +254,21 @@ KIMI_TIME_UNIT_MINUTES = {
 # not an API key. Access tokens last ~6 hours; Grok refreshes them in the
 # background while a Grok process is running, and this program does the same
 # operation when the sampler ticks against an expired token.
+# The displayed plan is the live subscription tier. This string is only the
+# fallback for a read that could not name one (config [grok] plan, else SuperGrok).
 GROK_PLAN = str(_config_table("grok").get("plan") or "SuperGrok")
+# What the user record says, and the words the row wears. An unrecognized tier
+# keeps its raw string: a name we have not mapped is still a fact.
+GROK_PLAN_BY_TIER = {
+    "SuperGrok": "SuperGrok",
+    "SuperGrokLite": "SuperGrok Lite",
+    "SuperGrokPlus": "SuperGrok Plus",
+    "SuperGrokHeavy": "SuperGrok Heavy",
+}
 GROK_AUTH_JSON = Path.home() / ".grok" / "auth.json"
 GROK_VERSION_JSON = Path.home() / ".grok" / "version.json"
 GROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+GROK_USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription"
 GROK_OIDC_ISSUER = "https://auth.x.ai"
 GROK_TOKEN_ENDPOINT = "https://auth.x.ai/oauth2/token"
 GROK_TOKEN_SKEW_SECONDS = 60
@@ -766,6 +777,14 @@ def merge_satellite_claude(
             local["read_by"] = satellite["name"]
             if raw.get("source") == "meter-token":
                 local["source"] = "meter-token"
+            # The counter has to be from the same read as the percents. A meter
+            # token never carries one; keeping the previous login's number
+            # beside fresh meter percents would invent a burn.
+            extra = clean_extra_usage(raw.get("extra_usage"))
+            if extra is not None:
+                local["extra_usage"] = extra
+            else:
+                local.pop("extra_usage", None)
             local.pop("error", None)
     return snapshot
 
@@ -879,7 +898,7 @@ def normalize_claude(snapshot: dict[str, Any], observed_at: dt.datetime) -> list
         # the snapshot's time for it would age a stale read as if it were fresh,
         # and the views place a five-hour read inside its window by this clock.
         account_observed = parse_timestamp(raw_account.get("fetched_at")) or observed_at
-        accounts.append({
+        account = {
             "provider": "Claude",
             "account": alias,
             "email": raw_account.get("email"),
@@ -889,7 +908,11 @@ def normalize_claude(snapshot: dict[str, Any], observed_at: dt.datetime) -> list
             "plan": CLAUDE_PLAN,
             "observed_at": min(account_observed, observed_at),
             "limits": limits,
-        })
+        }
+        extra = clean_extra_usage(raw_account.get("extra_usage"))
+        if extra is not None:
+            account["extra_usage"] = extra
+        accounts.append(account)
     accounts.sort(key=lambda item: (call_sign_order(item["display"]),
                                     item["display"]))
     return accounts
@@ -912,8 +935,11 @@ def keep_claude_state(
         name = f"claude-{account['account']}"
         raw_account = snapshot.get(account["account"])
         if not account.get("stale") and isinstance(raw_account, dict) and account["limits"]:
-            cache_provider_read(name, {"limits": raw_account.get("limits", [])},
-                                account["observed_at"])
+            payload: dict[str, Any] = {"limits": raw_account.get("limits", [])}
+            extra = clean_extra_usage(raw_account.get("extra_usage"))
+            if extra is not None:
+                payload["extra_usage"] = extra
+            cache_provider_read(name, payload, account["observed_at"])
             continue
         # locked out: whichever surviving copy was observed last wins
         kept = cached_provider_read(name, now)
@@ -926,6 +952,11 @@ def keep_claude_state(
         if limits:
             account["limits"] = limits
             account["observed_at"] = stored_at
+            extra = clean_extra_usage(stored_raw.get("extra_usage"))
+            if extra is not None:
+                account["extra_usage"] = extra
+            else:
+                account.pop("extra_usage", None)
     return accounts
 
 
@@ -1663,30 +1694,147 @@ def write_grok_hook_snapshot(
         pass
 
 
-def _grok_billing_get(
-    access_token: str, user_id: str, *, timeout_seconds: float, version: str
+def _grok_headers(access_token: str, user_id: str, version: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {access_token}",
+        "X-XAI-Token-Auth": "xai-grok-cli",
+        "x-userid": user_id,
+        "x-grok-client-version": version,
+        "x-grok-client-mode": "headless",
+        "Accept": "application/json",
+    }
+
+
+def _grok_json_get(
+    url: str, access_token: str, user_id: str, *,
+    timeout_seconds: float, version: str, what: str,
 ) -> dict[str, Any]:
-    request = urllib.request.Request(
-        GROK_BILLING_URL,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "X-XAI-Token-Auth": "xai-grok-cli",
-            "x-userid": user_id,
-            "x-grok-client-version": version,
-            "x-grok-client-mode": "headless",
-            "Accept": "application/json",
-        },
-    )
+    request = urllib.request.Request(url, headers=_grok_headers(access_token, user_id, version))
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             payload = json.loads(response.read())
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise PositionError(f"Grok billing request failed: {exc}") from exc
+        raise PositionError(f"Grok {what} request failed: {exc}") from exc
     except json.JSONDecodeError as exc:
-        raise PositionError(f"Grok billing returned invalid JSON: {exc}") from exc
+        raise PositionError(f"Grok {what} returned invalid JSON: {exc}") from exc
     if not isinstance(payload, dict):
-        raise PositionError("Grok billing returned no object")
+        raise PositionError(f"Grok {what} returned no object")
     return payload
+
+
+def _grok_billing_get(
+    access_token: str, user_id: str, *, timeout_seconds: float, version: str
+) -> dict[str, Any]:
+    return _grok_json_get(
+        GROK_BILLING_URL, access_token, user_id,
+        timeout_seconds=timeout_seconds, version=version, what="billing")
+
+
+def _grok_user_get(
+    access_token: str, user_id: str, *, timeout_seconds: float, version: str
+) -> dict[str, Any]:
+    return _grok_json_get(
+        GROK_USER_URL, access_token, user_id,
+        timeout_seconds=timeout_seconds, version=version, what="user")
+
+
+def _grok_tier_on(payload: dict[str, Any]) -> str | None:
+    raw = payload.get("subscriptionTier")
+    if isinstance(raw, str) and raw:
+        return raw
+    config = payload.get("config")
+    if isinstance(config, dict):
+        raw = config.get("subscriptionTier")
+        if isinstance(raw, str) and raw:
+            return raw
+    return None
+
+
+def apply_grok_subscription(payload: dict[str, Any], user: dict[str, Any] | None) -> dict[str, Any]:
+    """Copy subscriptionTier onto a billing payload that does not carry one.
+
+    The billing body stopped naming the plan (2026-10-01). The user record does.
+    A payload that already has a tier is returned unchanged, and so is one whose
+    user record does not name one.
+    """
+    if _grok_tier_on(payload) or not isinstance(user, dict):
+        return payload
+    tier = user.get("subscriptionTier")
+    if not isinstance(tier, str) or not tier:
+        return payload
+    merged = dict(payload)
+    merged["subscriptionTier"] = tier
+    return merged
+
+
+def grok_plan_name(raw: Any) -> str:
+    """The row's plan: the live tier when the read named one, else the config fallback."""
+    if isinstance(raw, str) and raw:
+        return GROK_PLAN_BY_TIER.get(raw, raw)
+    return GROK_PLAN
+
+
+GROK_TIER_CACHE = PROVIDER_CACHE_DIR / "grok-tier.json"
+# The plan changes on a purchase, not by the minute: the user record is read at
+# most once in this span, and the hook and the sampler share the answer.
+GROK_TIER_MAX_AGE = dt.timedelta(hours=6)
+
+
+def _cached_grok_tier(now: dt.datetime, max_age: dt.timedelta | None) -> str | None:
+    """The last tier the user record named, when it is younger than `max_age` (None: any age)."""
+    try:
+        stored = json.loads(GROK_TIER_CACHE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(stored, dict):
+        return None
+    tier, observed_at = stored.get("tier"), parse_timestamp(stored.get("observed_at"))
+    if not isinstance(tier, str) or not tier or observed_at is None:
+        return None
+    if max_age is not None and now - observed_at > max_age:
+        return None
+    return tier
+
+
+def _store_grok_tier(tier: str, now: dt.datetime) -> None:
+    try:
+        GROK_TIER_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        temp = GROK_TIER_CACHE.with_suffix(".tmp")
+        temp.write_text(json.dumps({"tier": tier, "observed_at": iso_utc(now)}))
+        temp.replace(GROK_TIER_CACHE)
+    except OSError:
+        pass
+
+
+def _attach_grok_subscription(
+    payload: dict[str, Any], *, access_token: str, user_id: str,
+    timeout_seconds: float, version: str, now: dt.datetime | None = None,
+) -> dict[str, Any]:
+    """The tier beside the billing read: cached, else one user GET. A failure keeps the last known tier.
+
+    The percent is the position. A tier blip must not fail the billing read, and
+    it must not relabel the row with the config fallback while a previous read
+    already named the plan.
+    """
+    if _grok_tier_on(payload):
+        return payload
+    now = now or utc_now()
+    tier = _cached_grok_tier(now, GROK_TIER_MAX_AGE)
+    if tier:
+        return apply_grok_subscription(payload, {"subscriptionTier": tier})
+    try:
+        user = _grok_user_get(
+            access_token, user_id, timeout_seconds=timeout_seconds, version=version)
+    except PositionError:
+        tier = _cached_grok_tier(now, None)
+        if not tier:
+            cached = cached_provider_read("grok", now)
+            tier = _grok_tier_on(cached[0]) if cached else None
+        return apply_grok_subscription(payload, {"subscriptionTier": tier} if tier else None)
+    named = user.get("subscriptionTier") if isinstance(user, dict) else None
+    if isinstance(named, str) and named:
+        _store_grok_tier(named, now)
+    return apply_grok_subscription(payload, user)
 
 
 def query_grok(
@@ -1697,19 +1845,35 @@ def query_grok(
     force_live: bool = False,
     now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    """Read SuperGrok's weekly pool. Prefers a fresh hook snapshot; else a live GET.
+    """Read the weekly pool, then the subscription tier when the pool does not name it.
 
+    Prefers a fresh hook snapshot for the percent; else a live billing GET.
     `force_live` is for the hook itself, so writing a snapshot cannot recurse
-    into the file it is about to replace.
+    into the file it is about to replace. The tier comes from the user record
+    (cached for GROK_TIER_MAX_AGE) and is attached onto the billing payload. A snapshot that cannot be signed
+    for (no login) is returned as stored.
     """
     now = now or utc_now()
+    version = grok_client_version()
+    payload: dict[str, Any] | None = None
     if not force_live:
-        snapshot = read_grok_hook_snapshot(snapshot_path, now=now)
-        if snapshot is not None:
-            return snapshot
-    token, user_id = grok_access_token(auth_path, now=now, timeout_seconds=timeout_seconds)
-    return _grok_billing_get(
-        token, user_id, timeout_seconds=timeout_seconds, version=grok_client_version())
+        payload = read_grok_hook_snapshot(snapshot_path, now=now)
+    if payload is None:
+        token, user_id = grok_access_token(auth_path, now=now, timeout_seconds=timeout_seconds)
+        payload = _grok_billing_get(
+            token, user_id, timeout_seconds=timeout_seconds, version=version)
+    elif _grok_tier_on(payload):
+        return payload
+    elif (tier := _cached_grok_tier(now, GROK_TIER_MAX_AGE)):
+        return apply_grok_subscription(payload, {"subscriptionTier": tier})
+    else:
+        try:
+            token, user_id = grok_access_token(auth_path, now=now, timeout_seconds=timeout_seconds)
+        except PositionError:
+            return payload
+    return _attach_grok_subscription(
+        payload, access_token=token, user_id=user_id,
+        timeout_seconds=timeout_seconds, version=version, now=now)
 
 
 def _grok_percent(value: Any) -> float | None:
@@ -1780,8 +1944,8 @@ def grok_accounts(position: dict[str, Any]) -> list[dict[str, Any]]:
         "display": "Grok",
         "stale": False,
         "active": True,
-        "plan": GROK_PLAN,
-        "plan_raw": position.get("plan"),
+        "plan": grok_plan_name(position.get("plan")),
+        "plan_raw": position.get("plan") if isinstance(position.get("plan"), str) else None,
         "observed_at": position["observed_at"],
         "limits": position["limits"],
         "product_usage": position.get("product_usage") or [],
@@ -2008,6 +2172,12 @@ RESET_FLOOR_PERCENT = 5.0    # a reset lands at zero; a few points of fresh burn
 RESET_CLOCK_SLACK = dt.timedelta(minutes=5)   # the same window, give or take the provider's jitter
 
 
+# Providers whose plan is read from the account (Claude's roster tier, Grok's
+# subscriptionTier). Codex and Kimi plans are config labels: editing one is not
+# a plan change, so a reset on them never names one.
+READ_PLAN_PROVIDERS = {"Claude", "Grok"}
+
+
 def detect_early_resets(points: list[tuple[dt.datetime, float]]) -> list[dict[str, Any]]:
     """Every early reset in one window instance's chronological (observed, used) readings.
 
@@ -2017,11 +2187,31 @@ def detect_early_resets(points: list[tuple[dt.datetime, float]]) -> list[dict[st
     vouch for.
     """
     events: list[dict[str, Any]] = []
-    for (before, was), (after, now_used) in zip(points, points[1:]):
+    for earlier, later in zip(points, points[1:]):
+        before, was = earlier[0], float(earlier[1])
+        after, now_used = later[0], float(later[1])
         if was - now_used >= RESET_DROP_POINTS and now_used <= RESET_FLOOR_PERCENT:
-            events.append({"at": after, "last_before": before,
-                           "from_percent": float(was), "to_percent": float(now_used)})
+            event: dict[str, Any] = {"at": after, "last_before": before,
+                                     "from_percent": was, "to_percent": now_used}
+            # A plan on both sides is how an upgrade is told from a plain clear.
+            # One side missing means the store has not recorded a plan yet.
+            left, right = _sample_plan(earlier), _sample_plan(later)
+            if left and right and left != right:
+                event["from_plan"] = left
+                event["to_plan"] = right
+            events.append(event)
     return events
+
+
+def _sample_plan(point: tuple) -> str | None:
+    if len(point) < 3 or not isinstance(point[2], str) or not point[2]:
+        return None
+    return point[2]
+
+
+def _samples_have_plan(conn: sqlite3.Connection) -> bool:
+    """True when this store journals the plan. Stores from before that column do not."""
+    return any(row[1] == "plan" for row in conn.execute("PRAGMA table_info(samples)"))
 
 
 def mark_early_resets(accounts: list[dict[str, Any]], now: dt.datetime,
@@ -2041,8 +2231,10 @@ def mark_early_resets(accounts: list[dict[str, Any]], now: dt.datetime,
     except sqlite3.Error:
         return accounts
     try:
+        store_has_plan = _samples_have_plan(conn)
         for account in accounts:
             observed = parse_timestamp(account.get("observed_at")) or now
+            has_plan = store_has_plan and account.get("provider") in READ_PLAN_PROVIDERS
             for limit in account.get("limits", []):
                 reset = limit.get("resets_at")
                 duration = limit.get("window_minutes")
@@ -2052,23 +2244,28 @@ def mark_early_resets(accounts: list[dict[str, Any]], now: dt.datetime,
                     continue
                 start = reset - dt.timedelta(minutes=duration)
                 rows = conn.execute(
-                    "SELECT observed_at, used_percent, resets_at FROM samples"
+                    "SELECT observed_at, used_percent, resets_at"
+                    + (", plan" if has_plan else "")
+                    + " FROM samples"
                     " WHERE provider = ? AND account = ? AND meter = ?"
                     "   AND used_percent IS NOT NULL AND observed_at >= ?"
                     " ORDER BY observed_at",
                     (account.get("provider"), account.get("account"), limit.get("meter_id"),
                      start.strftime("%Y-%m-%dT%H:%M:%SZ")),
                 ).fetchall()
-                points: list[tuple[dt.datetime, float]] = []
-                for observed_iso, percent, resets_iso in rows:
-                    at, clock = parse_timestamp(observed_iso), parse_timestamp(resets_iso)
+                points: list[tuple] = []
+                for row in rows:
+                    at, clock = parse_timestamp(row[0]), parse_timestamp(row[2])
                     if at is None or clock is None or abs(clock - reset) > RESET_CLOCK_SLACK:
                         continue
-                    points.append((at, float(percent)))
+                    stored_plan = row[3] if has_plan and isinstance(row[3], str) and row[3] else None
+                    points.append((at, float(row[1]), stored_plan))
                 # the reading in hand may not be in the store yet: the sampler
                 # reads the position before it appends it
+                live_plan = (account.get("plan") if has_plan and isinstance(account.get("plan"), str)
+                             else None)
                 if not points or observed > points[-1][0]:
-                    points.append((observed, float(used)))
+                    points.append((observed, float(used), live_plan))
                 events = detect_early_resets(points)
                 if events:
                     limit["early_resets"] = events
@@ -2096,6 +2293,187 @@ def _share_early_resets(account: dict[str, Any]) -> None:
                                          for event in sibling["early_resets"]]
                 limit["rebased_at"] = sibling["rebased_at"]
                 break
+
+
+# Usage credits: one month-to-date counter, shown as the rise during each
+# included window. The 5h figure is inside the 7d figure; Fable is not marked.
+# A sample older than this cannot be the baseline — it would import the
+# previous window's spend. The sampler runs about every 3 minutes, and a 429
+# pause can stretch a gap, so the slack is generous: a baseline read up to 20
+# minutes before the window opened can carry that much earlier spend into it.
+# Accepted, because the alternative is no figure at all after every gap.
+CREDIT_METERS = {"session", "weekly_all"}
+BASELINE_SLACK = dt.timedelta(minutes=20)
+_CREDIT_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+_EXTRA_KEYS = ("extra_amount", "extra_currency", "extra_places", "extra_floor")
+
+
+def clean_extra_usage(value: Any) -> dict[str, Any] | None:
+    """The parsed usage-credit counter, or None when the shape is not one.
+
+    Same contract `claude-account` journals: enabled, used_minor, currency, exponent.
+    A beacon or a cache that does not carry it contributes nothing — never a zero.
+    """
+    if not isinstance(value, dict):
+        return None
+    minor = value.get("used_minor")
+    if isinstance(minor, bool) or not isinstance(minor, int) or minor < 0:
+        return None
+    places = value.get("exponent", 2)
+    if isinstance(places, bool) or not isinstance(places, int) or not 0 <= places <= 8:
+        places = 2
+    currency = value.get("currency")
+    if isinstance(currency, str):
+        currency = currency.strip().upper()
+    if not isinstance(currency, str) or not currency.isalpha() or not 3 <= len(currency) <= 8:
+        currency = "USD"
+    return {
+        "enabled": bool(value.get("enabled")),
+        "used_minor": minor,
+        "currency": currency,
+        "exponent": places,
+    }
+
+
+def major_amount(minor: int, places: int) -> str:
+    """Minor units scaled to a fixed-point string. 1820 at exponent 2 is '18.20'."""
+    scale = 10 ** places
+    whole, frac = divmod(int(minor), scale)
+    if places == 0:
+        return str(whole)
+    return f"{whole}.{frac:0{places}d}"
+
+
+def format_credit(amount: str, currency: str) -> str:
+    code = (currency or "USD").upper()
+    symbol = _CREDIT_SYMBOLS.get(code)
+    return f"{symbol}{amount}" if symbol else f"{amount} {code}"
+
+
+def credit_window_delta(
+    points: list[tuple[dt.datetime, int]], start: dt.datetime,
+) -> tuple[int, bool] | None:
+    """Minor units spent since this window's baseline, and whether that undercounts.
+
+    The counter is month-to-date, so a window's spend is a difference. The
+    baseline is the last sample at or before `start` when that sample sits
+    within BASELINE_SLACK of the start. Otherwise two or more samples inside
+    the window use the first of them, and the result is a floor. A single
+    in-window sample waits: there is no difference yet.
+
+    The counter restarts each calendar month (UTC). A drop is a restart: the
+    reading after it is all new spend, and whatever was spent between the last
+    reading and the restart is unseen, so the sum becomes a floor. A month
+    boundary crossed without a drop is ambiguous (restarted and climbed past, or
+    a counter that does not restart there), so it counts only the rise and is a
+    floor too. The sum never overstates.
+    """
+    if not points:
+        return None
+    ordered = sorted(points, key=lambda item: item[0])
+    prior = [item for item in ordered if item[0] <= start]
+    inside = [item for item in ordered if item[0] > start]
+    floor = False
+    if prior and start - prior[-1][0] <= BASELINE_SLACK:
+        series = [prior[-1], *inside]
+    elif len(inside) >= 2:
+        series = list(inside)
+        floor = True
+    else:
+        return None
+    delta = 0
+    for (before_at, before), (after_at, after) in zip(series, series[1:]):
+        if after < before:
+            delta += after
+            floor = True
+            continue
+        delta += after - before
+        if (before_at.year, before_at.month) != (after_at.year, after_at.month):
+            floor = True
+    if delta <= 0:
+        return None
+    return delta, floor
+
+
+def mark_credit_burn(accounts: list[dict[str, Any]], now: dt.datetime,
+                     db: Path | None = None) -> list[dict[str, Any]]:
+    """Set `extra_amount` on the 5h and 7d all-models windows when credits moved.
+
+    Read-only, and only after early resets so the baseline follows `rebased_at`.
+    The reading in hand is part of the series: the sampler stores the position
+    after this runs. No current counter (a meter-token read, a missing block)
+    leaves the cells alone — a stored history must not be shown as if it were
+    fresh. A store without the column, or no store, leaves them alone too.
+    """
+    path = db or STORE_DIR / "samples.db"
+    if not path.exists():
+        return accounts
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return accounts
+    try:
+        for account in accounts:
+            if account.get("provider") != "Claude":
+                continue
+            extra = clean_extra_usage(account.get("extra_usage"))
+            limits = [limit for limit in account.get("limits", [])
+                      if limit.get("meter_id") in CREDIT_METERS]
+            for limit in account.get("limits", []):
+                if limit.get("meter_id") not in CREDIT_METERS:
+                    for key in _EXTRA_KEYS:
+                        limit.pop(key, None)
+            if extra is None or not limits:
+                for limit in limits:
+                    for key in _EXTRA_KEYS:
+                        limit.pop(key, None)
+                continue
+            starts = [(limit, window_start(limit)) for limit in limits]
+            starts = [(limit, start) for limit, start in starts if start is not None]
+            if not starts:
+                continue
+            since = min(start for _, start in starts) - BASELINE_SLACK
+            try:
+                rows = conn.execute(
+                    "SELECT observed_at, credit_minor FROM samples"
+                    " WHERE provider = ? AND account = ? AND meter = 'extra_usage'"
+                    "   AND credit_minor IS NOT NULL AND observed_at >= ?"
+                    " ORDER BY observed_at",
+                    (account.get("provider"), account.get("account"),
+                     since.strftime("%Y-%m-%dT%H:%M:%SZ")),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return accounts
+            by_time: dict[dt.datetime, int] = {}
+            for observed_iso, minor in rows:
+                at = parse_timestamp(observed_iso)
+                if at is None or isinstance(minor, bool) or not isinstance(minor, int) or minor < 0:
+                    continue
+                by_time[at] = int(minor)
+            observed = parse_timestamp(account.get("observed_at")) or now
+            by_time[observed] = extra["used_minor"]
+            points = sorted(by_time.items())
+            for limit, start in starts:
+                for key in _EXTRA_KEYS:
+                    limit.pop(key, None)
+                reset = limit.get("resets_at")
+                window_points = [(at, minor) for at, minor in points
+                                 if not isinstance(reset, dt.datetime) or at < reset]
+                found = credit_window_delta(window_points, start)
+                if found is None:
+                    continue
+                delta, floor = found
+                places = int(extra["exponent"])
+                limit["extra_amount"] = major_amount(delta, places)
+                limit["extra_currency"] = extra["currency"]
+                limit["extra_places"] = places
+                # a cached counter (lockout, stale read) may be behind what was spent since
+                limit["extra_floor"] = floor or bool(account.get("stale"))
+    except sqlite3.Error:
+        pass
+    finally:
+        conn.close()
+    return accounts
 
 
 def window_start(limit: dict[str, Any]) -> dt.datetime | None:
@@ -2228,7 +2606,22 @@ def used_cell(account: dict[str, Any], limit: dict[str, Any], now: dt.datetime, 
     # exception: its clock IS this window's, so the mark is honest.
     pace = None if (account.get("stale") and not presumed) else even_pace_percent(limit, now)
     text = format_percent(percent) + (" presumed" if presumed else "")
-    return format_used(text, pace, color=color, level=percent)
+    return format_used(text, pace, color=color, level=percent) + _extra_suffix(limit)
+
+
+def _extra_suffix(limit: dict[str, Any]) -> str:
+    """`  💸 $18.20` when this window's usage-credit delta is known and above zero.
+
+    The percent and the ◆ stay. Quiet windows add nothing. `floor` means the
+    baseline is the first sample inside the window, so the truth is this or higher.
+    """
+    amount = limit.get("extra_amount")
+    if not amount:
+        return ""
+    text = f"  💸 {format_credit(str(amount), str(limit.get('extra_currency') or 'USD'))}"
+    if limit.get("extra_floor"):
+        text += " floor"
+    return text
 
 
 def account_name(account: dict[str, Any]) -> str:
@@ -2644,7 +3037,10 @@ PLAN_PRICE_USD = {
     ("Claude", "Max 5x"): 100.0,
     ("Claude", "Pro"): 20.0,
     ("Codex", "20x"): 200.0,
+    # Official card prices, x.ai/pricing. Lite and Heavy are named by the tier
+    # map and left out of the pool until that page prints a dollar amount.
     ("Grok", "SuperGrok"): 30.0,
+    ("Grok", "SuperGrok Plus"): 100.0,
 }
 # Kimi is deliberately not pooled (operator, 2026-09-14).
 TOTAL_POOL_PROVIDERS = ("Claude", "Codex", "Grok")
@@ -3714,6 +4110,7 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     # exactly once, in one place, with one set of rules.
     roll_forward_windows(accounts, now)
     mark_early_resets(accounts, now)
+    mark_credit_burn(accounts, now)
 
     switches = [] if args.no_switches else load_switches()
     # Who is spending on cloud sandboxes. Attribution only: never folded into a meter.

@@ -43,8 +43,11 @@ host = "studio"
 # (Alpha, Bravo, Charlie...) in roster order.
 call_signs = { work = "Alpha", personal = "Bravo" }
 
-# Plan labels. Operator-declared: the providers' APIs do not name the plan.
+# Plan labels.
+# Codex and Kimi are operator-declared: those APIs do not name the plan.
 # Claude's plan is not set here; it comes from the tier in claude-account's roster.
+# Grok's displayed plan is the live subscription tier. This string is only the
+# fallback when that read does not name one.
 [codex]
 plan = "20x"
 

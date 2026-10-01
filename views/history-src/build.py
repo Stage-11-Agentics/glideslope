@@ -84,8 +84,8 @@ DROP_TO = 5.0
 # account, a laptop shut for two days — stop reading as anything.
 GAP_S = 90 * 60
 
-# Meters the history view carries. `spend` (OpenRouter, dollars) has no percent
-# and no window to fly, so it is not a series here.
+# Meters the history view carries. `spend` (OpenRouter, dollars) and
+# `extra_usage` (a month-to-date counter, no percent) have no approach to fly.
 METERS = {
     ("Claude", "weekly_all"):     ("7 DAY", "all models", "week", 0),
     ("Claude", "weekly_fable"):   ("7 DAY", "Fable", "week", 1),
@@ -122,7 +122,8 @@ def read_rows(con: sqlite3.Connection) -> dict[tuple, list[dict]]:
     rows = con.execute(
         "SELECT provider, display, meter, used_percent, window_minutes,"
         "       resets_at, observed_at, active"
-        "  FROM samples WHERE meter != 'spend' AND used_percent IS NOT NULL"
+        "  FROM samples WHERE meter NOT IN ('spend', 'extra_usage')"
+        "   AND used_percent IS NOT NULL"
         " ORDER BY provider, display, meter, observed_at"
     ).fetchall()
     for provider, display, meter, used, minutes, resets, observed, active in rows:

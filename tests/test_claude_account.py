@@ -149,6 +149,63 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class ExtraUsageParseTests(ToolCase):
+    """The month-to-date counter on the usage payload. A missing block is not zero."""
+
+    def test_a_null_monthly_limit_still_yields_the_spend(self):
+        parsed = self.tool.parse_extra_usage({
+            "extra_usage": {
+                "is_enabled": True, "monthly_limit": None, "used_credits": 1820,
+                "utilization": None, "currency": "usd",
+            },
+        })
+        self.assertEqual(parsed, {
+            "enabled": True, "used_minor": 1820, "currency": "USD", "exponent": 2,
+        })
+
+    def test_spend_wins_and_names_its_exponent(self):
+        parsed = self.tool.parse_extra_usage({
+            "spend": {
+                "enabled": True,
+                "used": {"amount_minor": 5000, "currency": "USD", "exponent": 2},
+            },
+            "extra_usage": {"is_enabled": True, "used_credits": 1, "currency": "EUR"},
+        })
+        self.assertEqual(parsed["used_minor"], 5000)
+        self.assertEqual(parsed["currency"], "USD")
+        self.assertEqual(parsed["exponent"], 2)
+
+    def test_a_broken_spend_block_falls_through_and_decimal_places_are_honored(self):
+        parsed = self.tool.parse_extra_usage({
+            "spend": {"enabled": True},
+            "extra_usage": {
+                "is_enabled": True, "used_credits": 5000, "decimal_places": 3, "currency": "GBP",
+            },
+        })
+        self.assertEqual(parsed["used_minor"], 5000)
+        self.assertEqual(parsed["exponent"], 3)
+        self.assertEqual(parsed["currency"], "GBP")
+
+    def test_amount_minor_units_is_the_fallback_name(self):
+        parsed = self.tool.parse_extra_usage({
+            "spend": {"enabled": True, "used": {"amount_minor_units": 80, "currency": "EUR", "exponent": 2}},
+        })
+        self.assertEqual(parsed["used_minor"], 80)
+        self.assertEqual(parsed["currency"], "EUR")
+
+    def test_disabled_zero_is_a_reading_and_garbage_is_not(self):
+        zero = self.tool.parse_extra_usage({
+            "extra_usage": {"is_enabled": False, "used_credits": 0, "currency": "USD"},
+        })
+        self.assertEqual(zero["used_minor"], 0)
+        self.assertFalse(zero["enabled"])
+        self.assertIsNone(self.tool.parse_extra_usage({"limits": []}))
+        self.assertIsNone(self.tool.parse_extra_usage({
+            "extra_usage": {"is_enabled": True, "used_credits": -5, "currency": "USD"},
+        }))
+        self.assertIsNone(self.tool.parse_extra_usage({"extra_usage": {"is_enabled": True}}))
+
+
 class UsageBackoffTests(ToolCase):
     """A 429 pauses every usage read on the machine; reads in one run are spaced."""
 
@@ -170,6 +227,15 @@ class UsageBackoffTests(ToolCase):
              contextlib.redirect_stdout(out):
             self.tool.cmd_status(["--json"])
         return json.loads(out.getvalue()), fetched, slept
+
+    def test_a_login_read_reports_usage_credits(self):
+        payload = {"limits": [], "extra_usage": {
+            "is_enabled": True, "monthly_limit": None, "used_credits": 1820, "currency": "USD",
+        }}
+        report, _, _ = self.status(lambda token: payload)
+        for alias in ("lab", "personal"):
+            self.assertEqual(report[alias]["extra_usage"]["used_minor"], 1820)
+            self.assertEqual(self.tool.cache_get(alias)["extra_usage"]["used_minor"], 1820)
 
     def test_reads_in_one_run_are_spaced(self):
         report, fetched, slept = self.status(lambda token: self.USAGE)
@@ -259,7 +325,28 @@ class MeterTokenTests(MeterCase):
         self.assertFalse(row.get("stale"))
         self.assertFalse(row["logged_in"])
         self.assertEqual(row["limits"][1]["percent"], 13.0)
+        self.assertNotIn("extra_usage", row)
         self.assertNotIn("secret", out)
+
+    def test_a_meter_read_drops_a_cached_counter_and_a_stale_login_keeps_one(self):
+        self.tool.cache_put(
+            "lab", "lab@example.com",
+            [("session (5h)", 4.0, "2026-10-01T00:00:00Z")],
+            {"enabled": True, "used_minor": 250, "currency": "USD", "exponent": 2},
+        )
+        out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"], lambda token, **_: None)
+        stale = json.loads(out)["lab"]
+        self.assertTrue(stale["stale"])
+        self.assertEqual(stale["extra_usage"]["used_minor"], 250)
+
+        self.token("lab.token")
+        out, _, _ = self.run_cmd(
+            self.tool.cmd_status, ["--json"],
+            lambda token, **_: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
+        fresh = json.loads(out)["lab"]
+        self.assertEqual(fresh["source"], "meter-token")
+        self.assertNotIn("extra_usage", fresh)
+        self.assertNotIn("extra_usage", self.tool.cache_get("lab"))
 
     def test_an_unknown_org_is_warned_and_never_credited(self):
         self.token("lab.token")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe SuperGrok's weekly pool — the diagnostic behind the Grok row.
+"""Probe Grok's weekly compute pool — the diagnostic behind the Grok row.
 
 `glideslope.py` reports Grok through the same tables as every other provider.
 When that row goes missing or reads wrong, this is the tool that shows why: it
@@ -10,8 +10,8 @@ A live call may refresh the Grok Build access token in ~/.grok/auth.json, the
 same operation Grok itself runs. The token is never printed.
 
 Usage:
-    python3 tools/grok_probe.py              # raw payload + normalized windows
-    python3 tools/grok_probe.py --raw        # raw payload only (pipe to jq)
+    python3 tools/grok_probe.py              # billing payload (tier attached) + normalized windows
+    python3 tools/grok_probe.py --raw        # billing payload only, tier attached (pipe to jq)
     python3 tools/grok_probe.py --save FILE  # keep the payload as a test fixture
     python3 tools/grok_probe.py --payload FILE
 """
@@ -34,9 +34,9 @@ def bar(percent: float, width: int = 24) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Probe SuperGrok's weekly usage pool.")
-    parser.add_argument("--raw", action="store_true", help="print the raw payload only")
-    parser.add_argument("--save", type=Path, help="write the raw payload to a file (test fixture)")
+    parser = argparse.ArgumentParser(description="Probe Grok's weekly compute pool.")
+    parser.add_argument("--raw", action="store_true", help="print the billing payload only (subscriptionTier attached)")
+    parser.add_argument("--save", type=Path, help="write the billing payload, tier attached, to a file (test fixture)")
     parser.add_argument("--payload", type=Path, help="normalize a saved payload instead of calling out")
     parser.add_argument("--force-live", action="store_true",
                         help="skip the Stop-hook snapshot and hit billing")
@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.save:
         args.save.parent.mkdir(parents=True, exist_ok=True)
         args.save.write_text(json.dumps(payload, indent=2) + "\n")
-        print(f"saved raw payload → {args.save}", file=sys.stderr)
+        print(f"saved billing payload (tier attached) → {args.save}", file=sys.stderr)
 
     if args.raw:
         print(json.dumps(payload, indent=2))
@@ -72,8 +72,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print("\n── as Glideslope reads it ──────────────────────────────────────")
-    print(f"plan (operator-declared): {glideslope.GROK_PLAN}")
-    print(f"plan_raw: {position['plan'] or '—'}")
+    account, = glideslope.grok_accounts(position)
+    print(f"plan: {account['plan']}")
+    print(f"plan_raw: {account['plan_raw'] or '—'}")
+    if account["plan"] == glideslope.GROK_PLAN and not account["plan_raw"]:
+        print(f"plan source: config fallback ({glideslope.GROK_PLAN})")
     print()
     for limit in position["limits"]:
         used = limit["used_percent"]

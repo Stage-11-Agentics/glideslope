@@ -96,7 +96,8 @@ After editing a template: run the tests, rebuild, and open the built page. Look 
 | `[satellite] name` | short hostname | this machine's display name |
 | `[[satellites]] name, host` | none | other machines with a Claude login, read over ssh from their `~/.glideslope/satellite.json` |
 | `[claude] call_signs` | NATO letters in roster order | roster alias to display name |
-| `[codex] plan`, `[kimi] plan`, `[grok] plan` | none | operator-declared plan labels |
+| `[codex] plan`, `[kimi] plan` | none | operator-declared plan labels. Those APIs do not name the plan |
+| `[grok] plan` | `SuperGrok` | fallback when the live `subscriptionTier` is unnamed. The displayed plan is that tier (`SuperGrokPlus` → `SuperGrok Plus`) |
 | `[seats] file` | none | a JSON file of remote agent seats written by whatever launches them; named in the position, carried by the beacon (`PROVIDERS.md`, Remote agent seats) |
 | `[notify] sink` | `macos` | `macos` (osascript banner), `url` (POST JSON), `none` |
 | `[notify] url` | `""` | url sink only |

@@ -13,6 +13,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 BUILDER_PATH = Path(__file__).parents[1] / "views" / "history-src" / "build.py"
@@ -200,6 +201,15 @@ class SnapshotTests(unittest.TestCase):
             "2026-08-01T00:00:00Z", "OpenRouter", "openrouter", "OpenRouter", "spend",
             None, 12.5, WEEK_MINUTES, None, "2026-08-01T00:00:00Z", 0)]
         snapshot = history.build_snapshot(self.store(rows), dormant_path=NO_DORMANT)
+        self.assertEqual([s["key"] for s in snapshot["series"]], ["Alpha/weekly_all"])
+
+    def test_a_usage_credit_counter_is_not_a_series(self):
+        """The counter is not an approach, even when a percent was written on the row."""
+        rows = self.rows() + [(
+            "2026-08-01T00:00:00Z", "Claude", "lab", "Alpha", "extra_usage",
+            40.0, None, None, None, "2026-08-01T00:00:00Z", 1)]
+        with patch.dict(history.METERS, {("Claude", "extra_usage"): ("7 DAY", "credits", "week", 9)}):
+            snapshot = history.build_snapshot(self.store(rows), dormant_path=NO_DORMANT)
         self.assertEqual([s["key"] for s in snapshot["series"]], ["Alpha/weekly_all"])
 
     def test_the_page_never_receives_an_alias_or_an_email(self):

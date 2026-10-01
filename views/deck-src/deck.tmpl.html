@@ -230,6 +230,8 @@
      the ◆ mark alone and carries its own contract */
   .weekly-read .qual { color: var(--muted); font-size: 10px; font-weight: 650;
     margin-left: 7px; text-transform: uppercase; letter-spacing: .04em; }
+  /* usage credits spent inside this window. Rare, so it takes no reserved slot. */
+  .extra-burn { margin-left: 8px; font: 650 13px/1 var(--mono); letter-spacing: 0; white-space: nowrap; }
   .weekly-reset { color: var(--ink-2); font: 11.5px/1.4 var(--mono); }
   .weekly-reset small { display: block; margin-top: 3px; color: var(--muted); }
   .summary-warning {
@@ -1212,8 +1214,14 @@ function resetChip(w) {
   const resets = w.earlyResets || [];
   if (rebasedOf(w) == null || !resets.length) return "";
   const last = resets[resets.length - 1];
+  const plans = resetPlanPhrase(last);
   return `<span class="reset-chip" title="Reset used ${esc(windowTime(Date.parse(last.at), w))}` +
+    `${plans ? ` · ${esc(plans)}` : ""}` +
     ` · was ${Math.round(Number(last.from_percent))}%"><i></i></span>`;
+}
+function resetPlanPhrase(event) {
+  const from = event && event.from_plan, to = event && event.to_plan;
+  return from && to && from !== to ? `${from} → ${to}` : "";
 }
 /* the frame's gutter has room to spell the model out, so it does — the letter is
    the register's economy, not a vocabulary of its own */
@@ -1273,6 +1281,11 @@ const providers = SNAP.accounts.map(a => ({
     /* an early reset (glideslope.mark_early_resets): the latest one is where
        pace is measured from, and every one is drawn where it happened */
     rebasedAt: l.rebased_at || null, earlyResets: l.early_resets || [],
+    /* usage credits spent during this window. Absent means no known burn.
+       Only session and weekly_all ever carry it, so Fable stays unmarked. */
+    extraAmount: l.extra_amount || null, extraCurrency: l.extra_currency || null,
+    extraPlaces: Number.isInteger(l.extra_places) ? l.extra_places : null,
+    extraFloor: Boolean(l.extra_floor),
   })),
 }));
 /* ── a dormant account ──
@@ -1943,6 +1956,17 @@ function applyEmphasis() {
   }
 }
 
+/* 💸 plus the dollars, only when this window's usage-credit delta is above zero.
+   The percent and the ◆ stay. `floor` means the number understates. */
+function extraMark(amount, currency, floor) {
+  if (amount == null || amount === "") return "";
+  const code = String(currency || "USD").toUpperCase();
+  const symbol = { USD: "$", EUR: "€", GBP: "£" }[code];
+  const shown = symbol ? symbol + amount : `${amount} ${code}`;
+  const qual = floor ? `<span class="qual">floor</span>` : "";
+  return `<span class="extra-burn">💸 ${esc(shown)}</span>${qual}`;
+}
+
 /* ── window instrument ── */
 function winHTML(p, w) {
   const st = stateOf(w), pace = paceOf(w), lm = leftMs(w);
@@ -1980,6 +2004,8 @@ function winHTML(p, w) {
         `◆ ${pace == null ? `<span class="nil">—</span>` : `<b>${pace.toFixed(1)}%</b>`}` +
         ` &nbsp;${dev == null ? `<span class="nil">—</span>`
           : `${dev >= 0 ? "+" : "−"}${Math.abs(dev).toFixed(0)}%`} vs even`}</span>
+      ${!w.resets || rolled(w) || unread(w) || w.pct == null ? ""
+        : extraMark(w.extraAmount, w.extraCurrency, w.extraFloor)}
     </div>
     ${w.pct == null || !w.resets || rolled(w)
       ? `<div class="bar"><span class="bar-idle-note" style="position:absolute;left:8px;top:-1px">${
@@ -2056,7 +2082,8 @@ function render() {
         return unread(win) ? `<span class="qual">unread</span>`
           : win.pct == null || !win.resets ? "not started"
           : `${Math.round(win.pct)}%${win.presumed ? `<span class="qual">presumed</span>` : ""}${
-              pace == null || rolled(win) ? "" : `<span class="pace">(◆ ${pace.toFixed(1)}%)</span>`}`;
+              pace == null || rolled(win) ? "" : `<span class="pace">(◆ ${pace.toFixed(1)}%)</span>`}${
+              extraMark(win.extraAmount, win.extraCurrency, win.extraFloor)}`;
       };
       const value = readOf(w);
       /* Fable is the binding weekly (2026-09-11): its own column, a dash where
@@ -2182,13 +2209,15 @@ function render() {
       /* the ◆ read is dashed, not dropped, when the position cannot be computed
          for a window that is still running — but a last-known floor and a
          rolled window are silent by contract: neither has a position to miss */
+      const burn = unknown || w.pct == null || !w.resets ? ""
+        : extraMark(w.extraAmount, w.extraCurrency, w.extraFloor);
       const read = unknown ? `<span class="lread unknown">unknown</span>`
         : idle && !rolled(w) ? `<span class="lread nil">—</span>`
         : `<span class="lread ${capped ? "cap" : ""}">${Math.round(w.pct)}<small>%</small>` +
           `${lastKnown ? `<span class="lpace">last known</span>`
             : w.presumed ? `<span class="lpace">presumed · ◆ ${pace != null ? `${pace.toFixed(0)}%` : "—"}</span>`
             : idle ? ""
-            : `<span class="lpace">◆ ${pace != null ? `${pace.toFixed(0)}%` : "—"}</span>`}</span>`;
+            : `<span class="lpace">◆ ${pace != null ? `${pace.toFixed(0)}%` : "—"}</span>`}${burn}</span>`;
       return `
       <div class="lrow num" data-win="${esc(winKey(p, w))}" data-provider="${esc(p.provider)}"
            data-account="${esc(p.display)}" data-window="${esc(w.id)}" data-active="${Boolean(p.active)}"
@@ -2801,9 +2830,10 @@ function render() {
       const floor = Number(last?.to_percent) || 0;
       mk("line", { x1: x(e), y1: y(floor), x2: x(100), y2: y(100), class: "ils-rebeam" }, null, g);
       const top = y(Number(last?.from_percent ?? 100));
+      const plans = resetPlanPhrase(last);
       const label = mk("text", { x: x(e) + 16, y: Math.max(M.t + 10, top + 8),
         "text-anchor": "start", class: "reset-label" },
-        `RESET · ${windowTime(rebased, w)}`, g);
+        plans ? `RESET · ${plans} · ${windowTime(rebased, w)}` : `RESET · ${windowTime(rebased, w)}`, g);
       if (x(e) + 16 + label.getComputedTextLength() > M.l + W - 4) {
         label.setAttribute("x", (x(e) - 8).toFixed(1));
         label.setAttribute("text-anchor", "end");

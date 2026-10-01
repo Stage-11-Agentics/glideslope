@@ -154,6 +154,54 @@ class BuiltViewTests(unittest.TestCase):
         self.assertIn('dataset.reloadOnReturn = "true"', detail_page)
         self.assertIn('dataset.reloadOnReturn = "true"', popup_page)
 
+    def test_usage_credit_fields_reach_both_pages_unchanged(self):
+        position = self.position(40.0)
+        position["accounts"][0]["limits"][0].update({
+            "extra_amount": "1.80", "extra_currency": "USD",
+            "extra_places": 2, "extra_floor": True,
+        })
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(deck_builder, "DB_PATH", root / "missing.db"),
+                redirect_stdout(StringIO()),
+            ):
+                deck_builder.write_deck(position, root / "deck.html", root / "popup.html")
+            detail = self.embedded((root / "deck.html").read_text())
+            popup = self.embedded((root / "popup.html").read_text())
+        self.assertEqual(detail, popup)
+        limits = detail["accounts"][0]["limits"]
+        session = next(item for item in limits if item["meter_id"] == "session")
+        self.assertEqual(session["extra_amount"], "1.80")
+        self.assertEqual(session["extra_currency"], "USD")
+        self.assertEqual(session["extra_places"], 2)
+        self.assertTrue(session["extra_floor"])
+
+    def test_a_named_plan_change_reaches_both_pages(self):
+        position = self.position(1.0)
+        position["accounts"][0]["limits"][0]["early_resets"] = [
+            {"at": "2026-07-26T00:00:00Z", "from_percent": 70, "to_percent": 1,
+             "from_plan": "SuperGrok", "to_plan": "SuperGrok Plus"},
+            {"at": "2026-07-26T00:10:00Z", "from_percent": 40, "to_percent": 0,
+             "from_plan": "SuperGrok Plus"},
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.object(deck_builder, "DB_PATH", root / "missing.db"):
+                snapshot = deck_builder.build_snapshot(position)
+        events = snapshot["accounts"][0]["limits"][0]["early_resets"]
+        self.assertEqual(events[0]["from_plan"], "SuperGrok")
+        self.assertEqual(events[0]["to_plan"], "SuperGrok Plus")
+        self.assertNotIn("from_plan", events[1])
+        self.assertNotIn("to_plan", events[1])
+
+    def test_both_templates_name_a_plan_change_on_the_reset(self):
+        root = Path(__file__).parents[1] / "views"
+        for name in ("deck-src/deck.tmpl.html", "popup-src/popup.tmpl.html"):
+            text = (root / name).read_text()
+            self.assertIn("function resetPlanPhrase", text)
+            self.assertIn("RESET · ${plans}", text)
+
 
 class DormantAndPoolFableTests(unittest.TestCase):
     """Coverage for the two additions to the JSON contract: a dormant Claude

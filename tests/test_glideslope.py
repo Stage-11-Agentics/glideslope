@@ -2,6 +2,8 @@ import datetime as dt
 import io
 import contextlib
 import json
+import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -248,6 +250,13 @@ class KimiTests(unittest.TestCase):
 
 
 class GrokTests(unittest.TestCase):
+    def setUp(self):
+        tier_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(tier_dir.cleanup)
+        patcher = mock.patch.object(glideslope, "GROK_TIER_CACHE", Path(tier_dir.name) / "grok-tier.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_normalizes_the_weekly_pool(self):
         position = glideslope.normalize_grok(grok_payload(), NOW)
         self.assertEqual(position["provider"], "Grok")
@@ -305,8 +314,165 @@ class GrokTests(unittest.TestCase):
         self.assertEqual(account["account"], "grok")
         self.assertEqual(account["display"], "Grok")
         self.assertEqual(account["plan"], glideslope.GROK_PLAN)
+        self.assertIsNone(account["plan_raw"])
         self.assertFalse(account["stale"])
         self.assertEqual(account["observed_at"], NOW)
+
+    def test_live_tier_names_the_plan_and_prices_plus_at_one_hundred(self):
+        payload = grok_payload()
+        payload["subscriptionTier"] = "SuperGrokPlus"
+        account, = glideslope.grok_accounts(glideslope.normalize_grok(payload, NOW))
+        self.assertEqual(account["plan"], "SuperGrok Plus")
+        self.assertEqual(account["plan_raw"], "SuperGrokPlus")
+        self.assertEqual(glideslope.account_name(account), "Grok · SuperGrok Plus")
+        self.assertEqual(glideslope.PLAN_PRICE_USD[("Grok", "SuperGrok Plus")], 100.0)
+        self.assertEqual(glideslope.PLAN_PRICE_USD[("Grok", "SuperGrok")], 30.0)
+
+    def test_a_tier_on_the_billing_config_is_the_same_fact(self):
+        payload = grok_payload()
+        payload["config"]["subscriptionTier"] = "SuperGrokLite"
+        account, = glideslope.grok_accounts(glideslope.normalize_grok(payload, NOW))
+        self.assertEqual(account["plan"], "SuperGrok Lite")
+        self.assertEqual(account["plan_raw"], "SuperGrokLite")
+        self.assertNotIn(("Grok", "SuperGrok Lite"), glideslope.PLAN_PRICE_USD)
+        self.assertNotIn(("Grok", "SuperGrok Heavy"), glideslope.PLAN_PRICE_USD)
+
+    def test_unknown_tier_keeps_its_raw_string_and_stays_unpriced(self):
+        payload = grok_payload()
+        payload["subscriptionTier"] = "SuperGrokMystery"
+        account, = glideslope.grok_accounts(glideslope.normalize_grok(payload, NOW))
+        self.assertEqual(account["plan"], "SuperGrokMystery")
+        self.assertEqual(account["plan_raw"], "SuperGrokMystery")
+        self.assertIsNone(glideslope.PLAN_PRICE_USD.get(("Grok", account["plan"])))
+
+    def test_apply_grok_subscription_copies_the_tier_once(self):
+        billing = grok_payload()
+        merged = glideslope.apply_grok_subscription(
+            billing, {"subscriptionTier": "SuperGrokPlus", "email": "secret@example.test"})
+        self.assertEqual(merged["subscriptionTier"], "SuperGrokPlus")
+        self.assertNotIn("email", merged)
+        self.assertNotIn("subscriptionTier", billing)
+        self.assertIs(
+            glideslope.apply_grok_subscription(merged, {"subscriptionTier": "SuperGrok"}),
+            merged)
+        labeled = grok_payload()
+        labeled["config"]["subscriptionTier"] = "SuperGrok"
+        self.assertIs(
+            glideslope.apply_grok_subscription(labeled, {"subscriptionTier": "SuperGrokPlus"}),
+            labeled)
+        self.assertNotIn("subscriptionTier", glideslope.apply_grok_subscription(grok_payload(), None))
+        self.assertNotIn("subscriptionTier", glideslope.apply_grok_subscription(
+            grok_payload(), {"subscriptionTier": ""}))
+
+    def test_a_snapshot_without_a_tier_asks_the_user_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "grok-billing.json"
+            glideslope.write_grok_hook_snapshot(grok_payload(), NOW, path)
+            with mock.patch.object(glideslope, "grok_access_token", return_value=("tok", "uid")) as auth, \
+                    mock.patch.object(glideslope, "_grok_user_get", return_value={
+                        "subscriptionTier": "SuperGrokPlus", "email": "secret@example.test",
+                    }) as user:
+                payload = glideslope.query_grok(
+                    snapshot_path=path, auth_path=Path("/nonexistent/auth.json"), now=NOW)
+            auth.assert_called_once()
+            user.assert_called_once()
+        self.assertEqual(payload["subscriptionTier"], "SuperGrokPlus")
+        self.assertNotIn("email", payload)
+        self.assertEqual(payload["config"]["creditUsagePercent"], 2.0)
+
+    def test_a_snapshot_that_already_names_the_tier_skips_the_user_record(self):
+        named = grok_payload()
+        named["subscriptionTier"] = "SuperGrokPlus"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "grok-billing.json"
+            glideslope.write_grok_hook_snapshot(named, NOW, path)
+            with mock.patch.object(glideslope, "grok_access_token") as auth, \
+                    mock.patch.object(glideslope, "_grok_user_get") as user:
+                payload = glideslope.query_grok(
+                    snapshot_path=path, auth_path=Path("/nonexistent/auth.json"), now=NOW)
+            auth.assert_not_called()
+            user.assert_not_called()
+        self.assertEqual(payload["subscriptionTier"], "SuperGrokPlus")
+
+    def test_a_user_record_failure_keeps_the_percent_and_the_cached_tier(self):
+        billing = grok_payload()
+        cached = grok_payload()
+        cached["subscriptionTier"] = "SuperGrokPlus"
+        with mock.patch.object(glideslope, "grok_access_token", return_value=("tok", "uid")), \
+                mock.patch.object(glideslope, "_grok_billing_get", return_value=billing), \
+                mock.patch.object(glideslope, "_grok_user_get",
+                                  side_effect=glideslope.PositionError("Grok user request failed: down")), \
+                mock.patch.object(glideslope, "cached_provider_read", return_value=(cached, NOW)):
+            payload = glideslope.query_grok(
+                snapshot_path=Path("/nonexistent/grok-billing.json"),
+                auth_path=Path("/nonexistent/auth.json"), now=NOW)
+        self.assertEqual(payload["config"]["creditUsagePercent"], 2.0)
+        self.assertEqual(payload["subscriptionTier"], "SuperGrokPlus")
+        self.assertNotIn("subscriptionTier", billing)
+
+    def test_the_tier_is_read_once_and_shared_until_it_ages(self):
+        with mock.patch.object(glideslope, "grok_access_token", return_value=("tok", "uid")), \
+                mock.patch.object(glideslope, "_grok_billing_get", side_effect=lambda *a, **k: grok_payload()), \
+                mock.patch.object(glideslope, "_grok_user_get",
+                                  return_value={"subscriptionTier": "SuperGrokPlus"}) as user:
+            for minutes in (0, 3, 60, 300):
+                payload = glideslope.query_grok(
+                    force_live=True, auth_path=Path("/nonexistent/auth.json"),
+                    now=NOW + dt.timedelta(minutes=minutes))
+                self.assertEqual(payload["subscriptionTier"], "SuperGrokPlus")
+            self.assertEqual(user.call_count, 1)
+            glideslope.query_grok(force_live=True, auth_path=Path("/nonexistent/auth.json"),
+                                  now=NOW + glideslope.GROK_TIER_MAX_AGE + dt.timedelta(minutes=1))
+            self.assertEqual(user.call_count, 2)
+
+    def test_a_user_record_failure_falls_back_to_an_old_tier(self):
+        glideslope._store_grok_tier("SuperGrokHeavy", NOW - dt.timedelta(days=3))
+        with mock.patch.object(glideslope, "grok_access_token", return_value=("tok", "uid")), \
+                mock.patch.object(glideslope, "_grok_billing_get", return_value=grok_payload()), \
+                mock.patch.object(glideslope, "_grok_user_get",
+                                  side_effect=glideslope.PositionError("down")):
+            payload = glideslope.query_grok(force_live=True, auth_path=Path("/nonexistent/auth.json"), now=NOW)
+        self.assertEqual(payload["subscriptionTier"], "SuperGrokHeavy")
+
+    def test_a_user_record_failure_with_nothing_cached_leaves_the_tier_unnamed(self):
+        with mock.patch.object(glideslope, "grok_access_token", return_value=("tok", "uid")), \
+                mock.patch.object(glideslope, "_grok_billing_get", return_value=grok_payload()), \
+                mock.patch.object(glideslope, "_grok_user_get",
+                                  side_effect=glideslope.PositionError("Grok user request failed: down")), \
+                mock.patch.object(glideslope, "cached_provider_read", return_value=None):
+            payload = glideslope.query_grok(
+                snapshot_path=Path("/nonexistent/grok-billing.json"),
+                auth_path=Path("/nonexistent/auth.json"), now=NOW)
+        self.assertNotIn("subscriptionTier", payload)
+        account, = glideslope.grok_accounts(glideslope.normalize_grok(payload, NOW))
+        self.assertEqual(account["plan"], glideslope.GROK_PLAN)
+        self.assertIsNone(account["plan_raw"])
+
+    def _probe(self, payload: dict) -> str:
+        probe = Path(__file__).resolve().parents[1] / "tools" / "grok_probe.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "payload.json"
+            path.write_text(json.dumps(payload))
+            result = subprocess.run(
+                [sys.executable, str(probe), "--payload", str(path)],
+                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("operator-declared", result.stdout)
+        return result.stdout
+
+    def test_the_probe_names_the_live_tier(self):
+        payload = grok_payload()
+        payload["subscriptionTier"] = "SuperGrokPlus"
+        text = self._probe(payload)
+        self.assertIn("plan: SuperGrok Plus\n", text)
+        self.assertIn("plan_raw: SuperGrokPlus\n", text)
+        self.assertNotIn("plan source:", text)
+
+    def test_the_probe_says_when_the_plan_is_only_the_config_fallback(self):
+        text = self._probe(grok_payload())
+        self.assertIn("plan: SuperGrok\n", text)
+        self.assertIn("plan_raw: —\n", text)
+        self.assertIn("plan source: config fallback (SuperGrok)\n", text)
 
     def test_login_email_is_identity_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1631,6 +1797,15 @@ class TotalPoolTests(unittest.TestCase):
             self._account("Grok", "Grok", "SuperGrok Heavy", 10.0, .5),
         ]
         self.assertIsNone(glideslope.total_pool(accounts, NOW))
+
+    def test_supergrok_plus_weighs_one_hundred(self):
+        accounts = [
+            self._account("Claude", "Alpha", "Max 20x", 50.0, .5),
+            self._account("Grok", "Grok", "SuperGrok Plus", 10.0, .5),
+        ]
+        pool = glideslope.total_pool(accounts, NOW)
+        self.assertEqual(pool["monthly_usd"], 300.0)
+        self.assertAlmostEqual(pool["used_percent"], (200 * 50 + 100 * 10) / 300, places=4)
 
 
 class AuditGuardTests(unittest.TestCase):

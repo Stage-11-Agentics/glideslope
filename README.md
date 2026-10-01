@@ -95,7 +95,7 @@ developing Glideslope with an agent: [`CLAUDE.md`](CLAUDE.md).
 | **Claude** | 5h session, weekly, weekly Fable, per account | the token Claude Code already holds, read-only |
 | **Codex** | every native meter plus banked reset credits | none; read through the Codex app-server |
 | **Kimi** | plan quota and 5h burst window | a static platform key |
-| **Grok** | SuperGrok weekly compute pool | the Grok Build login |
+| **Grok** | weekly compute pool; the row's plan is the live tier | the Grok Build login |
 | **OpenRouter** | rolling 7-day dollars (metered, so no slope) | a static API key |
 
 read paths, units, failure modes and the checklist for adding the next one: [`PROVIDERS.md`](PROVIDERS.md). Glideslope mints no tokens and holds no credentials of its own; the promises and their two scoped exceptions, as invariants: [`SECURITY.md`](SECURITY.md).

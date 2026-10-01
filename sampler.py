@@ -69,16 +69,18 @@ CREATE TABLE IF NOT EXISTS samples (
   provider     TEXT NOT NULL,   -- Claude | Codex | Kimi | Grok | OpenRouter
   account      TEXT NOT NULL,   -- store alias (e.g. work/personal/codex/kimi/grok/openrouter)
   display      TEXT NOT NULL,   -- call-sign (Alpha/Bravo/Charlie/Delta/Codex/Kimi/Grok/OpenRouter)
-  meter        TEXT NOT NULL,   -- meter_id (session/weekly_all/weekly_fable/...) or 'spend'
-  used_percent REAL,            -- NULL for spend rows
+  meter        TEXT NOT NULL,   -- meter_id (session/weekly_all/weekly_fable/...) or 'spend' or 'extra_usage'
+  used_percent REAL,            -- NULL for spend rows and for the usage-credit counter
   spend_usd    REAL,            -- OpenRouter only
   window_minutes INTEGER,
   resets_at    TEXT,            -- NULL = window not anchored
   observed_at  TEXT NOT NULL,   -- the gauge's own observation time (the truth clock)
   active       INTEGER NOT NULL DEFAULT 0,
-  held_by      TEXT             -- satellites signed into this account at observation
+  held_by      TEXT,            -- satellites signed into this account at observation
                                 -- ("laptop", "studio", "laptop+studio" for example; local first;
                                 -- NULL = holders unknown, rows before 2026-08-29)
+  credit_minor INTEGER,         -- month-to-date usage credits, minor units; meter 'extra_usage' only
+  plan         TEXT             -- the plan the row was wearing; NULL before 2026-10-01
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_samples
   ON samples(provider, account, meter, observed_at);
@@ -92,6 +94,14 @@ def migrate(con: sqlite3.Connection) -> None:
     the ALTER either lands once or reports the column already there."""
     try:
         con.execute("ALTER TABLE samples ADD COLUMN held_by TEXT")
+    except sqlite3.OperationalError:
+        pass  # already present (or the table is new and the schema carried it)
+    try:
+        con.execute("ALTER TABLE samples ADD COLUMN credit_minor INTEGER")
+    except sqlite3.OperationalError:
+        pass  # already present (or the table is new and the schema carried it)
+    try:
+        con.execute("ALTER TABLE samples ADD COLUMN plan TEXT")
     except sqlite3.OperationalError:
         pass  # already present (or the table is new and the schema carried it)
 
@@ -180,13 +190,24 @@ def rows_from(position: dict, ts: str) -> list[tuple]:
         # column IS the fleet's login topology — who held what, when — and it is
         # what lets a view attribute a stretch of trail to the machine that flew it.
         held_by = "+".join(str(name) for name in account.get("logins") or []) or None
+        plan = account.get("plan") if isinstance(account.get("plan"), str) and account.get("plan") else None
         for limit in account.get("limits", []):
             rows.append((
                 ts, account["provider"], account["account"], account["display"],
                 limit.get("meter_id") or limit.get("label", "unknown"),
                 limit.get("used_percent"), None,
                 limit.get("window_minutes"), limit.get("resets_at"),
-                observed, 1 if account.get("active") else 0, held_by,
+                observed, 1 if account.get("active") else 0, held_by, None, plan,
+            ))
+        extra = account.get("extra_usage") if account.get("provider") == "Claude" else None
+        minor = extra.get("used_minor") if isinstance(extra, dict) else None
+        # Zero is a reading: the next rise needs a baseline. A missing block
+        # writes nothing, so a meter-token account can never show a fake $0.
+        if isinstance(minor, int) and not isinstance(minor, bool) and minor >= 0:
+            rows.append((
+                ts, account["provider"], account["account"], account["display"],
+                "extra_usage", None, None, None, None,
+                observed, 1 if account.get("active") else 0, held_by, minor, plan,
             ))
     router = position.get("openrouter")
     if router:
@@ -194,7 +215,7 @@ def rows_from(position: dict, ts: str) -> list[tuple]:
             ts, "OpenRouter", "openrouter", router.get("display", "OpenRouter"),
             "spend", None, router.get("weekly_usd"),
             7 * 24 * 60, router.get("limit_reset"),
-            router.get("observed_at") or ts, 0, None,
+            router.get("observed_at") or ts, 0, None, None, None,
         ))
     return rows
 
@@ -219,8 +240,8 @@ def main() -> int:
         cur = con.executemany(
             "INSERT OR IGNORE INTO samples"
             " (ts, provider, account, display, meter, used_percent, spend_usd,"
-            "  window_minutes, resets_at, observed_at, active, held_by)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "  window_minutes, resets_at, observed_at, active, held_by, credit_minor, plan)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         con.commit()
         fresh = cur.rowcount if cur.rowcount != -1 else 0
     finally:
