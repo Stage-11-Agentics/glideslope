@@ -558,6 +558,75 @@ what one full week of that account is worth at list price.
 
 ---
 
+## Remote agent seats
+
+Not a provider: attribution. Coding agents running on cloud sandboxes bill the operator's
+accounts, and their burn is already inside each account's own meters (a Claude seat's
+spend shows up in that account's weekly, a Grok seat's in the Grok pool). This says
+**who** is spending, never how much: a seat is never added to a meter, a pool or a verdict.
+Glideslope does not launch seats or produce the file; it reads a JSON file of remote agent
+seats written by whatever launches them.
+
+| | |
+|---|---|
+| Path | `[seats] file` in the config; none by default |
+| Beacon | a satellite with `[seats] file` set carries the file's rows and its `generated_at` as `seats` in `satellite.json`: live rows (at most 500), then rows that ended within the last day (at most 500), plus `live_total`, `ended_total` and, when either list hit its cap, `truncated: true` |
+| Output | one line after the login banner, `remote_seats` in `--json`, and the same line under Weekly status in the Detail view |
+| Credential | none. Glideslope only reads the file |
+
+```jsonc
+{
+  "generated_at": "2026-10-01T10:00:00Z",  // the file's own clock; absent → the file's mtime; unreadable → stale
+  "source": "<launcher name>",              // ignored
+  "seats": [{
+    "agent": "grok",          // claude, codex, grok, opencode, or any other string (required)
+    "account": "Grok",        // the billed account's call-sign (required); a roster alias maps to its name
+    "model": "grok-4.7", "effort": "high",
+    "project": "<project>", "ticket": "<ticket>", "role": "owner", "run": "<run id>",
+    "started": "2026-10-01T09:57:00Z",
+    "deadline": "2026-10-01T12:00:00Z"      // or null; a seat past it is over
+  }]
+}
+```
+
+Times are ISO-8601 or epoch seconds; a time with no zone is UTC, on the reader and the beacon
+alike. Other row keys (a sandbox id) are dropped, and text is cut to one 80-character line.
+A row without `agent` or `account` is skipped and counted in a warning; a row whose deadline
+cannot be read is kept (nothing proves it ended) and counted in a warning. An email in
+`account` never renders.
+
+**Merge rule.** Seats come from this machine's own file and from each satellite's beacon,
+so the same seat can arrive twice. Copies are settled on `(ticket, role, started, agent, run)`,
+the one from the source with the newest `generated_at` winning, and only then is a seat past
+its deadline dropped. That order matters: an older copy with a later deadline must never
+outlive a newer copy that says the seat is over, which is why the beacon carries rows that
+ended in the last day instead of dropping them. A row with neither `ticket` nor `started` has
+nothing to match on and is never merged.
+
+**Caps.** One rule: if any source is marked `truncated` (a beacon past its 500-row cap on
+live rows or on ended rows), the whole result is incomplete. A cut live row undercounts, and a
+cut ending can leave an older live copy standing; neither can be pinned to one group. `--json`
+says `"incomplete": true`, the line reads `On remote seats (incomplete): …`, and a warning
+names the source.
+
+**Staleness.** A source whose `generated_at` is more than an hour old is stale: its rows
+stay in `--json` with `"stale": true`, are counted under `stale_counts` rather than
+`counts`, and render dim after the word `stale` with their age. A source more than a day
+old is dropped with a warning. A `generated_at` that is present but unreadable, or more than
+five minutes in the future, is a clock nobody can trust: the source reads as stale, age
+unknown, with a warning. The file's mtime stands in only when `generated_at` is absent, since
+a freshly copied file of old seats has a fresh mtime. An absent or unreadable file (any
+failure at all, on the beacon) costs only the seats and a warning; it never fails the beacon
+or the position.
+
+`--json` carries `remote_seats`: `rows` (live seats only, each with its `source` satellite,
+and `stale`), `counts` and `stale_counts` per billed
+account, `stale`, `incomplete`, `stale_age_seconds`, `sources` (name, `generated_at`, age,
+`truncated`, live row count), and `line`, the plain-text line. `null` when no
+source is configured. `--skip-seats` leaves it out.
+
+---
+
 ## Credentials
 
 Static keys come from the environment first, then from the configured `keys_file`

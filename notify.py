@@ -392,7 +392,7 @@ def main() -> int:
         claude_roster=glideslope.CLAUDE_ROSTER,
         codex_snapshot=None, kimi_snapshot=None, grok_snapshot=None, skip_claude=False,
         skip_codex=True, skip_kimi=True, skip_grok=True, skip_openrouter=True,
-        skip_harness_spend=True, skip_satellites=False,
+        skip_harness_spend=True, skip_satellites=False, skip_seats=True,
         no_switches=True, max_age_seconds=glideslope.CLAUDE_CACHE_SECONDS)
     now, accounts, *_ = glideslope.gather(namespace)
 

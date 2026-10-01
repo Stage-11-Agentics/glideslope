@@ -54,6 +54,15 @@ plan = "Coding 15x"
 [grok]
 plan = "SuperGrok"
 
+# Remote agent seats: a JSON file of coding agents running on cloud sandboxes,
+# written by whatever launches them. When set, the position names who is on a
+# remote seat and which account each one bills; on a satellite, the beacon carries
+# the file's live rows to the rest of the fleet. Attribution only: that burn is
+# already inside each account's own meters. Shape: PROVIDERS.md, Remote agent seats.
+# Default: none.
+# [seats]
+# file = "~/.glideslope/seats.json"
+
 # Threshold alerts for the Claude account this machine is logged into.
 [notify]
 # macos: a banner via osascript (default)

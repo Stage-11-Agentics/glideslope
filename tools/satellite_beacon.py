@@ -25,7 +25,15 @@ one account that bills another), so a problem found here is read where the posit
 account-global, knowing WHO holds it is what lets the fleet read one shared
 number as shared instead of presuming a satellite's burn invisible.
 
-Numbers, reset clocks, and login emails only. No credential is read, written, or
+`seats`, present only when the Glideslope config sets `[seats] file`, carries the rows
+of that file (a JSON list of coding agents running on cloud sandboxes, written by
+whatever launches them) with the file's own `generated_at`, so the reader can judge its
+age: `{"generated_at": "…Z", "seats": [{"agent": …, "account": …, …}], "live_total": n}`,
+plus `"truncated": true` when either list hit the row cap. Rows that ended in the last day ride along so
+the reader can settle duplicates before it drops them (see seat_document). An absent or
+unreadable file omits the key and warns; it never stops the beacon.
+
+Numbers, reset clocks, login emails and seat rows only. No credential is read, written, or
 stored by this program — `claude-account` borrows the access token Claude Code
 already keeps, the Codex login is one decoded claim from a file never held past
 that read, and the file below is 0600 and contains no token, refresh token, or key.
@@ -52,6 +60,116 @@ CODEX_AUTH = Path.home() / ".codex" / "auth.json"  # login identity only, never 
 GROK_AUTH = Path.home() / ".grok" / "auth.json"    # login identity only, never the tokens
 CANDIDATES = (Path.home() / ".local" / "bin" / "claude-account", Path("/usr/local/bin/claude-account"))
 TIMEOUT = 45
+CONFIG = Path(os.environ.get("GLIDESLOPE_CONFIG") or (Path.home() / ".glideslope" / "config.toml"))
+# What a seat row keeps. The sandbox id stays with the launcher: noise here.
+SEAT_FIELDS = ("agent", "model", "effort", "account", "project", "ticket", "role", "run",
+               "started", "deadline")
+SEATS_MAX_ROWS = 500  # live rows carried, and again ended ones: a runaway file must not bloat a beacon
+SEATS_ENDED_SECONDS = 24 * 3600  # ended rows carried this long, so an older copy cannot revive one
+SEAT_TEXT_MAX = 80
+
+
+def seats_path(config: Path | None = None) -> Path | None:
+    """`[seats] file` from the Glideslope config, or None.
+
+    The beacon is copied to a satellite on its own and may run under a Python
+    without tomllib (macOS's /usr/bin/python3 is 3.9), so that case reads the one
+    key by hand instead of losing the feature: a plain `file = "<path>"` line under
+    `[seats]`, with no `#` in the path and no inline-table form.
+    """
+    try:
+        text = (config or CONFIG).read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        value, table = None, None
+        for line in text.splitlines():
+            line = line.split("#", 1)[0].strip()
+            if line.startswith("["):
+                table = line.strip("[] ")
+            elif table == "seats" and line.replace(" ", "").startswith("file="):
+                value = line.split("=", 1)[1].strip().strip("\"'")
+    else:
+        try:
+            section = tomllib.loads(text).get("seats")
+        except ValueError:
+            return None
+        value = section.get("file") if isinstance(section, dict) else None
+    return Path(os.path.expanduser(value)) if isinstance(value, str) and value else None
+
+
+def _instant(value: object) -> dt.datetime | None:
+    """ISO-8601 or epoch seconds; a zoneless time is UTC (the reader's rule too)."""
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return dt.datetime.fromtimestamp(value, dt.timezone.utc)
+        moment = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError, OSError, OverflowError):
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=dt.timezone.utc)
+
+
+def _plain(value: object) -> object:
+    """A plain value cut to one short line, or None. The reader re-validates it anyway."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    return " ".join(value.split())[:SEAT_TEXT_MAX] if isinstance(value, str) else value
+
+
+def seat_document(path: Path, now: dt.datetime) -> tuple[dict | None, str | None]:
+    """The seat file as the beacon carries it, or None and the reason.
+
+    Live rows come first. Rows that ended within SEATS_ENDED_SECONDS follow them:
+    an ended row is how the reader learns that an older copy of the same seat
+    (from another source, with a later deadline) is over, so it is never dropped
+    here before the reader has settled which copy is newest. A row with no
+    readable deadline counts as live (nothing proves it ended). Past the row cap
+    on either list (a cut ending matters as much as a cut live row: it can leave an
+    older live copy standing) the document says `truncated`, and the reader marks
+    the whole result incomplete. Only plain values cross: the reader re-validates
+    every row, since this file is another program's output.
+
+    `generated_at` is the file's own when it gives one, the file's mtime only when
+    it gives none, and carried as-is when it is present but unreadable, so the
+    reader treats it as stale rather than as freshly written.
+    """
+    try:
+        document = json.loads(path.read_text())
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return None, f"remote seats: {path} not found"
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+        return None, f"remote seats: {path} is unreadable: {exc}"
+    if not isinstance(document, dict) or not isinstance(document.get("seats"), list):
+        return None, f"remote seats: {path} has no seats list"
+    generated_at = document.get("generated_at")
+    if generated_at in (None, ""):  # no stamp of its own: the file's mtime is the next best
+        generated_at = (dt.datetime.fromtimestamp(mtime, dt.timezone.utc)
+                        .isoformat(timespec="seconds").replace("+00:00", "Z"))
+    elif _instant(generated_at) is None:
+        plain = _plain(generated_at)
+        generated_at = plain if plain not in (None, "") else "unreadable"
+    live, ended = [], []
+    for item in document["seats"]:
+        if not isinstance(item, dict):
+            continue
+        row = {field: _plain(item.get(field)) for field in SEAT_FIELDS}
+        row = {field: value for field, value in row.items() if value not in (None, "")}
+        deadline = _instant(item.get("deadline"))
+        if deadline is None or deadline > now:
+            live.append(row)
+        elif (now - deadline).total_seconds() <= SEATS_ENDED_SECONDS:
+            ended.append(row)
+    carried = {"generated_at": generated_at,
+               "seats": live[:SEATS_MAX_ROWS] + ended[:SEATS_MAX_ROWS],
+               "live_total": len(live), "ended_total": len(ended)}
+    if len(live) > SEATS_MAX_ROWS or len(ended) > SEATS_MAX_ROWS:
+        carried["truncated"] = True
+    return carried, None
 
 
 def held_logins() -> dict[str, str]:
@@ -192,6 +310,18 @@ def main() -> int:
         "snapshot": snapshot,
         "holds": held_logins(),
     }
+    # Seats are optional: whatever goes wrong reading them, the beacon still publishes,
+    # without them, and the reason travels with it.
+    try:
+        seat_file = seats_path()
+        seats, seat_error = (seat_document(seat_file, dt.datetime.now(dt.timezone.utc))
+                             if seat_file is not None else (None, None))
+    except Exception as exc:  # noqa: BLE001
+        seats, seat_error = None, f"remote seats could not be read: {type(exc).__name__}: {exc}"
+    if seats is not None:
+        payload["seats"] = seats
+    if seat_error:
+        notes = notes + [seat_error]
     if error:
         payload["error"] = error
     if notes:
@@ -199,6 +329,9 @@ def main() -> int:
     publish(payload)
     stamp = payload["observed_at"]
     print(f"{stamp} {name}: published {len(snapshot)} account(s): {tally(snapshot)}"
+          + (f" · {payload['seats']['live_total']} remote seat(s)"
+             + (", truncated at the row cap" if payload["seats"].get("truncated") else "")
+             if "seats" in payload else "")
           + (f" · {error}" if error else ""))
     for note in notes:
         print(f"{stamp} {name}: warning: {note}")
