@@ -259,11 +259,11 @@
   .ils-trail.selection-selected, .ils-mark.selection-selected, .reg-row.selection-selected,
   .ils-pool-trail.selection-selected, .ils-pool-mark.selection-selected { opacity: 1; }
   /* The pools are read in their rows, not written on the glass (operator,
-     2026-10-01): a pool's mark and trail stay off the frame, and inert, until
-     its row is pointed at. */
-  .ils-pool-trail:not(.selection-selected), .ils-pool-mark:not(.selection-selected) { opacity: 0; }
-  .ils-pool-trail:not(.selection-selected), .ils-pool-mark:not(.selection-selected) *,
-  .ils-pool-mark:not(.selection-selected) { pointer-events: none; }
+     2026-10-01): at rest a pool is only its glyph. The name, the number and
+     the trail come up while the glyph or its row is pointed at. */
+  .ils-pool-mark .ils-pool-tag { transition: opacity .12s ease; }
+  .ils-pool-mark:not(.selection-selected) .ils-pool-tag { opacity: 0; }
+  .ils-pool-trail:not(.selection-selected) { opacity: 0; pointer-events: none; }
   /* A filtered-out register row stays faded even under a hover dim — written
      last, and doubled for weight, so it wins whenever both apply. */
   .reg-row.filter-off.filter-off { opacity: .22; }
@@ -2217,8 +2217,8 @@ function fillRegister(register, entries) {
     box.appendChild(rows);
     (family === "Anthropic" ? anthropicColumn : providerColumn).appendChild(box);
   }
-  /* The two pools, named in words with their numbers. The frame draws a pool only
-     while its row is pointed at.
+  /* The two pools, named in words with their numbers. The frame carries only
+     their glyphs until one is pointed at.
      Claude's burst for the Claude pool, Σ for everything Glideslope pools. */
   const pools = [
     SNAP.pool && { pool: SNAP.pool, mark: POOL_MARK, provider: "Claude", cls: "pool",
