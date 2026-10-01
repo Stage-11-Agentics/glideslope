@@ -228,6 +228,12 @@ class SeatLineTests(unittest.TestCase):
         self.assertEqual(glideslope.remote_seats_line(self.fleet()),
                          "**On remote seats:** 6 Grok (Grok) · 2 Codex (Codex) · 1 Claude (Alpha)")
 
+    def test_incomplete_and_stale_together_say_both(self):
+        document = {**seat_file([seat()], age=dt.timedelta(hours=3)), "truncated": True}
+        seats = self.seats(document)
+        self.assertEqual(glideslope.remote_seats_line(seats, plain=True),
+                         "On remote seats (incomplete; stale, as of 3h 0m ago): 1 Grok (Grok)")
+
     def test_a_stale_source_beside_a_fresh_one_is_named_stale(self):
         seats = self.seats(seat_file([seat()]),
                            seat_file([seat(agent="claude", account="Bravo", ticket="B-1")],
@@ -262,7 +268,7 @@ class SeatLineTests(unittest.TestCase):
         self.assertEqual(len(seats["rows"]), 9)
         self.assertEqual(seats["line"],
                          "On remote seats: 6 Grok (Grok) · 2 Codex (Codex) · 1 Claude (Alpha)")
-        self.assertEqual(set(seats["rows"][0]), set(glideslope.SEAT_FIELDS) | {"source", "stale", "partial"})
+        self.assertEqual(set(seats["rows"][0]), set(glideslope.SEAT_FIELDS) | {"source", "stale"})
         self.assertFalse(seats["incomplete"])
         self.assertEqual(seats["sources"][0]["generated_at"], stamp(-dt.timedelta(minutes=2)))
         self.assertIsNone(glideslope.snapshot_payload([], None, None, [], NOW, [], [])["remote_seats"])
@@ -353,17 +359,16 @@ class BeaconSeatTests(unittest.TestCase):
         self.assertEqual(len(carried["seats"][0]["project"]), beacon.SEAT_TEXT_MAX)
         self.assertTrue(carried["truncated"])
         self.assertEqual(carried["live_total"], beacon.SEATS_MAX_ROWS + 50)
-        # Through the reader to the rendered line: a capped count is a floor, never exact.
+        # Through the reader to the rendered line: a capped result is never shown as exact.
         warnings = []
         seats = glideslope.gather_remote_seats(
             dt.datetime.now(dt.timezone.utc), warnings,
             [{"name": "studio", "seats": carried}], path=None)
         self.assertTrue(seats["incomplete"])
-        self.assertTrue(any("lower bounds" in note for note in warnings))
-        self.assertIn(f"{beacon.SEATS_MAX_ROWS}+ Grok (Grok)",
-                      glideslope.remote_seats_line(seats, plain=True))
+        self.assertTrue(any("stopped at a row cap" in note for note in warnings))
+        self.assertIn("(incomplete", glideslope.remote_seats_line(seats, plain=True))
 
-    def test_a_capped_fresh_count_renders_as_a_floor(self):
+    def test_a_capped_fresh_count_renders_as_incomplete(self):
         self.configure()
         now = dt.datetime.now(dt.timezone.utc)
         self.seats.write_text(json.dumps({"generated_at": glideslope.iso_utc(now), "seats": [
@@ -372,9 +377,55 @@ class BeaconSeatTests(unittest.TestCase):
         seats = glideslope.gather_remote_seats(now, [], [{"name": "studio", "seats": carried}],
                                                path=None)
         self.assertEqual(glideslope.remote_seats_line(seats, plain=True),
-                         f"On remote seats: {beacon.SEATS_MAX_ROWS}+ Grok (Grok)")
+                         f"On remote seats (incomplete): {beacon.SEATS_MAX_ROWS} Grok (Grok)")
+        self.assertEqual(glideslope.remote_seats_line(seats),
+                         f"**On remote seats (incomplete):** {beacon.SEATS_MAX_ROWS} Grok (Grok)")
         payload = glideslope.snapshot_payload([], None, None, [], now, [], [], remote_seats=seats)
         self.assertTrue(payload["remote_seats"]["incomplete"])
+
+    def test_cut_endings_mark_the_result_incomplete(self):
+        """501 seats just ended on the launcher's satellite; this machine's older file still
+        has them live. The beacon carries 500 endings, so one older live copy survives: the
+        result must say it is incomplete, never present that survivor as exact."""
+        self.configure()
+        now = dt.datetime.now(dt.timezone.utc)
+        started = glideslope.iso_utc(now - dt.timedelta(hours=1))
+        count = beacon.SEATS_MAX_ROWS + 1
+        ended = glideslope.iso_utc(now - dt.timedelta(minutes=5))
+        self.seats.write_text(json.dumps({"generated_at": glideslope.iso_utc(now), "seats": [
+            seat(ticket=f"E-{i}", started=started, deadline=ended) for i in range(count)]}))
+        carried = self.publish()["seats"]
+        self.assertTrue(carried["truncated"])
+        self.assertEqual((carried["live_total"], carried["ended_total"]), (0, count))
+        local = Path(self._tmp.name) / "local-seats.json"
+        local.write_text(json.dumps({
+            "generated_at": glideslope.iso_utc(now - dt.timedelta(minutes=20)),
+            "seats": [seat(ticket=f"E-{i}", started=started,
+                           deadline=glideslope.iso_utc(now + dt.timedelta(hours=2)))
+                      for i in range(count)]}))
+        seats = glideslope.gather_remote_seats(now, [], [{"name": "studio", "seats": carried}],
+                                               path=local)
+        self.assertEqual(seats["counts"], {"Grok": 1})  # the one ending the cap cut
+        self.assertTrue(seats["incomplete"])
+        self.assertEqual(glideslope.remote_seats_line(seats, plain=True),
+                         "On remote seats (incomplete): 1 Grok (Grok)")
+
+    def test_a_newer_uncapped_copy_does_not_hide_a_capped_source(self):
+        """The fresher, complete source wins every duplicate it shares with a capped one;
+        the capped source still left seats out, so the result stays incomplete."""
+        now = dt.datetime.now(dt.timezone.utc)
+        rows = [seat(ticket=f"D-{i}") for i in range(3)]
+        capped = {"generated_at": glideslope.iso_utc(now - dt.timedelta(minutes=10)),
+                  "seats": rows, "live_total": 900, "truncated": True}
+        complete = {"generated_at": glideslope.iso_utc(now - dt.timedelta(minutes=1)),
+                    "seats": rows}
+        seats = glideslope.gather_remote_seats(
+            now, [], [{"name": "capped", "seats": capped},
+                      {"name": "complete", "seats": complete}], path=None)
+        self.assertTrue(all(row["source"] == "complete" for row in seats["rows"]))
+        self.assertTrue(seats["incomplete"])
+        self.assertEqual(glideslope.remote_seats_line(seats, plain=True),
+                         "On remote seats (incomplete): 3 Grok (Grok)")
 
     def test_an_invalid_generated_at_is_carried_and_read_as_stale(self):
         self.configure()

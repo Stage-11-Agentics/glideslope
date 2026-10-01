@@ -3302,7 +3302,7 @@ def gather_remote_seats(
             warnings.append(f"remote seats from {name}: {undated} row(s) with an unreadable "
                             "deadline kept")
         if truncated:
-            warnings.append(f"remote seats from {name} stopped at a row cap; counts are lower bounds")
+            warnings.append(f"remote seats from {name} stopped at a row cap; remote seats are incomplete")
         stale = age is None or age > SEATS_STALE_SECONDS
         read.append({"name": name, "generated_at": generated_at,
                      "age_seconds": None if age is None else round(max(0.0, age), 1),
@@ -3318,8 +3318,7 @@ def gather_remote_seats(
             key = (row["ticket"], row["role"], row["started"], row["agent"], row["run"])
             if row["ticket"] is None and row["started"] is None:
                 key = ("unkeyed", source["name"], index)  # nothing to match on: never merge it
-            chosen.setdefault(key, {**row, "source": source["name"], "stale": source["stale"],
-                                    "partial": source["truncated"]})
+            chosen.setdefault(key, {**row, "source": source["name"], "stale": source["stale"]})
     rows = sorted((row for row in chosen.values() if not seat_over(row, now)),
                   key=lambda r: (r["stale"], r["account"], r["agent"], r["started"] or ""))
     # Per billed account; a stale seat is counted apart, never as current.
@@ -3335,7 +3334,9 @@ def gather_remote_seats(
         "counts": counts,
         "stale_counts": stale_counts,
         "stale": bool(stale_counts),
-        # True when some source stopped at a row cap: every count is then a lower bound.
+        # One rule: if ANY source stopped at a row cap (live or ended rows), the whole
+        # result is incomplete. A cut live row undercounts; a cut ending can leave an
+        # older live copy standing. Neither can be localized, so neither is tried.
         "incomplete": any(s["truncated"] for s in read),
         "stale_age_seconds": (max(stale_ages) if stale_ages and None not in stale_ages
                               else None),
@@ -3345,23 +3346,18 @@ def gather_remote_seats(
 
 
 def _seat_groups(rows: list[dict[str, Any]]) -> str:
-    """`6 Grok (Grok) · 1 Claude (Alpha)`: by agent kind, the billed account in parentheses.
-
-    A group with any row from a source that stopped at its row cap reads `500+`: the
-    count is a floor, never exact."""
-    groups: dict[tuple[str, str], list[int]] = {}
+    """`6 Grok (Grok) · 1 Claude (Alpha)`: by agent kind, the billed account in parentheses."""
+    groups: dict[tuple[str, str], int] = {}
     for row in rows:
         key = (SEAT_AGENT_NAMES.get(row["agent"], row["agent"]), row["account"])
-        tally = groups.setdefault(key, [0, 0])
-        tally[0] += 1
-        tally[1] |= bool(row.get("partial"))
-    ordered = sorted(groups.items(), key=lambda item: (-item[1][0], item[0]))
-    return " · ".join(f"{count}{'+' if partial else ''} {agent} ({account})"
-                      for (agent, account), (count, partial) in ordered)
+        groups[key] = groups.get(key, 0) + 1
+    ordered = sorted(groups.items(), key=lambda item: (-item[1], item[0]))
+    return " · ".join(f"{count} {agent} ({account})" for (agent, account), count in ordered)
 
 
 def remote_seats_line(seats: dict[str, Any] | None, *, color: bool = False, plain: bool = False) -> str:
-    """One line naming who is on remote seats, or "" when nobody is. Stale input says so.
+    """One line naming who is on remote seats, or "" when nobody is. Stale input says so,
+    and so does an incomplete result (a source stopped at its row cap): `(incomplete)`.
 
     Markdown for the relay, ANSI with `color`, bare text with `plain` (JSON and the views).
     """
@@ -3377,7 +3373,8 @@ def remote_seats_line(seats: dict[str, Any] | None, *, color: bool = False, plai
     if stale:
         tail = (f"{stale_note}: " if fresh else "") + _seat_groups(stale)
         parts.append(paint(tail, "dim", on=color))
-    lead = "On remote seats" + ("" if fresh else f" ({stale_note})") + ":"
+    qualifiers = (["incomplete"] if (seats or {}).get("incomplete") else []) + ([] if fresh else [stale_note])
+    lead = "On remote seats" + (f" ({'; '.join(qualifiers)})" if qualifiers else "") + ":"
     return f"{lead if plain else _bold(lead, color=color)} " + " · ".join(parts)
 
 

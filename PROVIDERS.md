@@ -570,7 +570,7 @@ seats written by whatever launches them.
 | | |
 |---|---|
 | Path | `[seats] file` in the config; none by default |
-| Beacon | a satellite with `[seats] file` set carries the file's rows and its `generated_at` as `seats` in `satellite.json`: live rows (at most 500), then rows that ended within the last day (at most 500), plus `live_total` and, past the cap, `truncated: true` |
+| Beacon | a satellite with `[seats] file` set carries the file's rows and its `generated_at` as `seats` in `satellite.json`: live rows (at most 500), then rows that ended within the last day (at most 500), plus `live_total`, `ended_total` and, when either list hit its cap, `truncated: true` |
 | Output | one line after the login banner, `remote_seats` in `--json`, and the same line under Weekly status in the Detail view |
 | Credential | none. Glideslope only reads the file |
 
@@ -603,9 +603,11 @@ outlive a newer copy that says the seat is over, which is why the beacon carries
 ended in the last day instead of dropping them. A row with neither `ticket` nor `started` has
 nothing to match on and is never merged.
 
-**Caps.** A source marked `truncated` (a beacon past its 500-row cap) left seats out, so every
-group it contributes to renders as a floor (`500+ Grok (Grok)`), `--json` says
-`"incomplete": true`, and a warning names the source.
+**Caps.** One rule: if any source is marked `truncated` (a beacon past its 500-row cap on
+live rows or on ended rows), the whole result is incomplete. A cut live row undercounts, and a
+cut ending can leave an older live copy standing; neither can be pinned to one group. `--json`
+says `"incomplete": true`, the line reads `On remote seats (incomplete): …`, and a warning
+names the source.
 
 **Staleness.** A source whose `generated_at` is more than an hour old is stale: its rows
 stay in `--json` with `"stale": true`, are counted under `stale_counts` rather than
@@ -618,7 +620,7 @@ failure at all, on the beacon) costs only the seats and a warning; it never fail
 or the position.
 
 `--json` carries `remote_seats`: `rows` (live seats only, each with its `source` satellite,
-`stale`, and `partial` when its source was capped), `counts` and `stale_counts` per billed
+and `stale`), `counts` and `stale_counts` per billed
 account, `stale`, `incomplete`, `stale_age_seconds`, `sources` (name, `generated_at`, age,
 `truncated`, live row count), and `line`, the plain-text line. `null` when no
 source is configured. `--skip-seats` leaves it out.

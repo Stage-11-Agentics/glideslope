@@ -29,7 +29,7 @@ number as shared instead of presuming a satellite's burn invisible.
 of that file (a JSON list of coding agents running on cloud sandboxes, written by
 whatever launches them) with the file's own `generated_at`, so the reader can judge its
 age: `{"generated_at": "…Z", "seats": [{"agent": …, "account": …, …}], "live_total": n}`,
-plus `"truncated": true` past the row cap. Rows that ended in the last day ride along so
+plus `"truncated": true` when either list hit the row cap. Rows that ended in the last day ride along so
 the reader can settle duplicates before it drops them (see seat_document). An absent or
 unreadable file omits the key and warns; it never stops the beacon.
 
@@ -128,8 +128,9 @@ def seat_document(path: Path, now: dt.datetime) -> tuple[dict | None, str | None
     (from another source, with a later deadline) is over, so it is never dropped
     here before the reader has settled which copy is newest. A row with no
     readable deadline counts as live (nothing proves it ended). Past the row cap
-    the document says `truncated` and how many live rows there were, so a count
-    is never shown as exact. Only plain values cross: the reader re-validates
+    on either list (a cut ending matters as much as a cut live row: it can leave an
+    older live copy standing) the document says `truncated`, and the reader marks
+    the whole result incomplete. Only plain values cross: the reader re-validates
     every row, since this file is another program's output.
 
     `generated_at` is the file's own when it gives one, the file's mtime only when
@@ -165,8 +166,8 @@ def seat_document(path: Path, now: dt.datetime) -> tuple[dict | None, str | None
             ended.append(row)
     carried = {"generated_at": generated_at,
                "seats": live[:SEATS_MAX_ROWS] + ended[:SEATS_MAX_ROWS],
-               "live_total": len(live)}
-    if len(live) > SEATS_MAX_ROWS:
+               "live_total": len(live), "ended_total": len(ended)}
+    if len(live) > SEATS_MAX_ROWS or len(ended) > SEATS_MAX_ROWS:
         carried["truncated"] = True
     return carried, None
 
@@ -329,7 +330,7 @@ def main() -> int:
     stamp = payload["observed_at"]
     print(f"{stamp} {name}: published {len(snapshot)} account(s): {tally(snapshot)}"
           + (f" · {payload['seats']['live_total']} remote seat(s)"
-             + ("" if not payload["seats"].get("truncated") else f", {SEATS_MAX_ROWS} carried")
+             + (", truncated at the row cap" if payload["seats"].get("truncated") else "")
              if "seats" in payload else "")
           + (f" · {error}" if error else ""))
     for note in notes:
