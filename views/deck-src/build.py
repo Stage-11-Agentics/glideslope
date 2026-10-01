@@ -238,6 +238,8 @@ def build_snapshot(pos: dict) -> dict:
         "local_satellite": next((s["name"] for s in (pos.get("satellites") or [])
                                  if s.get("local")), None),
         "warnings": pos.get("warnings") or [],
+        # One plain line naming who is on remote agent seats; the rows stay in --json.
+        "remote_seats": (pos.get("remote_seats") or {}).get("line") or "",
         "spend": spend_view(),
     }
 

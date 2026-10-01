@@ -10,7 +10,7 @@ This file is for agents developing the repo. `AGENTS.md` is a symlink to it. Use
 |---|---|
 | Language | Python 3.11+ (`tomllib`), standard library only |
 | Optional | Pillow, for the alert image only |
-| Tests | pytest, hermetic, ~255 tests in ~2s |
+| Tests | pytest, hermetic, ~310 tests in ~2s |
 | Entry points | `glideslope`, `glideslope-sampler`, `glideslope-notify`, `claude-account` |
 | Config | `~/.glideslope/config.toml` (see below) |
 
@@ -97,6 +97,7 @@ After editing a template: run the tests, rebuild, and open the built page. Look 
 | `[[satellites]] name, host` | none | other machines with a Claude login, read over ssh from their `~/.glideslope/satellite.json` |
 | `[claude] call_signs` | NATO letters in roster order | roster alias to display name |
 | `[codex] plan`, `[kimi] plan`, `[grok] plan` | none | operator-declared plan labels |
+| `[seats] file` | none | a JSON file of remote agent seats written by whatever launches them; named in the position, carried by the beacon (`PROVIDERS.md`, Remote agent seats) |
 | `[notify] sink` | `macos` | `macos` (osascript banner), `url` (POST JSON), `none` |
 | `[notify] url` | `""` | url sink only |
 | `[notify] percent` | `90` | alert line for windows on the active Claude account |

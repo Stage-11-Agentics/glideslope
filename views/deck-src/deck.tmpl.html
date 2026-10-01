@@ -236,6 +236,11 @@
     padding: 9px 18px; border-top: 1px solid var(--bezel);
     color: var(--status-hot); font: 11px/1.45 var(--mono);
   }
+  /* who is on cloud sandboxes: attribution of burn already in the meters above */
+  .summary-seats {
+    padding: 9px 18px; border-top: 1px solid var(--bezel);
+    color: var(--ink-2); font: 11px/1.45 var(--mono);
+  }
 
   /* ── deck grid ──
      A wide monitor gets one band of three across the top — approach plot,
@@ -1973,6 +1978,7 @@ function render() {
     const summary = document.createElement("section");
     summary.className = "module weekly-summary";
     const warnings = (SNAP.warnings || []).map(esc).filter(Boolean);
+    const seats = esc(SNAP.remote_seats || "");
     summary.innerHTML = `
       <div class="section-head">
         <span class="kicker">${wclass("7 DAY", false)} status</span>
@@ -1982,6 +1988,7 @@ function render() {
         <thead><tr><th>Account</th><th>${wclass("7 DAY", false)}</th><th>Fable</th><th>Next reset at</th></tr></thead>
         <tbody>${rows.join("")}</tbody>
       </table>
+      ${seats ? `<div class="summary-seats">${seats}</div>` : ""}
       ${warnings.length ? `<div class="summary-warning">${warnings.join(" · ")}</div>` : ""}`;
     deck.appendChild(summary);
   }

@@ -23,6 +23,7 @@ If `glideslope` is not on PATH, run it from the clone: `python3 <path-to-clone>/
 | `--no-refresh-claude` | Fast. Use the cached Claude gauge when the position was just checked |
 | `--skip-codex`, `--skip-kimi`, `--skip-grok`, `--skip-openrouter`, `--skip-claude` | Trim providers the user does not have or did not ask about |
 | `--skip-satellites` | Do not read other machines' beacons (offline) |
+| `--skip-seats` | Leave out the remote agent seats line |
 | `--no-switches` | Omit the recent-switch history |
 | `--json` | Machine-readable snapshot, for when you need to compute on the numbers |
 | `--pick` | Name the Claude account new sessions on this machine should use |
@@ -34,9 +35,10 @@ If `glideslope` is not on PATH, run it from the clone: `python3 <path-to-clone>/
 - **Fable** is Anthropic's model tier with its own weekly meter. It is often the binding weekly quota. `none` on a Claude row means the plan does not include it.
 - **● name** marks the machine a Claude account is logged into. `◦ name` is a login held elsewhere. Only Claude rows carry it.
 - **Honesty markers**: `stale` (last-known read), `presumed` (rolled over, nothing could have spent it), `unread` (unknowable), `floor` (the truth is this or higher), `undecided` (a pooled floor below the mark). Never restate one of these as a plain number.
+- **On remote seats**, when present, names the coding agents running on cloud sandboxes and the account each bills: `6 Grok (Grok) · 1 Claude (Alpha)`. Mention it in a position check. That burn is already inside each account's meters, so it says who is spending, never extra usage; never add it to a number. A `stale` part is an old file, not the current fleet: say so.
 - **API-equivalent**, when present, is a valuation at list API prices, never money spent. Say so if you summarize it.
 
-Output order: login banner, Weekly status, All windows, OpenRouter, API-equivalent (only if the user keeps a ledger), Codex reset banks (only when credits are banked), Recent switches. Relay all of it, in order.
+Output order: login banner, On remote seats (only when seats are live), Weekly status, All windows, OpenRouter, API-equivalent (only if the user keeps a ledger), Codex reset banks (only when credits are banked), Recent switches. Relay all of it, in order.
 
 ## Switching Claude accounts
 

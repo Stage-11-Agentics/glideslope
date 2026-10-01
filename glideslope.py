@@ -139,6 +139,11 @@ SATELLITE_SSH_TIMEOUT = 8
 SATELLITE_HOST_PATTERN = __import__("re").compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 SATELLITE_CACHE_SECONDS = 120  # politeness to the tailnet; the beacon itself is 5-minutely
 SATELLITE_BEACON_MAX_AGE_SECONDS = 3600  # older than this, the gauge is a floor, not a read
+# Remote agent seats: a JSON file of coding agents running on cloud sandboxes, written
+# by whatever launches them. Declared as [seats] file; none by default. A satellite's
+# beacon carries the live rows of its own file too. See PROVIDERS.md, Remote agent seats.
+_SEATS_SETTING = _config_table("seats").get("file")
+SEATS_FILE: Path | None = _config_path(_SEATS_SETTING, Path()) if _SEATS_SETTING else None
 SWITCH_LOG = Path.home() / ".claude" / "accounts" / ".switch-log.jsonl"
 # claude-account's own roster: identity only, plus (since 2026-09-11) a dormancy
 # flag it now carries when a subscription lapses. No credential ever lives here.
@@ -264,7 +269,7 @@ def parse_timestamp(value: Any) -> dt.datetime | None:
         if isinstance(value, (int, float)):
             return dt.datetime.fromtimestamp(value, dt.timezone.utc)
         return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(dt.timezone.utc)
-    except (ValueError, TypeError, OSError):
+    except (ValueError, TypeError, OSError, OverflowError):
         return None
 
 
@@ -677,6 +682,9 @@ def read_satellites(
         found.append({
             "name": name,
             "host": host,
+            # The satellite's remote seats, as its own file said them; judged by the
+            # file's generated_at, never by this beacon's age (see gather_remote_seats).
+            "seats": beacon.get("seats") if isinstance(beacon.get("seats"), dict) else None,
             "login_email": beacon.get("login_email") or None,
             "login_emails": [email for email in beacon.get("login_emails") or []
                              if isinstance(email, str) and email],
@@ -3146,6 +3154,207 @@ def render_switches(switches: list[dict[str, Any]], *, color: bool = False) -> s
     return "\n".join([""] + banner_table(f"Recent switches (last {len(switches)})", headers, rows, color=color))
 
 
+# ---------------------------------------------------------------- remote seats
+# Coding agents running on cloud sandboxes, billed to the operator's accounts. Their
+# burn is already inside each account's own meters, so this is attribution (WHO is
+# spending), never usage: nothing here is added to a meter, a pool or a verdict.
+
+SEATS_STALE_SECONDS = 3600         # older than this, a seat file is history, not the fleet
+SEATS_MAX_AGE_SECONDS = 24 * 3600  # older than this, it is dropped with a warning
+SEATS_CLOCK_SKEW_SECONDS = 300     # a file this far in the future has a wrong clock, not a fresh one
+SEAT_FIELDS = ("agent", "model", "effort", "account", "project", "ticket", "role", "run",
+               "started", "deadline")
+SEAT_AGENT_NAMES = {"claude": "Claude", "codex": "Codex", "grok": "Grok", "opencode": "opencode"}
+
+
+def _seat_text(value: Any) -> str | None:
+    """One short line of plain text, or None. A seat file is someone else's output."""
+    if value is None or isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    return " ".join(str(value).split())[:80] or None
+
+
+def seat_time(value: Any) -> dt.datetime | None:
+    """An instant in a seat file: ISO-8601 or epoch seconds. A zoneless time is UTC,
+    the same rule the beacon applies, so a deadline expires at one moment fleet-wide."""
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return dt.datetime.fromtimestamp(value, dt.timezone.utc)
+        moment = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        moment = moment if moment.tzinfo else moment.replace(tzinfo=dt.timezone.utc)
+        return moment.astimezone(dt.timezone.utc)
+    except (ValueError, TypeError, OSError, OverflowError):
+        return None
+
+
+def seat_account(account: str) -> str:
+    """The call-sign a seat bills. A roster alias maps to its name; an email never renders."""
+    name = CLAUDE_CALL_SIGNS.get(account, account)
+    return "unnamed account" if "@" in name else name
+
+
+def live_seats(document: Any, now: dt.datetime) -> tuple[list[dict[str, Any]], int, int]:
+    """The rows of one seat document still running at `now`, how many were malformed,
+    and how many were kept with a deadline nobody could read.
+
+    A row needs an `agent` and an `account`. A row whose deadline has passed is over
+    and is dropped; a missing or unreadable deadline is no proof that it ended.
+    """
+    seats = document.get("seats") if isinstance(document, dict) else None
+    rows: list[dict[str, Any]] = []
+    malformed = undated = 0
+    for item in seats if isinstance(seats, list) else []:
+        if not isinstance(item, dict):
+            malformed += 1
+            continue
+        row = {field: _seat_text(item.get(field)) for field in SEAT_FIELDS}
+        if not row["agent"] or not row["account"]:
+            malformed += 1
+            continue
+        deadline = seat_time(item.get("deadline"))
+        if deadline is not None and deadline <= now:
+            continue
+        if deadline is None and row["deadline"] is not None:
+            undated += 1
+        elif deadline is not None:
+            row["deadline"] = iso_utc(deadline)
+        row["agent"] = row["agent"].lower()
+        row["account"] = seat_account(row["account"])
+        rows.append(row)
+    return rows, malformed, undated
+
+
+def read_seats_file(path: Path) -> dict[str, Any]:
+    """One seat file as {generated_at, seats}. A missing generated_at falls back to the mtime."""
+    try:
+        document = json.loads(path.read_text())
+        mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc)
+    except FileNotFoundError as exc:
+        raise PositionError(f"remote seats: {path} not found") from exc
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PositionError(f"remote seats: {path} is unreadable: {exc}") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("seats"), list):
+        raise PositionError(f"remote seats: {path} has no seats list")
+    if seat_time(document.get("generated_at")) is None:
+        document["generated_at"] = iso_utc(mtime)
+    return document
+
+
+def gather_remote_seats(
+    now: dt.datetime, warnings: list[str], satellites: list[dict[str, Any]],
+    *, path: Path | None = SEATS_FILE,
+) -> dict[str, Any] | None:
+    """Every live remote seat, from this machine's seat file and each satellite's beacon.
+
+    The same seat can reach us twice (the launcher's own satellite publishes the file
+    this machine may also read), so rows are deduped on (ticket, role, started, agent,
+    run) and the copy from the freshest source wins. A source older than an hour, or
+    with a clock that cannot be trusted, is stale: its rows are kept, marked stale,
+    and never counted as current. A source that cannot be read costs itself and a
+    warning, nothing more. None when no source is configured or carries anything.
+    """
+    sources: list[tuple[str, Any]] = []
+    if path is not None:
+        try:
+            sources.append((LOCAL_SATELLITE, read_seats_file(path)))
+        except PositionError as exc:
+            warnings.append(str(exc))
+    sources.extend((satellite["name"], satellite["seats"]) for satellite in satellites
+                   if isinstance(satellite.get("seats"), dict))
+    if not sources:
+        return None
+
+    read: list[dict[str, Any]] = []
+    for name, document in sources:
+        try:
+            generated_at = seat_time(document.get("generated_at"))
+            age = (now - generated_at).total_seconds() if generated_at else None
+            if age is not None and age < -SEATS_CLOCK_SKEW_SECONDS:
+                warnings.append(f"remote seats from {name} are stamped in the future; "
+                                "read as stale")
+                age = None
+            if age is not None and age > SEATS_MAX_AGE_SECONDS:
+                warnings.append(f"remote seats from {name} are "
+                                f"{format_countdown(dt.timedelta(seconds=age))} old; ignored")
+                continue
+            rows, malformed, undated = live_seats(document, now)
+        except Exception as exc:  # noqa: BLE001 — attribution must never take the position down
+            warnings.append(f"remote seats from {name} could not be read: {exc}")
+            continue
+        if malformed:
+            warnings.append(f"remote seats from {name}: {malformed} malformed row(s) skipped")
+        if undated:
+            warnings.append(f"remote seats from {name}: {undated} row(s) with an unreadable "
+                            "deadline kept")
+        stale = age is None or age > SEATS_STALE_SECONDS
+        read.append({"name": name, "generated_at": generated_at,
+                     "age_seconds": None if age is None else round(max(0.0, age), 1),
+                     "stale": stale, "seats": len(rows), "rows": rows})
+
+    chosen: dict[tuple[Any, ...], dict[str, Any]] = {}
+    # Freshest source first, so a duplicate keeps its most current copy.
+    for source in sorted(read, key=lambda s: s["age_seconds"] if s["age_seconds"] is not None
+                         else float("inf")):
+        for index, row in enumerate(source["rows"]):
+            key = (row["ticket"], row["role"], row["started"], row["agent"], row["run"])
+            if row["ticket"] is None and row["started"] is None:
+                key = ("unkeyed", source["name"], index)  # nothing to match on: never merge it
+            chosen.setdefault(key, {**row, "source": source["name"], "stale": source["stale"]})
+    rows = sorted(chosen.values(), key=lambda r: (r["stale"], r["account"], r["agent"],
+                                                  r["started"] or ""))
+    # Per billed account; a stale seat is counted apart, never as current.
+    counts: dict[str, int] = {}
+    stale_counts: dict[str, int] = {}
+    for row in rows:
+        bucket = stale_counts if row["stale"] else counts
+        bucket[row["account"]] = bucket.get(row["account"], 0) + 1
+    # How old the stale part is, by its oldest source; None when any of them cannot say.
+    stale_ages = [s["age_seconds"] for s in read if s["stale"] and s["rows"]]
+    return {
+        "rows": rows,
+        "counts": counts,
+        "stale_counts": stale_counts,
+        "stale": bool(stale_counts),
+        "stale_age_seconds": (max(stale_ages) if stale_ages and None not in stale_ages
+                              else None),
+        "sources": [{key: value for key, value in source.items() if key != "rows"}
+                    for source in read],
+    }
+
+
+def _seat_groups(rows: list[dict[str, Any]]) -> str:
+    """`6 Grok (Grok) · 1 Claude (Alpha)`: by agent kind, the billed account in parentheses."""
+    groups: dict[tuple[str, str], int] = {}
+    for row in rows:
+        key = (SEAT_AGENT_NAMES.get(row["agent"], row["agent"]), row["account"])
+        groups[key] = groups.get(key, 0) + 1
+    ordered = sorted(groups.items(), key=lambda item: (-item[1], item[0]))
+    return " · ".join(f"{count} {agent} ({account})" for (agent, account), count in ordered)
+
+
+def remote_seats_line(seats: dict[str, Any] | None, *, color: bool = False, plain: bool = False) -> str:
+    """One line naming who is on remote seats, or "" when nobody is. Stale input says so.
+
+    Markdown for the relay, ANSI with `color`, bare text with `plain` (JSON and the views).
+    """
+    rows = (seats or {}).get("rows") or []
+    if not rows:
+        return ""
+    fresh = [row for row in rows if not row.get("stale")]
+    stale = [row for row in rows if row.get("stale")]
+    oldest = (seats or {}).get("stale_age_seconds")
+    stale_note = ("stale, age unknown" if oldest is None else
+                  f"stale, as of {format_countdown(dt.timedelta(seconds=oldest))} ago")
+    parts = [_seat_groups(fresh)] if fresh else []
+    if stale:
+        tail = (f"{stale_note}: " if fresh else "") + _seat_groups(stale)
+        parts.append(paint(tail, "dim", on=color))
+    lead = "On remote seats" + ("" if fresh else f" ({stale_note})") + ":"
+    return f"{lead if plain else _bold(lead, color=color)} " + " · ".join(parts)
+
+
 def json_convert(value: Any) -> Any:
     """Recursively render datetimes as ISO-8601 so a payload is always dumpable.
 
@@ -3244,8 +3453,8 @@ def read_provider(
         return accounts
 
 
-def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    """Fetch the full position once: Claude + Codex + Kimi + Grok + OpenRouter + harness spend + switches.
+def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]], list[str], list[dict[str, Any]], dict[str, Any] | None]:
+    """Fetch the full position once: Claude + Codex + Kimi + Grok + OpenRouter + harness spend + switches + remote seats.
 
     The single fetch path, shared by the one-shot report and the --watch loop. The
     watch loop calls this only on its slow refetch tick; between ticks it re-renders
@@ -3342,16 +3551,27 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     roll_forward_windows(accounts, now)
 
     switches = [] if args.no_switches else load_switches()
-    return now, accounts, openrouter, harness_spend, switches, warnings, satellites
+    # Who is spending on cloud sandboxes. Attribution only: never folded into a meter.
+    remote_seats = None
+    if not getattr(args, "skip_seats", False):
+        try:
+            remote_seats = gather_remote_seats(now, warnings, satellites)
+        except Exception as exc:  # noqa: BLE001 — attribution must never take the position down
+            warnings.append(f"remote seats could not be read: {exc}")
+    return now, accounts, openrouter, harness_spend, switches, warnings, satellites, remote_seats
 
 
 def render_report(
     accounts: list[dict[str, Any]], openrouter: dict[str, Any] | None,
     harness_spend: dict[str, Any] | None, switches: list[dict[str, Any]],
     now: dt.datetime, warnings: list[str], *, color: bool,
+    remote_seats: dict[str, Any] | None = None,
 ) -> str:
-    """The full human-facing report: banner + weekly + cross-provider table + spend + resets + switches."""
+    """The full human-facing report: banner + seats + weekly + cross-provider table + spend + resets + switches."""
     output = render_login_banner(accounts, color=color)
+    seats = remote_seats_line(remote_seats, color=color)
+    if seats:
+        output += "\n\n" + seats
     weekly = render_weekly_summary(accounts, openrouter, now, color=color)
     if weekly:
         output += "\n" + weekly
@@ -3387,9 +3607,13 @@ def _draw(out: Any, frame: str) -> None:
 
 def snapshot_payload(accounts: list[dict[str, Any]], openrouter: dict[str, Any] | None,
                      harness_spend: Any, switches: Any, now: dt.datetime,
-                     warnings: list[str], satellites: list[dict[str, Any]]) -> dict[str, Any]:
+                     warnings: list[str], satellites: list[dict[str, Any]],
+                     remote_seats: dict[str, Any] | None = None) -> dict[str, Any]:
     """The whole position as one object: what `--json` prints and what the views are built from."""
     payload = json_ready(accounts, now, warnings)
+    # Attribution, not usage: who is on cloud sandboxes, already inside the meters above.
+    payload["remote_seats"] = json_convert(
+        {**remote_seats, "line": remote_seats_line(remote_seats, plain=True)} if remote_seats else None)
     payload["openrouter"] = openrouter and json_ready([openrouter], now, [])["accounts"][0]
     payload["harness_spend"] = json_convert(harness_spend)
     payload["switches"] = json_convert(switches)
@@ -3473,8 +3697,9 @@ def run_watch(args: argparse.Namespace) -> int:
                 data = gather(args)
                 last_fetch_mono = mono
                 last_fetch_wall = data[0]
-            _, accounts, openrouter, harness_spend, switches, warnings, _sats = data
-            body = render_report(accounts, openrouter, harness_spend, switches, utc_now(), warnings, color=color)
+            _, accounts, openrouter, harness_spend, switches, warnings, _sats, seats = data
+            body = render_report(accounts, openrouter, harness_spend, switches, utc_now(), warnings,
+                                 color=color, remote_seats=seats)
             refetch_in = max(0, int(refetch - (time.monotonic() - last_fetch_mono)))
             _draw(out, body + "\n\n" + _watch_footer(last_fetch_wall, refetch_in, color=color))
             time.sleep(interval)
@@ -3501,6 +3726,7 @@ def resolved_config() -> dict[str, Any]:
         "kimi": {"plan": KIMI_PLAN},
         "grok": {"plan": GROK_PLAN},
         "notify": {"sink": NOTIFY_SINK, "url": NOTIFY_URL, "percent": NOTIFY_PERCENT},
+        "seats": {"file": str(SEATS_FILE) if SEATS_FILE else None},
     }
 
 
@@ -3522,6 +3748,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-satellites", action="store_true",
                         help="do not read other satellites' beacons (offline / tests)")
     parser.add_argument("--skip-harness-spend", action="store_true")
+    parser.add_argument("--skip-seats", action="store_true",
+                        help="do not read remote agent seats (the [seats] file or beacons' seats)")
     parser.add_argument("--no-switches", action="store_true", help="omit the recent-switch history")
     parser.add_argument("--color", choices=("auto", "always", "never"), default="auto",
                         help="ANSI color: auto (TTY only, default), always, or never")
@@ -3558,9 +3786,9 @@ def main(argv: list[str] | None = None) -> int:
         # Only this machine's logins can be launched into, and a launch is waiting
         # on the answer — so read nothing that cannot change it.
         args.skip_codex = args.skip_kimi = args.skip_grok = args.skip_openrouter = True
-        args.skip_harness_spend = args.skip_satellites = True
+        args.skip_harness_spend = args.skip_satellites = args.skip_seats = True
 
-    now, accounts, openrouter, harness_spend, switches, warnings, satellites = gather(args)
+    now, accounts, openrouter, harness_spend, switches, warnings, satellites, seats = gather(args)
 
     if args.pick:
         pick = pick_account(accounts, now)
@@ -3570,14 +3798,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.open:
         return open_view(args.open, snapshot_payload(accounts, openrouter, harness_spend,
-                                                     switches, now, warnings, satellites))
+                                                     switches, now, warnings, satellites, seats))
 
     if args.json:
         print(json.dumps(snapshot_payload(accounts, openrouter, harness_spend, switches,
-                                          now, warnings, satellites), indent=2))
+                                          now, warnings, satellites, seats), indent=2))
     else:
         print(render_report(accounts, openrouter, harness_spend, switches, now, warnings,
-                            color=color_enabled(args.color)))
+                            color=color_enabled(args.color), remote_seats=seats))
     return 0 if (accounts or openrouter) else 1
 
 
