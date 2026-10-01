@@ -4009,7 +4009,8 @@ def read_provider(
             return []
         for account in accounts:
             account["stale"] = True
-        warnings.append(f"{exc}; showing the last known read from {iso_utc(observed_at)}")
+        warnings.append(f"{exc}; showing the last known read from "
+                        f"{observed_at.astimezone(LOCAL_TZ).strftime('%a %b %-d, %-I:%M %p %Z')}")
         return accounts
 
 
