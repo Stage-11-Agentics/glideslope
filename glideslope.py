@@ -102,6 +102,28 @@ def _config_timezone(name: Any) -> dt.tzinfo:
         except Exception:  # noqa: BLE001 — an unknown zone name falls back, loudly
             print(f"glideslope: unknown timezone {name!r} in config; using the system zone",
                   file=sys.stderr)
+    return _system_timezone()
+
+
+def _system_timezone() -> dt.tzinfo:
+    """The machine's own zone, by IANA name when it has one.
+
+    A named zone keeps daylight saving right for a reset a week out and gives the
+    views a name to format in; a bare UTC offset only fits the current instant.
+    """
+    candidates = [os.environ.get("TZ", "").lstrip(":")]
+    try:
+        target = os.path.realpath("/etc/localtime")
+        if "zoneinfo/" in target:
+            candidates.append(target.split("zoneinfo/", 1)[1])
+    except OSError:
+        pass
+    for candidate in candidates:
+        if candidate:
+            try:
+                return ZoneInfo(candidate)
+            except Exception:  # noqa: BLE001 — not an IANA name; try the next source
+                continue
     return dt.datetime.now().astimezone().tzinfo or dt.timezone.utc
 
 
@@ -3861,7 +3883,7 @@ def resolved_config() -> dict[str, Any]:
         "config_present": CONFIG_PATH.exists(),
         "store": str(STORE_DIR),
         "keys_file": str(KEYS_FILE),
-        "timezone": str(LOCAL_TZ),
+        "timezone": getattr(LOCAL_TZ, "key", None) or str(LOCAL_TZ),
         "satellite": LOCAL_SATELLITE,
         "satellites": list(REMOTE_SATELLITES),
         "claude": {"call_signs": dict(CLAUDE_CALL_SIGNS), "plan": CLAUDE_PLAN},

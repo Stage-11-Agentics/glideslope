@@ -537,6 +537,15 @@ class ClaudeTests(unittest.TestCase):
         self.assertEqual(resolved["satellites"], [{"name": "studio", "host": "studio"}])
         self.assertEqual(resolved["notify"]["sink"], "url")
 
+    def test_no_configured_zone_defers_to_the_system_zone_by_name(self):
+        with mock.patch.dict("os.environ", {"TZ": "Europe/Berlin"}):
+            zone = glideslope._config_timezone(None)
+        self.assertEqual(getattr(zone, "key", None), "Europe/Berlin")
+        # a named zone keeps daylight saving right across a reset a week out
+        summer = dt.datetime(2026, 10, 20, 12, tzinfo=dt.timezone.utc).astimezone(zone)
+        winter = dt.datetime(2026, 10, 27, 12, tzinfo=dt.timezone.utc).astimezone(zone)
+        self.assertNotEqual(summer.utcoffset(), winter.utcoffset())
+
     def test_charlie_is_marked_active_and_renders_in_the_weekly_summary(self):
         accounts = glideslope.normalize_claude(claude_snapshot_with_charlie(), NOW)
         self.assertEqual(glideslope.active_claude_display(accounts), "Charlie")
