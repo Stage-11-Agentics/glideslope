@@ -1063,6 +1063,10 @@ const loginsOf = account => (account.logins && account.logins.length) ? account.
 const isHere = account => LOCAL_SAT
   ? loginsOf(account).includes(LOCAL_SAT) : Boolean(account.active);
 const isThere = account => loginsOf(account).some(name => name !== LOCAL_SAT);
+/* Login is drawn for Anthropic accounts only (operator, 2026-10-02): Codex, Kimi
+   and Grok are always logged in, so marking them says nothing. */
+const hereMark = account => account.provider === "Claude" && isHere(account);
+const thereMark = account => account.provider === "Claude" && isThere(account);
 const loginMarks = account => loginsOf(account).map(name =>
   (LOCAL_SAT ? name === LOCAL_SAT : true)
     ? `<span class="active">● ${escapeHTML(name)}</span>`
@@ -1401,7 +1405,7 @@ function accountRowHTML(account, window) {
   const accountName = account.provider === "Claude"
     ? `Claude · ${account.display}` : account.display;
   return `
-    <tr class="${isHere(account) ? "logged-in" : ""}${isThere(account) ? " remote-login" : ""}"
+    <tr class="${hereMark(account) ? "logged-in" : ""}${thereMark(account) ? " remote-login" : ""}"
         data-provider="${escapeHTML(account.provider)}"
         data-account="${escapeHTML(account.display)}"
         data-window="${escapeHTML(window.meter_id)}"
@@ -1772,7 +1776,9 @@ function renderPlot() {
     const capped = entry.window.used_percent >= 99.5;
     const colour = capped ? "var(--significant)" : colorFor(entry.account.display);
     const markId = `${entry.account.display}/${entry.window.meter_id}`;
-    const loggedIn = isHere(entry.account), remote = isThere(entry.account);
+    /* one ring only: the Anthropic account's 7 DAY mark, never its Fable or 5 HOUR */
+    const budgetMark = !entry.session && !entry.fable;
+    const loggedIn = budgetMark && hereMark(entry.account), remote = budgetMark && thereMark(entry.account);
     const group = mk("g", { class: `ils-mark ${entry.session ? "session" : "weekly"}`
       + (entry.fable ? " fable" : "")
       + (entry.lastKnown ? " last-known" : "")
@@ -2195,8 +2201,8 @@ function fillRegister(register, entries) {
       const row = document.createElement("div");
       row.className = `reg-row ${entry.session ? "session" : "weekly"}`
         + (entry.fable ? " fable" : "")
-        + (isHere(entry.account) ? " logged-in" : "")
-        + (isThere(entry.account) ? " remote-login" : "");
+        + (hereMark(entry.account) ? " logged-in" : "")
+        + (thereMark(entry.account) ? " remote-login" : "");
       row.style.setProperty("--acc", colorFor(entry.account.display));
       row.dataset.mark = `${entry.account.display}/${entry.window.meter_id}`;
       row.dataset.provider = entry.account.provider;

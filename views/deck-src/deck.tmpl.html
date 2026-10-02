@@ -1345,6 +1345,10 @@ const loginsOf = p => (p.logins && p.logins.length) ? p.logins
   : (p.active && LOCAL_SAT) ? [LOCAL_SAT] : (p.active ? ["here"] : []);
 const isHere = p => LOCAL_SAT ? loginsOf(p).includes(LOCAL_SAT) : Boolean(p.active);
 const isThere = p => loginsOf(p).some(s => s !== LOCAL_SAT);
+/* Login is drawn for Anthropic accounts only (operator, 2026-10-02): Codex, Kimi
+   and Grok are always logged in, so marking them says nothing. */
+const hereMark = p => p.provider === "Claude" && isHere(p);
+const thereMark = p => p.provider === "Claude" && isThere(p);
 const loginChips = (p, cls = "login-chip") => loginsOf(p).map(s =>
   (LOCAL_SAT ? s === LOCAL_SAT : true)
     ? `<span class="${cls}">● ${esc(s)}</span>`
@@ -2136,7 +2140,7 @@ function render() {
         : `in ${fmtDur(leftMs(w))}<small>${fmtZoned(endOf(w))}</small>`;
       const account = esc(p.provider === "Claude" ? `Claude · ${p.display}` : p.display);
       rows.push(`
-        <tr data-weekly="${esc(p.display)}" data-here="${isHere(p)}" data-there="${isThere(p)}">
+        <tr data-weekly="${esc(p.display)}" data-here="${hereMark(p)}" data-there="${thereMark(p)}">
           <td class="weekly-account">${account}${loginChips(p, "weekly-login")}</td>
           <td class="weekly-read num">${value}</td>
           <td class="weekly-read num${f ? "" : " nil"}">${fable}</td>
@@ -2262,7 +2266,7 @@ function render() {
       return `
       <div class="lrow num" data-win="${esc(winKey(p, w))}" data-provider="${esc(p.provider)}"
            data-account="${esc(p.display)}" data-window="${esc(w.id)}" data-active="${Boolean(p.active)}"
-           data-here="${isHere(p)}" data-there="${isThere(p)}"
+           data-here="${hereMark(p)}" data-there="${thereMark(p)}"
            data-stale="${Boolean(p.stale)}" data-anchored="${Boolean(w.resets)}"
            style="--acc: var(--${ck(p.display)}); --hot: var(--${ck(p.display)}-hot)">
         <span class="key"></span>
@@ -3054,7 +3058,7 @@ function render() {
          the trail's own light (currentColor), not a borrowed one. */
       mk("path", { d, class: `ils-trail ${m.session ? "session" : "weekly"}${m.w.id === "weekly_fable" ? " fable" : ""}`,
         "data-mark": `${m.p.display}/${m.w.id}`, "data-provider": m.p.provider,
-        "data-facet": m.facet, "data-here": String(isHere(m.p)), "data-there": String(isThere(m.p)),
+        "data-facet": m.facet, "data-here": String(hereMark(m.p)), "data-there": String(thereMark(m.p)),
         stroke: `var(--${ck(m.p.display)})`, style: `color:var(--${ck(m.p.display)})` });
     }
     /* ── the checkered drop ──
@@ -3107,7 +3111,9 @@ function render() {
       const capped = t.m.w.pct >= 99.5;
       const colour = capped ? "var(--status-capped)" : `var(--${ck(t.m.p.display)}-hot)`;
       const markId = `${t.m.p.display}/${t.m.w.id}`;
-      const loggedIn = isHere(t.m.p), remote = isThere(t.m.p);
+      /* one ring only: the Anthropic account's 7 DAY mark, never its Fable or 5 HOUR */
+      const budgetMark = !t.m.session && t.m.w.id !== "weekly_fable";
+      const loggedIn = budgetMark && hereMark(t.m.p), remote = budgetMark && thereMark(t.m.p);
       const g = mk("g", { class: `ils-mark ${t.m.session ? "session" : "weekly"}` +
         (t.m.lastKnown ? " last-known" : "") + (t.m.presumed ? " presumed" : ""),
         "data-mark": markId, "data-provider": t.m.p.provider,
@@ -3327,9 +3333,9 @@ function render() {
         row.dataset.facet = t.m.facet;
         /* the logged-in account reads brighter here for the same reason its
            mark wears a ring: one bright name, in every place you might look */
-        row.dataset.active = String(isHere(t.m.p));
-        row.dataset.here = String(isHere(t.m.p));
-        row.dataset.there = String(isThere(t.m.p));
+        row.dataset.active = String(hereMark(t.m.p));
+        row.dataset.here = String(hereMark(t.m.p));
+        row.dataset.there = String(thereMark(t.m.p));
         row.style.setProperty("--acc", `var(--${ck(t.m.p.display)})`);
         /* the mark sits on the window's own clock; its deviation is read from
            the budget, which after an early reset starts at the reset */
