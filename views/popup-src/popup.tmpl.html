@@ -1702,8 +1702,13 @@ function renderPlot() {
   mk("path", { d: "M0,0 L6,3 L0,6 Z", fill: "var(--significant)" }, null, arrow);
 
   mk("rect", { x: M.l, y: M.t, width: W, height: H, rx: 4, class: "ils-frame" });
-  for (const value of [25, 50, 75]) {
+  /* The vertical rules are days: a 7 DAY window is seven 24-hour columns, the
+     frame's right edge closing the seventh (operator, 2026-10-01). */
+  for (let day = 1; day < 7; day++) {
+    const value = day / 7 * 100;
     mk("line", { x1: x(value), x2: x(value), y1: M.t, y2: M.t + H, class: "ils-grid" });
+  }
+  for (const value of [25, 50, 75]) {
     mk("line", { x1: M.l, x2: M.l + W, y1: y(value), y2: y(value), class: "ils-grid" });
   }
   mk("line", { x1: x(0), y1: y(0), x2: x(100), y2: y(100), class: "ils-beam-glow" });
