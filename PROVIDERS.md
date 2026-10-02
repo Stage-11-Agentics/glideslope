@@ -582,6 +582,7 @@ this repo.
 | Path | `<store>/spend.json` |
 | Keys the views read | `generated_at`, `collected_at`, `first_request_at`, `attribution`, `totals.{d1,d7,d30,all}`, `machines`, `accounts[]`, `leverage`, `providers`, `meters["<display>/<meter_id>"]`, `daily.{days,series}` (see `spend_view()` in `views/deck-src/build.py`) |
 | Per meter | every anchored meter's current window, priced from the same records: the popup's $ column. The Fable row counts Fable only |
+| Per model | `model_tokens[]`: one row per `(provider, model)` with `priced` and `{d1,d7,d30,all}`, each `{tokens, input, cache_read, cache_write, output, reasoning, requests, usd}`. `reasoning` is the thinking share of `output`, never added to `tokens`. Drawn only in the Detail view's Tokens by model band, with no dollars; a model with no list price still counts there (`priced: false`) |
 | Credential | none. Glideslope only reads the file |
 
 **$ / 1%** divides the window's spend up to the meter's last read by that percent, so a stale

@@ -86,6 +86,8 @@ def spend_view(path: Path = SPEND_PATH) -> dict | None:
             "providers": data.get("providers") if isinstance(data.get("providers"), dict) else {},
             "meters": data.get("meters") if isinstance(data.get("meters"), dict) else {},
             "daily": daily,
+            "model_tokens": [m for m in data.get("model_tokens") or []
+                             if isinstance(m, dict) and isinstance(m.get("d30"), dict)],
         }
     except Exception:  # noqa: BLE001 — any shape of broken file degrades to "no ledger"
         return None

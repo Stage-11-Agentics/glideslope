@@ -253,16 +253,16 @@
     gap: 14px; padding: 16px 22px 10px;
     min-height: calc(100vh - 150px);
   }
-  .horizon-mod { grid-column: 1 / 4; grid-row: 4; }
-  .switch-mod  { grid-column: 1 / 4; grid-row: 5; }
+  .horizon-mod { grid-column: 1 / 4; grid-row: 5; }
+  .switch-mod  { grid-column: 1 / 4; grid-row: 6; }
   /* expanded, the plot takes two thirds, the register keeps the third column,
      and the weekly read steps down a band */
   .deck.plot-expanded .plot-pane { grid-column: 1 / 3; }
   .deck.plot-expanded .plot-side { grid-column: 3; }
   .deck.plot-expanded .weekly-summary { grid-column: 1 / 4; grid-row: 2; }
   .deck.plot-expanded .ledger { grid-row: 3; }
-  .deck.plot-expanded .horizon-mod { grid-row: 5; }
-  .deck.plot-expanded .switch-mod { grid-row: 6; }
+  .deck.plot-expanded .horizon-mod { grid-row: 6; }
+  .deck.plot-expanded .switch-mod { grid-row: 7; }
   /* ── API-equivalent spend ──
      What the tokens behind the meters would cost at list API prices. A full-width
      band under the ledger: totals, then who paid (per account, this window), then
@@ -304,6 +304,35 @@
   .spend-chart .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
   .spend-foot { grid-column: 1 / -1; border-top: 1px solid var(--bezel); padding: 8px 18px; color: var(--muted-2); font: 10px/1.5 var(--mono); }
   .spend-empty { padding: 18px; color: var(--muted); font: 11px/1.5 var(--mono); }
+  /* ── Tokens by model ──
+     Token statistics per exact model id, from the same ledger: every kind of
+     token the source reports, for one horizon at a time. Detail view only. The
+     rows are every model seen in 30 days, so switching horizon never adds or
+     drops a row; a model quiet in the shorter horizon reads "—". */
+  .model-mod { grid-column: 1 / 4; grid-row: 4; overflow: hidden; }
+  .deck.plot-expanded .model-mod { grid-row: 5; }
+  .model-mod .section-head .plot-switches { margin-left: auto; }
+  .model-mod .plot-switch { min-width: 52px; }
+  .model-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
+  .model-table th, .model-table td { padding: 7px 12px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .model-table th:first-child, .model-table td:first-child { text-align: left; width: 22%; }
+  .model-table th.share, .model-table td.share { width: 15%; }
+  .model-table th { color: var(--muted); font: 640 9.5px/1.2 var(--mono); letter-spacing: .13em; text-transform: uppercase; }
+  .model-table td { font: 12.5px/1.2 var(--mono); color: var(--ink-2, var(--ink)); }
+  .model-table tbody tr { border-top: 1px solid rgba(29,40,54,.55); }
+  .model-table tbody tr:hover { background: var(--panel-2); }
+  .model-table td.mname { font: 600 12.5px/1.2 var(--mono); color: var(--ink); }
+  .model-table td.mname i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; background: var(--acc); vertical-align: 0; }
+  .model-table td.mname small { color: var(--muted-2); font: 9.5px/1 var(--mono); letter-spacing: .08em; margin-left: 6px; text-transform: uppercase; }
+  .model-table tr.prov td { border-top: 1px solid var(--bezel-bright); color: var(--ink); font-weight: 700; }
+  .model-table tr.prov td.mname { font: 700 12.5px/1.2 var(--sans); }
+  .model-table tr.quiet td { color: var(--muted-2); }
+  .model-table .nil { color: var(--muted-2); }
+  .model-table td small.of { color: var(--muted); font-size: 10px; margin-left: 4px; }
+  .model-share { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .model-share .bar { flex: 1 1 auto; max-width: 110px; height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+  .model-share .bar b { display: block; height: 100%; background: var(--acc); }
+  .model-share span { min-width: 44px; }
   @media (max-width: 1650px) {
     .spend-body { grid-template-columns: 1fr; }
     .spend-tiles { border-right: 0; border-bottom: 1px solid var(--bezel); }
@@ -1433,6 +1462,13 @@ function initialPlotTheater() {
 
 let NOW = Date.now();
 let firstRender = true;
+/* Tokens by model: the horizon on show, remembered per viewer */
+const MODEL_TOKENS_KEY = "glideslope.modelTokensHorizon";
+let modelTokensHorizon = "d7";
+try {
+  const stored = localStorage.getItem(MODEL_TOKENS_KEY);
+  if (["d1", "d7", "d30"].includes(stored)) modelTokensHorizon = stored;
+} catch { /* file:// storage may be unavailable; 7d holds */ }
 /* every early reset this page has already drawn once: the plot is rebuilt every
    minute and on every expand, and a cloth that unfurled again each time would be
    a clock ticking where an event should simply hang */
@@ -2472,6 +2508,75 @@ function render() {
     deck.appendChild(el);
   }
 
+  /* Tokens by model — the ledger's model_tokens: every exact model id, every kind
+     of token its source reports, one horizon at a time. Token statistics only:
+     no dollars here, and unpriced models are counted like any other. */
+  if (SNAP.spend && Array.isArray(SNAP.spend.model_tokens) && SNAP.spend.model_tokens.length) {
+    const M = SNAP.spend.model_tokens;
+    const el = document.createElement("section");
+    el.className = "module model-mod";
+    const HORIZONS = [["d1", "24h"], ["d7", "7d"], ["d30", "30d"]];
+    const PROVIDERS = ["Claude", "Codex", "Grok", "Kimi"];
+    const provVar = n => ({ Claude: "--alpha", Codex: "--codex", Kimi: "--kimi", Grok: "--grok" })[n] || "--muted-2";
+    const tok = v => !v ? `<span class="nil">—</span>`
+      : v >= 1e9 ? `${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `${(v / 1e6).toFixed(1)}M`
+      : v >= 1e3 ? `${(v / 1e3).toFixed(1)}k` : `${v}`;
+    const count = v => !v ? `<span class="nil">—</span>` : v.toLocaleString("en-US");
+    const pct = (a, b) => b ? `${(100 * a / b).toFixed(a / b < 0.1 ? 1 : 0)}%` : "";
+    const draw = () => {
+      const h = modelTokensHorizon;
+      const rows = M.filter(m => m.d30 && m.d30.tokens);
+      const grand = rows.reduce((t, m) => t + ((m[h] && m[h].tokens) || 0), 0);
+      const providers = [...PROVIDERS.filter(p => rows.some(m => m.provider === p)),
+                         ...new Set(rows.map(m => m.provider).filter(p => !PROVIDERS.includes(p)))];
+      const line = (name, b, acc, cls, tag) => {
+        b = b || {};
+        const of = b.reasoning && b.output ? `<small class="of">${pct(b.reasoning, b.output)}</small>` : "";
+        const share = grand && b.tokens ? b.tokens / grand : 0;
+        return `<tr class="${cls}${b.tokens ? "" : " quiet"}" style="--acc: var(${acc})">
+          <td class="mname" title="${esc(name)}"><i></i>${esc(name)}${tag || ""}</td>
+          <td>${tok(b.tokens)}</td><td>${tok(b.input)}</td><td>${tok(b.cache_read)}</td>
+          <td>${tok(b.cache_write)}</td><td>${tok(b.output)}</td><td>${tok(b.reasoning)}${of}</td>
+          <td>${count(b.requests)}</td>
+          <td class="share"><div class="model-share"><div class="bar"><b style="width:${(share * 100).toFixed(1)}%"></b></div><span>${share ? pct(b.tokens, grand) : `<span class="nil">—</span>`}</span></div></td>
+        </tr>`;
+      };
+      const body = providers.map(p => {
+        const own = rows.filter(m => m.provider === p)
+          .sort((a, b) => ((b[h] && b[h].tokens) || 0) - ((a[h] && a[h].tokens) || 0) || b.d30.tokens - a.d30.tokens);
+        const sum = {};
+        for (const m of own) for (const k of ["tokens", "input", "cache_read", "cache_write", "output", "reasoning", "requests"])
+          sum[k] = (sum[k] || 0) + ((m[h] && m[h][k]) || 0);
+        const head = line(`${p} · ${own.length} model${own.length === 1 ? "" : "s"}`, sum, provVar(p), "prov");
+        return head + own.map(m => line(m.model, m[h], provVar(p), "",
+          m.priced === false ? `<small title="no list price yet: counted here, left out of the API-equivalent ledger">unpriced</small>` : "")).join("");
+      }).join("");
+      const switches = HORIZONS.map(([k, label]) => `<button class="plot-switch" type="button" data-h="${k}"
+          aria-pressed="${k === h}" style="--sw: var(--bezel-bright)">${label}</button>`).join("");
+      el.innerHTML = `
+        <div class="section-head">
+          <span class="kicker">Tokens by model · every exact model id</span>
+          <span class="section-note">${tok(grand)} tokens in ${HORIZONS.find(x => x[0] === h)[1]} · from the spend ledger</span>
+          <div class="plot-switches">${switches}</div>
+        </div>
+        <table class="model-table">
+          <thead><tr><th>Model</th><th title="input + cache read + cache write + output">Total</th>
+            <th title="uncached input">Input</th><th>Cache read</th><th>Cache write</th><th>Output</th>
+            <th title="thinking tokens, part of output, where the source reports them">Reasoning</th>
+            <th title="model requests (Grok: model calls)">Calls</th><th class="share">Share</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+        <div class="spend-foot">Total = input + cache read + cache write + output. Reasoning is the thinking share of output where the source reports it (Codex, Grok, and Claude when the API breaks it out), never added on top. Claude and Codex come from Claude Code and Codex transcripts on every collected machine; Grok from the Grok CLI's own usage on this machine; Kimi from harness telemetry. claude.ai, mobile and remote Grok seats are not in these counts.</div>`;
+      for (const b of el.querySelectorAll(".plot-switch")) b.addEventListener("click", () => {
+        modelTokensHorizon = b.dataset.h;
+        try { localStorage.setItem(MODEL_TOKENS_KEY, modelTokensHorizon); } catch { /* storage may be unavailable */ }
+        draw();
+      });
+    };
+    draw();
+    deck.appendChild(el);
+  }
+
   /* the two time-ordered panels, each its own full-width band under the ledger */
   const horizonMod = document.createElement("section");
   horizonMod.className = "module rail-mod horizon-mod";
@@ -3249,7 +3354,7 @@ function render() {
      Placement is CSS, but the DOM has to tell the same story — it is what a
      reader and the tab key follow. */
   for (const selector of [".plot-wrap", ".weekly-summary", ".full-state", ".spend-mod",
-                         ".horizon-mod", ".switch-mod"]) {
+                         ".model-mod", ".horizon-mod", ".switch-mod"]) {
     const module = deck.querySelector(selector);
     if (module) deck.appendChild(module);
   }
