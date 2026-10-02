@@ -326,7 +326,9 @@
   .model-table td.mname small { color: var(--muted-2); font: 9.5px/1 var(--mono); letter-spacing: .08em; margin-left: 6px; text-transform: uppercase; }
   .model-table tr.prov td { border-top: 1px solid var(--bezel-bright); color: var(--ink); font-weight: 700; }
   .model-table tr.prov td.mname { font: 700 12.5px/1.2 var(--sans); }
-  .model-table tr.quiet td { color: var(--muted-2); }
+  .model-table tr.ver td.mname { padding-left: 34px; font-weight: 450; color: var(--ink-2, var(--ink)); }
+  .model-table tr.ver td.mname i { opacity: .55; }
+  .model-table tr.quiet td, .model-table tr.quiet td.mname { color: var(--muted-2); }
   .model-table .nil { color: var(--muted-2); }
   .model-table td small.of { color: var(--muted); font-size: 10px; margin-left: 4px; }
   .model-share { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
@@ -2522,6 +2524,22 @@ function render() {
       : v >= 1e9 ? `${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `${(v / 1e6).toFixed(1)}M`
       : v >= 1e3 ? `${(v / 1e3).toFixed(1)}k` : `${v}`;
     const count = v => !v ? `<span class="nil">—</span>` : v.toLocaleString("en-US");
+    const KINDS = ["tokens", "input", "cache_read", "cache_write", "output", "reasoning", "requests"];
+    const title = w => w.split(/[-_ ]+/).filter(Boolean).map(x => x[0].toUpperCase() + x.slice(1)).join(" ");
+    /* An exact model id splits into the model and its version, for display only:
+       claude-opus-5-5 → Opus · 5.5, gpt-6.1-sol → Sol · 6.1, grok-4.7-build-fast →
+       Build Fast · 4.7. An id no pattern knows is its own model with no version. */
+    const splitId = id => {
+      const bare = String(id).replace(/^[\w-]+\//, "").replace(/\[.*\]$/, "");
+      let m;
+      if ((m = bare.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/)))
+        return [title(m[1]), m[3] ? `${m[2]}.${m[3]}` : m[2]];
+      if ((m = bare.match(/^gpt-(\d+(?:\.\d+)?)(?:-(.+))?$/)))
+        return [m[2] ? title(m[2]) : "GPT", m[1]];
+      if ((m = bare.match(/^grok-(\d+(?:\.\d+)?)(?:-(.+))?$/)))
+        return [m[2] ? title(m[2]) : "Grok", m[1]];
+      return [bare, ""];
+    };
     const pct = (a, b) => b ? `${(100 * a / b).toFixed(a / b < 0.1 ? 1 : 0)}%` : "";
     const draw = () => {
       const h = modelTokensHorizon;
@@ -2529,33 +2547,59 @@ function render() {
       const grand = rows.reduce((t, m) => t + ((m[h] && m[h].tokens) || 0), 0);
       const providers = [...PROVIDERS.filter(p => rows.some(m => m.provider === p)),
                          ...new Set(rows.map(m => m.provider).filter(p => !PROVIDERS.includes(p)))];
-      const line = (name, b, acc, cls, tag) => {
+      const line = (name, b, acc, cls, tag, tip) => {
         b = b || {};
         const of = b.reasoning && b.output ? `<small class="of">${pct(b.reasoning, b.output)}</small>` : "";
         const share = grand && b.tokens ? b.tokens / grand : 0;
         return `<tr class="${cls}${b.tokens ? "" : " quiet"}" style="--acc: var(${acc})">
-          <td class="mname" title="${esc(name)}"><i></i>${esc(name)}${tag || ""}</td>
+          <td class="mname" title="${esc(tip || name)}"><i></i>${esc(name)}${tag || ""}</td>
           <td>${tok(b.tokens)}</td><td>${tok(b.input)}</td><td>${tok(b.cache_read)}</td>
           <td>${tok(b.cache_write)}</td><td>${tok(b.output)}</td><td>${tok(b.reasoning)}${of}</td>
           <td>${count(b.requests)}</td>
           <td class="share"><div class="model-share"><div class="bar"><b style="width:${(share * 100).toFixed(1)}%"></b></div><span>${share ? pct(b.tokens, grand) : `<span class="nil">—</span>`}</span></div></td>
         </tr>`;
       };
+      /* provider → model → version: a version is every exact id that splits the same
+         way (a dated or prefixed alias joins its plain id); a model with one version
+         is one row, "Fable 5.1" */
+      const add = (into, b) => { for (const k of KINDS) into[k] = (into[k] || 0) + ((b && b[k]) || 0); };
+      const heavier = (a, b) => (b.cur.tokens || 0) - (a.cur.tokens || 0) || (b.d30 || 0) - (a.d30 || 0);
+      const unpricedTag = `<small title="no list price yet: counted here, left out of the API-equivalent ledger">unpriced</small>`;
       const body = providers.map(p => {
-        const own = rows.filter(m => m.provider === p)
-          .sort((a, b) => ((b[h] && b[h].tokens) || 0) - ((a[h] && a[h].tokens) || 0) || b.d30.tokens - a.d30.tokens);
+        const families = new Map();
+        for (const m of rows.filter(r => r.provider === p)) {
+          const [fam, ver] = splitId(m.model);
+          if (!families.has(fam)) families.set(fam, { name: fam, versions: new Map(), cur: {}, d30: 0 });
+          const f = families.get(fam);
+          if (!f.versions.has(ver)) f.versions.set(ver, { ver, ids: [], cur: {}, d30: 0, unpriced: false });
+          const v = f.versions.get(ver);
+          v.ids.push(m.model); add(v.cur, m[h]); v.d30 += m.d30.tokens; v.unpriced ||= m.priced === false;
+          add(f.cur, m[h]); f.d30 += m.d30.tokens;
+        }
+        const fams = [...families.values()].sort(heavier);
         const sum = {};
-        for (const m of own) for (const k of ["tokens", "input", "cache_read", "cache_write", "output", "reasoning", "requests"])
-          sum[k] = (sum[k] || 0) + ((m[h] && m[h][k]) || 0);
-        const head = line(`${p} · ${own.length} model${own.length === 1 ? "" : "s"}`, sum, provVar(p), "prov");
-        return head + own.map(m => line(m.model, m[h], provVar(p), "",
-          m.priced === false ? `<small title="no list price yet: counted here, left out of the API-equivalent ledger">unpriced</small>` : "")).join("");
+        for (const f of fams) add(sum, f.cur);
+        const nVersions = fams.reduce((t, f) => t + f.versions.size, 0);
+        let html = line(`${p} · ${fams.length} model${fams.length === 1 ? "" : "s"}${nVersions > fams.length ? `, ${nVersions} versions` : ""}`,
+          sum, provVar(p), "prov");
+        for (const f of fams) {
+          const vers = [...f.versions.values()].sort(heavier);
+          const label = v => v.ver ? `${f.name} ${v.ver}` : f.name;
+          if (vers.length === 1) {
+            html += line(label(vers[0]), vers[0].cur, provVar(p), "fam", vers[0].unpriced ? unpricedTag : "", vers[0].ids.join(", "));
+            continue;
+          }
+          html += line(`${f.name} · ${vers.length} versions`, f.cur, provVar(p), "fam");
+          for (const v of vers)
+            html += line(label(v), v.cur, provVar(p), "ver", v.unpriced ? unpricedTag : "", v.ids.join(", "));
+        }
+        return html;
       }).join("");
       const switches = HORIZONS.map(([k, label]) => `<button class="plot-switch" type="button" data-h="${k}"
           aria-pressed="${k === h}" style="--sw: var(--bezel-bright)">${label}</button>`).join("");
       el.innerHTML = `
         <div class="section-head">
-          <span class="kicker">Tokens by model · every exact model id</span>
+          <span class="kicker">Tokens by model · provider, model, version</span>
           <span class="section-note">${tok(grand)} tokens in ${HORIZONS.find(x => x[0] === h)[1]} · from the spend ledger</span>
           <div class="plot-switches">${switches}</div>
         </div>
