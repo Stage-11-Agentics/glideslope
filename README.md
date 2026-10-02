@@ -3,7 +3,7 @@
 <p align="center"><b><i>Token subscription optimization for the modern hyperengineer</i></b></p>
 
 <p align="center"><img src="docs/screenshots/hero.png" width="720" alt="the Glideslope popup: every window of every account on one approach plot, with the register beneath naming each marker"></p>
-<p align="center"><sub><i>every subscription you hold, on one frame, each against its own clock, 5-hour and 7-day alike. letter = account. shape = window: ○ seven-day · △ five-hour · ◇ Fable · ✳ Claude pool · Σ everything. the dashed beam is even burn, and the register beneath names every marker. a real week of the most valuable resource there is: intelligence.</i></sub></p>
+<p align="center"><sub><i>every subscription you hold, on one frame, each against its own clock, 5-hour and 7-day limits (and also Fable)</i></sub></p>
 
 ---
 
