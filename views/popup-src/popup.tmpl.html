@@ -440,7 +440,12 @@
     font-variant-numeric: tabular-nums;
   }
   .family-total small { color: var(--muted); font-size: 8.5px; letter-spacing: .1em; margin-left: 4px; }
-  .family-rows { display: grid; grid-auto-rows: 24px; }
+  /* The one column is minmax(0, 1fr), never the implicit auto: an auto track
+     grows to the widest row's min-content, and every row in the box follows it.
+     Alpha's countdown plus its reset chequer once did exactly that and pushed
+     all nine Anthropic used values 11px past the box's right edge (2026-10-03).
+     Now a long row clips its own name and the number columns hold their x. */
+  .family-rows { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 24px; }
   .reg-row {
     display: flex;
     align-items: center;
