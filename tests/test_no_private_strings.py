@@ -12,8 +12,15 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 HOME_PATHS = (
-    re.compile(re.escape("/" + "Users" + "/") + r"[A-Za-z0-9._-]+/"),
-    re.compile(re.escape("/" + "home" + "/") + r"[A-Za-z0-9._-]+/"),
+    re.compile(r"(?i)(?<!/coding/v1)(?<![\w.])/(?:users|home)/[A-Za-z0-9._-]+/"),
+    re.compile(r"(?<![\w])~(?:[A-Za-z0-9._-]+)?/[A-Za-z0-9._-]{2,}(?=/|$|[\s`\"'<>|,;:!?)}\]])"),
+)
+# Generic installation examples name a product's conventional config directory,
+# not an expanded path from one user's home.
+PUBLIC_HOME_PATH_PREFIXES = (
+    "~/.claude", "~/.claude-profiles", "~/.claude.json", "~/.codex",
+    "~/.glideslope", "~/.grok", "~/.kimi-code", "~/.local", "~/.ssh",
+    "~/.zshrc",
 )
 EMAIL = re.compile(
     r"(?i)(?<![A-Z0-9._%+-])(?P<local>[A-Z0-9._%+-]+)@"
@@ -66,7 +73,18 @@ def _private_ip(match: re.Match[str]) -> bool:
 
 def _line_kinds(line: str) -> list[str]:
     kinds: list[str] = []
-    if any(pattern.search(line) for pattern in HOME_PATHS):
+    home_matches = [match for pattern in HOME_PATHS for match in pattern.finditer(line)]
+    private_home = False
+    for match in home_matches:
+        if match.group(0).startswith("~"):
+            candidate = re.match(r"~[^\s`\"'<>|]+", line[match.start():])
+            token = candidate.group(0).rstrip(".,;:!?)]}") if candidate else ""
+            if any(token == prefix or token.startswith(prefix + "/")
+                   for prefix in PUBLIC_HOME_PATH_PREFIXES):
+                continue
+        private_home = True
+        break
+    if private_home:
         kinds.append("home path")
     if any(not _allowed_email(match) for match in EMAIL.finditer(line)):
         kinds.append("email")
@@ -77,31 +95,40 @@ def _line_kinds(line: str) -> list[str]:
     return kinds
 
 
+def _address(*octets: int) -> str:
+    return ".".join(str(octet) for octet in octets)
+
+
+GENERIC_FIXTURES = (
+    ("/" + "Users" + "/" + "sample" + "/Project", ("home path",)),
+    ("/" + "home" + "/" + "sample" + "/Project", ("home path",)),
+    ("/" + "USERS" + "/" + "sample" + "/Project", ("home path",)),
+    ("~" + "/Projects/App", ("home path",)),
+    ("~sample" + "/Projects/App", ("home path",)),
+    ("~" + "/.glideslope/config.toml", ()),
+    ("~" + "/.claude-profiles/sample/.claude.json", ()),
+    ("~" + "/.claude.json", ()),
+    ("/coding/v1/users/me/balance", ()),
+    ("me" + "@" + "studio.local", ()),
+    ("person" + "@" + "example.test", ()),
+    ("person" + "@" + "private.invalid", ("email",)),
+    ("other" + "@" + "stage11.ai", ("email",)),
+    ("hello" + "@" + "stage11.ai", ()),
+    ("agent" + "@" + "users.noreply.github.com", ()),
+    ("noreply" + "@" + "private.invalid", ()),
+    (_address(10, 2, 3, 4), ("private IPv4 address",)),
+    (_address(172, 20, 0, 1), ("private IPv4 address",)),
+    (_address(192, 168, 1, 2), ("private IPv4 address",)),
+    (_address(100, 100, 2, 3), ("private IPv4 address",)),
+    (_address(203, 0, 113, 2), ()),
+    (".".join(("host-name", "ts", "net")), ("tailnet hostname",)),
+    (".".join(("device", "tailabcd", "ts", "net")), ("tailnet hostname",)),
+)
+
+
 def test_generic_detectors_with_synthetic_examples() -> None:
-    def address(*octets: int) -> str:
-        return ".".join(str(octet) for octet in octets)
-
-    private_home = "/" + "Users" + "/" + "sample" + "/Project"
-    private_linux_home = "/" + "home" + "/" + "sample" + "/Project"
-    assert "home path" in _line_kinds(private_home)
-    assert "home path" in _line_kinds(private_linux_home)
-    assert _line_kinds("/coding/v1/users/me/balance") == []
-
-    local_fixture_email = "me" + "@" + "studio.local"
-    assert _line_kinds(local_fixture_email) == []
-    assert _line_kinds("person" + "@" + "example.test") == []
-    assert "email" in _line_kinds("person" + "@" + "private.invalid")
-    assert "email" in _line_kinds("other" + "@" + "stage11.ai")
-
-    for candidate in (address(10, 2, 3, 4), address(172, 20, 0, 1),
-                      address(192, 168, 1, 2), address(100, 100, 2, 3)):
-        assert "private IPv4 address" in _line_kinds(candidate)
-    assert _line_kinds(address(203, 0, 113, 2)) == []
-
-    assert "tailnet hostname" in _line_kinds(".".join(("host-name", "ts", "net")))
-    assert "tailnet hostname" in _line_kinds(
-        ".".join(("device", "tailabcd", "ts", "net"))
-    )
+    for line, expected in GENERIC_FIXTURES:
+        assert _line_kinds(line) == list(expected), line
 
 
 def test_tracked_files_have_no_private_machine_or_contact_strings() -> None:
