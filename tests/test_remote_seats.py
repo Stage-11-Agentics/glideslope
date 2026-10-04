@@ -351,7 +351,7 @@ class BeaconSeatTests(unittest.TestCase):
     def test_the_beacon_bounds_what_it_carries(self):
         self.configure()
         long = "x" * 500
-        self.seats.write_text(json.dumps({"generated_at": "2026-10-01T10:00:00Z",
+        self.seats.write_text(json.dumps({"generated_at": stamp(),
                                           "seats": [seat(project=long, ticket=f"T-{i}")
                                                     for i in range(beacon.SEATS_MAX_ROWS + 50)]}))
         carried = self.publish()["seats"]
@@ -361,9 +361,10 @@ class BeaconSeatTests(unittest.TestCase):
         self.assertEqual(carried["live_total"], beacon.SEATS_MAX_ROWS + 50)
         # Through the reader to the rendered line: a capped result is never shown as exact.
         warnings = []
+        # Read on the test clock: against the real one, any fixed stamp ages past the reader's
+        # max age and the document is ignored (this test went red on 2026-10-02 that way).
         seats = glideslope.gather_remote_seats(
-            dt.datetime.now(dt.timezone.utc), warnings,
-            [{"name": "studio", "seats": carried}], path=None)
+            NOW, warnings, [{"name": "studio", "seats": carried}], path=None)
         self.assertTrue(seats["incomplete"])
         self.assertTrue(any("stopped at a row cap" in note for note in warnings))
         self.assertIn("(incomplete", glideslope.remote_seats_line(seats, plain=True))
