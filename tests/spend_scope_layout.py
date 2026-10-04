@@ -1,6 +1,7 @@
 """Local Playwright check for the Spend token-scope layout at phone width.
 
-Build a synthetic fixture with a scope that has an incomplete token split, then run:
+The page must start on Everyone with complete token data and include an account scope
+with an incomplete split. Build that synthetic fixture, then run:
   uv run --extra dev --with playwright python tests/spend_scope_layout.py /tmp/spend.html --scope Alpha
 
 This is kept outside pytest discovery because it needs an installed browser binary.
@@ -60,6 +61,12 @@ def main() -> int:
         selected = page.locator('#tok-scope button[data-scope="Everyone"]')
         if selected.count() != 1:
             raise AssertionError("fixture must start with the Everyone token scope")
+        note = page.locator(".tok-note-extra")
+        before_visibility = note.evaluate("element => getComputedStyle(element).visibility")
+        if before_visibility != "hidden":
+            raise AssertionError(
+                "fixture must hide the missing-split note on Everyone before the scope click"
+            )
         before = page.locator(args.following_selector).evaluate(
             "element => element.getBoundingClientRect().top + window.scrollY"
         )
@@ -67,8 +74,8 @@ def main() -> int:
         if target.count() != 1:
             raise AssertionError(f"expected one token-scope button named {args.scope!r}")
         target.click()
-        note = page.locator(".tok-note-extra")
-        if note.evaluate("element => getComputedStyle(element).visibility") != "visible":
+        after_visibility = note.evaluate("element => getComputedStyle(element).visibility")
+        if after_visibility != "visible":
             raise AssertionError("scope must show the missing-split note for this fixture")
         after = page.locator(args.following_selector).evaluate(
             "element => element.getBoundingClientRect().top + window.scrollY"
@@ -88,6 +95,7 @@ def main() -> int:
         "width": args.width,
         "scope": args.scope,
         "following_selector": args.following_selector,
+        "note_visibility": [before_visibility, after_visibility],
         "document_y_before": round(before, 2),
         "document_y_after": round(after, 2),
         "horizontal_overflow": False,
