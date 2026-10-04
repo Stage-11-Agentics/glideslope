@@ -268,6 +268,29 @@ def test_switch_log_moves_attribution_between_samples(tmp_path, monkeypatch):
     assert spend._account_at(timelines["local"], int((start + dt.timedelta(hours=18)).timestamp() * 1000)) == "Bravo"
 
 
+def test_switch_log_wins_over_sample_at_same_timestamp(tmp_path, monkeypatch):
+    start, db, switch_log = _sampled_login_db(
+        tmp_path, monkeypatch, [(0, "work")], {}, switches=[(0, "personal")]
+    )
+    monkeypatch.setattr(claude_account, "SWITCH_LOG", switch_log)
+    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
+
+    request_at = start + dt.timedelta(minutes=1)
+    data = spend.build(
+        {"records": [_request(
+            "claude", "claude-opus-5-5", request_at, key="after-switch", inp=1_000_000
+        )]},
+        now=start + dt.timedelta(minutes=2),
+        db=db,
+        pricer=pricing.Pricer(lite={}),
+    )
+    accounts = {account["name"]: account for account in data["accounts"]}
+
+    assert accounts["Bravo"]["all"]["usd"] == 4
+    assert accounts["Alpha"]["all"]["usd"] == 0
+
+
 @pytest.mark.parametrize(
     "samples_db_state", ["absent", "no_samples_table", "sqlite_error"]
 )
