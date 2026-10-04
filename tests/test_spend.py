@@ -482,6 +482,33 @@ def test_sampler_spend_producer_can_be_disabled_for_another_writer(tmp_path, mon
     assert not store.exists()
 
 
+def test_sampler_main_tolerates_scalar_spend_setting_and_rebuilds_views(tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    config = tmp_path / "config.toml"
+    config.write_text("spend = false\n", encoding="utf-8")
+    monkeypatch.setattr(glideslope, "CONFIG", glideslope.load_config(config))
+    monkeypatch.setattr(sampler, "STORE_DIR", store)
+    monkeypatch.setattr(sampler, "DB_PATH", store / "samples.db")
+    monkeypatch.setattr(sampler, "SPEND_LAST_ATTEMPT", store / "last")
+    monkeypatch.setattr(sampler, "SPEND_CADENCE_LOCK", store / "lock")
+    monkeypatch.setattr(sampler, "SPEND_LOG", store / "spend.log")
+    monkeypatch.setattr(sampler, "SPEND_PRODUCER", tmp_path / "spend.py")
+    monkeypatch.setattr(
+        sampler,
+        "collect",
+        lambda: {"generated_at": "2026-10-04T12:00:00Z", "accounts": []},
+    )
+    monkeypatch.setattr(sampler, "rebuild_deck", lambda _position: "deck rebuilt")
+    monkeypatch.setattr(sampler, "rebuild_history", lambda: "history rebuilt")
+    monkeypatch.setattr(sampler, "fire_alerts", lambda _position: [])
+    stdout = StringIO()
+
+    with patch.object(sampler.subprocess, "Popen"), redirect_stdout(stdout):
+        assert sampler.main() == 0
+
+    assert "deck rebuilt; history rebuilt" in stdout.getvalue()
+
+
 def test_sample_commits_when_spend_launch_fails(tmp_path, monkeypatch):
     store = tmp_path / "store"
     monkeypatch.setattr(sampler, "STORE_DIR", store)
