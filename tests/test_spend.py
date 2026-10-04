@@ -268,6 +268,46 @@ def test_switch_log_moves_attribution_between_samples(tmp_path, monkeypatch):
     assert spend._account_at(timelines["local"], int((start + dt.timedelta(hours=18)).timestamp() * 1000)) == "Bravo"
 
 
+@pytest.mark.parametrize(
+    "samples_db_state", ["absent", "no_samples_table", "sqlite_error"]
+)
+def test_switch_log_attributes_without_usable_samples_db(
+    tmp_path, monkeypatch, samples_db_state
+):
+    start, db, switch_log = _sampled_login_db(
+        tmp_path, monkeypatch, [], {}, switches=[(0, "work")]
+    )
+    if samples_db_state == "absent":
+        db.unlink()
+        assert not db.exists()
+    elif samples_db_state == "no_samples_table":
+        with sqlite3.connect(db) as con:
+            con.execute("DROP TABLE samples")
+    else:
+        db.write_text("not a sqlite database", encoding="utf-8")
+    monkeypatch.setattr(claude_account, "SWITCH_LOG", switch_log)
+    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
+
+    request_at = start + dt.timedelta(hours=1)
+    data = spend.build(
+        {"records": [_request(
+            "claude", "claude-sonnet-4-5", request_at, key="switch-only", inp=100
+        )]},
+        now=request_at,
+        db=db,
+        pricer=pricing.Pricer(lite={}),
+    )
+    accounts = {account["name"]: account for account in data["accounts"]}
+    expected = spend._alias_names()["work"]
+
+    assert accounts[expected]["all"]["requests"] == 1
+    assert accounts["unattributed"]["all"]["requests"] == 0
+    assert spend._iso_ms(data["attribution"][glideslope.LOCAL_SATELLITE]) == int(
+        start.timestamp() * 1000
+    )
+
+
 def test_pre_sample_switch_is_earliest_attribution_evidence(tmp_path, monkeypatch):
     start, db, switch_log = _sampled_login_db(
         tmp_path, monkeypatch, [(24, "work")], {}, switches=[(12, "work")]

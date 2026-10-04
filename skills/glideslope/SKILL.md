@@ -50,8 +50,9 @@ glideslope-spend --print
 ~~~
 
 If the command is not on PATH, run `python3 <path-to-clone>/spend.py --print`. It updates
-`<store>/spend.json` and prints 24-hour, 7-day, 30-day and all-time totals plus Claude
-account totals. Claude and Codex dollars use API list rates. Grok Build dollars use the
+`<store>/spend.json` and prints combined 24-hour, 7-day, 30-day and all-time totals plus
+7-day, 30-day and all-time rows for each Claude account, Codex, Grok and unattributed spend.
+Claude and Codex dollars use API list rates. Grok Build dollars use the
 `costUsdTicks` supplied by its local CLI, not the LiteLLM rate table. The totals are estimates,
 not subscription charges or an invoice. It covers local Claude Code, Codex and Grok Build only.
 
@@ -70,13 +71,18 @@ collection checks a SHA-256 hash of the collector source, file size and modifica
 `--no-collect` checks the cached parser hash and payload without checking transcript files.
 These measurements are approximate and depend on history size and machine. Normal runs refresh
 the public price table when it is missing or more than 24 hours old. Use `glideslope-spend
-prices` to inspect rates or `glideslope-spend prices --refresh` to force a refresh.
+prices` to inspect rates or `glideslope-spend prices --refresh` to force a refresh. From a
+clone, run `python3 <path-to-clone>/spend.py prices` or add `--refresh` to force a refresh.
 
-Read the `pricing` object in `spend.json` alongside the totals:
+The `pricing` object in `spend.json` contains counters, not pricing status labels. Run
+`glideslope-spend prices` to see rate labels in its `status` column. The `standard` fallback
+status is omitted from that column; affected tokens appear only under `underpriced_tokens`.
+
+Read these pricing labels and counters alongside the totals:
 
 - `list` uses an available list rate; there is no separate `list_tokens` counter.
-- `standard` means a premium-speed request used the standard rate because no premium rate was available. Its tokens are counted as `underpriced_tokens`.
-- `derived` means a missing premium cache rate was derived by applying the premium-to-base input-rate ratio to the base cache rate; its tokens appear in `derived_tokens`.
+- `standard` means a tiered speed used the standard rate because no separate rate was available. This includes `flex`; those tokens count in `underpriced_tokens`. For a cheaper tier such as `flex`, the counter name does not mean the estimate is below the actual cost.
+- `derived` means a missing tier-specific input, output or cache rate was derived by applying the tier-to-base input-rate ratio to the base rate; its tokens appear in `derived_tokens`.
 - `estimated` means an explicit model-and-speed multiplier was used for a premium rate that is not published; its tokens appear in `estimated_tokens`.
 - `unpriced_tokens` lists up to ten model entries with no usable rate. Those tokens remain counted but have no dollar value.
 - `speed_evidence` counts requests, or Grok model calls, by provider, speed and evidence source. `unknown` means the request has no speed evidence.

@@ -90,51 +90,6 @@ def _read_sample_state(
     aliases = _alias_names()
     timeline: list[tuple[int, str]] = []
     latest_meters: list[tuple] = []
-    if not db.exists():
-        return {}, {}, {}, {}, {}
-
-    try:
-        uri = db.resolve().as_uri() + "?mode=ro"
-        con = sqlite3.connect(uri, uri=True, timeout=5)
-        try:
-            columns = {row[1] for row in con.execute("PRAGMA table_info(samples)")}
-            if not columns:
-                return {}, {}, {}, {}, {}
-            plan_column = "s.plan" if "plan" in columns else "NULL"
-            active_column = "active" if "active" in columns else "0"
-
-            rows = con.execute(
-                "SELECT observed_at, account FROM samples"
-                " WHERE provider = 'Claude' AND meter = 'weekly_all' AND " + active_column + " = 1"
-                " ORDER BY observed_at"
-            )
-            for observed_at, alias in rows:
-                ms = _iso_ms(observed_at)
-                if ms is None:
-                    continue
-                alias = str(alias)
-                name = aliases.get(alias)
-                if name is None:
-                    name = glideslope.call_sign(alias)
-                    aliases[alias] = name
-                timeline.append((ms, name))
-
-            # Use the latest complete row for each provider/account/meter without loading history.
-            latest_meters = con.execute(
-                "SELECT s.provider, s.account, s.meter, s.used_percent, s.window_minutes,"
-                " s.resets_at, s.observed_at, " + plan_column + " AS plan"
-                " FROM samples AS s JOIN ("
-                "   SELECT provider, account, meter, MAX(observed_at) AS observed_at"
-                "   FROM samples GROUP BY provider, account, meter"
-                " ) AS latest USING (provider, account, meter, observed_at)"
-                " WHERE s.provider IN ('Claude', 'Codex', 'Grok')"
-            ).fetchall()
-        finally:
-            con.close()
-    except sqlite3.Error:
-        _log("sample database unavailable; Claude requests will be unattributed")
-        return {}, {}, {}, {}, {}
-
     switch_path = Path(switch_log) if switch_log is not None else claude_account.SWITCH_LOG
     try:
         with switch_path.open("r", encoding="utf-8") as handle:
@@ -154,6 +109,47 @@ def _read_sample_state(
                 timeline.append((ms, name))
     except OSError:
         pass
+
+    if db.exists():
+        try:
+            uri = db.resolve().as_uri() + "?mode=ro"
+            con = sqlite3.connect(uri, uri=True, timeout=5)
+            try:
+                columns = {row[1] for row in con.execute("PRAGMA table_info(samples)")}
+                if columns:
+                    plan_column = "s.plan" if "plan" in columns else "NULL"
+                    active_column = "active" if "active" in columns else "0"
+
+                    rows = con.execute(
+                        "SELECT observed_at, account FROM samples"
+                        " WHERE provider = 'Claude' AND meter = 'weekly_all' AND " + active_column + " = 1"
+                        " ORDER BY observed_at"
+                    )
+                    for observed_at, alias in rows:
+                        ms = _iso_ms(observed_at)
+                        if ms is None:
+                            continue
+                        alias = str(alias)
+                        name = aliases.get(alias)
+                        if name is None:
+                            name = glideslope.call_sign(alias)
+                            aliases[alias] = name
+                        timeline.append((ms, name))
+
+                    # Use the latest complete row for each provider/account/meter without loading history.
+                    latest_meters = con.execute(
+                        "SELECT s.provider, s.account, s.meter, s.used_percent, s.window_minutes,"
+                        " s.resets_at, s.observed_at, " + plan_column + " AS plan"
+                        " FROM samples AS s JOIN ("
+                        "   SELECT provider, account, meter, MAX(observed_at) AS observed_at"
+                        "   FROM samples GROUP BY provider, account, meter"
+                        " ) AS latest USING (provider, account, meter, observed_at)"
+                        " WHERE s.provider IN ('Claude', 'Codex', 'Grok')"
+                    ).fetchall()
+            finally:
+                con.close()
+        except sqlite3.Error:
+            _log("sample database unavailable; using switch-log evidence for Claude attribution")
 
     timeline.sort(key=lambda point: point[0])
     names = [name for _, name in timeline]

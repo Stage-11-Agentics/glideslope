@@ -575,7 +575,7 @@ and Codex dollars use API list rates. Grok Build dollars use the `costUsdTicks` 
 local CLI, not the LiteLLM rate table. The totals are not subscription charges or an invoice.
 The producer covers this machine only. It does not collect Kimi or remote-machine requests.
 
-Run the producer from the installed command or the repository:
+After installing the package, run the console command:
 
 ~~~bash
 glideslope-spend --print
@@ -584,9 +584,19 @@ glideslope-spend prices
 glideslope-spend prices --refresh
 ~~~
 
-`--print` collects requests, prices them, writes `<store>/spend.json` and prints the
-24-hour, 7-day, 30-day and all-time totals plus Claude account totals. `--no-collect` rebuilds
-the latest collection from matching per-file cache entries under `<store>/spend-cache/`, using
+From a repository clone, use `python3 spend.py`:
+
+~~~bash
+python3 spend.py --print
+python3 spend.py --no-collect --print
+python3 spend.py prices
+python3 spend.py prices --refresh
+~~~
+
+`--print` collects requests, prices them, writes `<store>/spend.json` and prints the combined
+24-hour, 7-day, 30-day and all-time totals plus 7-day, 30-day and all-time rows for each Claude
+account, Codex, Grok and unattributed spend. `--no-collect` rebuilds the latest collection
+from matching per-file cache entries under `<store>/spend-cache/`, using
 the collection time in `<store>/spend/collection-state.json`. It prices the records and writes
 `<store>/spend.json`; include `--print` to also display the totals. It does not reread transcript
 files or write a full-collection dump. It checks the parser version and cached payload, but
@@ -637,11 +647,17 @@ The normalized speed values are `standard`, `flex`, `fast`, `ultrafast` and
 state or from a feedback-tag log only when the rollout evidence agrees; confirmed log tiers are
 kept in `<store>/pricing/speed-ledger.json`. Grok cost ticks are provider-supplied.
 
+The `pricing` object in `spend.json` contains counters, not pricing status labels. Run
+`glideslope-spend prices` after package install, or `python3 spend.py prices` from a clone, to
+see rate labels in the command's `status` column. The `standard` fallback status is omitted
+from that column; affected tokens appear in `pricing.underpriced_tokens`. The rate list has no
+`flex` row, so a missing flex rate is represented by that counter rather than a displayed rate.
+
 | Pricing label or counter | Meaning |
 |---|---|
 | `list` | A list rate is available and used. There is no separate `list_tokens` counter. |
-| `standard` | A premium speed has no separate rate, so its tokens use the standard rate. Those tokens are counted under `pricing.underpriced_tokens`. |
-| `derived` | A missing premium cache rate is derived by applying the premium-to-base input-rate ratio to the base cache rate. Its tokens appear under `derived_tokens`. |
+| `standard` | A tiered speed has no separate rate, so its tokens use the standard rate. This includes `flex`; affected tokens are counted under `underpriced_tokens`. For a cheaper tier such as `flex`, the counter name does not mean the estimate is below the actual cost. |
+| `derived` | A missing tier-specific input, output or cache rate can be derived by applying the tier-to-base input-rate ratio to the base rate. Its tokens appear under `derived_tokens`. |
 | `estimated` | An explicit model-and-speed multiplier is used where a premium rate is not published. Its tokens appear under `estimated_tokens`. |
 | `unpriced_tokens` | No usable model rate exists. Token counts remain; their dollars are omitted. Up to ten model entries are reported. |
 

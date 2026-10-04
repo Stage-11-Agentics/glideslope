@@ -78,11 +78,9 @@ a menu bar, a side panel, a dashboard cell: not shipped. the popup was drawn for
 <p align="center"><img src="docs/screenshots/deck-ledger.png" alt="the Detail view ledger: every window of every account as a burn clock, with state, reset and freshness"></p>
 <p align="center"><sub><i>the ledger. every window of every account as a burn clock: used against the ◆ mark, its state, its reset, and how fresh the read is. the footer prices every token at list, never money spent: on the afternoon this page was written the Claude line read $14,885 API-equivalent on $600/mo of plans. 24.8×.</i></sub></p>
 
-## API-equivalent spend.
+## api-equivalent spend.
 
-`glideslope-spend --print` reads local Claude Code, Codex and Grok Build records, updates `<store>/spend.json`, and prints 24-hour, 7-day, 30-day and all-time totals plus Claude account totals. Claude and Codex use API list rates; Grok Build uses the `costUsdTicks` supplied by its local CLI, not the LiteLLM rate table. The totals are estimates, not subscription charges or an invoice. By default, the sampler refreshes this in the background at most every 15 minutes.
-
-Claude account totals follow active-login samples and switch-log events, resolved through the configured call signs. Attribution starts at the earliest login evidence from either source; requests without earlier evidence or with evidence more than 24 hours old stay unattributed. `--no-collect` rebuilds spend from cached per-file records, writes `<store>/spend.json`, and does not reread transcripts. Add `--print` to display totals. It can miss changes since the last normal collection. See the [spend contract](PROVIDERS.md#api-equivalent-spend) for cache and pricing details. In one benchmark, cold initial collection took about 100 seconds and reached 1,059 MiB peak RSS; a warm full-producer run took about 18 seconds and reached 653 MiB peak RSS. Results vary with transcript history and machine. `glideslope-spend prices` prints the rates in use.
+run `python3 spend.py --print` from a clone or `glideslope-spend --print` after package install to print combined dollar totals for 24 hours, 7 days, 30 days and all time, plus 7-day, 30-day and all-time rows for each claude account, codex, grok and unattributed spend. it values claude and codex tokens at api list rates and uses grok's cli cost ticks; these estimates aren't a bill. the sampler runs it every 15 minutes by default; a cold first run reads the transcript history and may take a minute or two. see the [spend contract](PROVIDERS.md#api-equivalent-spend).
 
 ## for agents.
 
