@@ -18,6 +18,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import claude_account
 import glideslope
 import pricing
 import spend_collect
@@ -65,16 +66,27 @@ def _roll_reset(end_ms: int, length_ms: int, now_ms: int) -> tuple[int, bool]:
 
 
 def _account_names() -> list[str]:
-    return list(dict.fromkeys(str(name) for name in glideslope.CLAUDE_CALL_SIGNS.values() if name))
+    return list(dict.fromkeys(name for name in _alias_names().values() if name))
 
 
 def _alias_names() -> dict[str, str]:
-    return {str(alias): str(name) for alias, name in glideslope.CLAUDE_CALL_SIGNS.items()
-            if alias and name}
+    aliases: dict[str, str] = {}
+    roster = glideslope.read_roster(glideslope.CLAUDE_ROSTER)
+    for alias, entry in roster.items():
+        if not isinstance(alias, str) or not alias or not isinstance(entry, dict):
+            continue
+        email = entry.get("email")
+        aliases[alias] = glideslope.call_sign(alias, email if isinstance(email, str) else None)
+    for alias, name in tuple(glideslope.CLAUDE_CALL_SIGNS.items()):
+        if alias and name and "@" not in str(alias):
+            aliases.setdefault(str(alias), glideslope.call_sign(str(alias)))
+    return aliases
 
 
-def _read_sample_state(db: Path, now_ms: int) -> tuple[dict, dict, dict, dict, dict]:
-    """Read only active login evidence and each account's latest meter sample."""
+def _read_sample_state(
+    db: Path, now_ms: int, switch_log: Path | None = None
+) -> tuple[dict, dict, dict, dict, dict]:
+    """Read active login observations, switch events, and each account's latest meter sample."""
     aliases = _alias_names()
     timeline: list[tuple[int, str]] = []
     first_at: int | None = None
@@ -92,36 +104,23 @@ def _read_sample_state(db: Path, now_ms: int) -> tuple[dict, dict, dict, dict, d
             plan_column = "s.plan" if "plan" in columns else "NULL"
             active_column = "active" if "active" in columns else "0"
 
-            # Compress unchanged active samples, refreshing the timeline often enough that
-            # _account_at does not age out a login that is still being sampled.
             rows = con.execute(
                 "SELECT observed_at, account FROM samples"
                 " WHERE provider = 'Claude' AND meter = 'weekly_all' AND " + active_column + " = 1"
                 " ORDER BY observed_at"
             )
-            prior_ms = None
-            prior_name = None
             for observed_at, alias in rows:
                 ms = _iso_ms(observed_at)
                 if ms is None:
                     continue
                 if first_at is None:
                     first_at = ms
-                name = aliases.get(str(alias), "unattributed")
-                if prior_ms is not None and ms - prior_ms > MAX_LOGIN_AGE_MS:
-                    stale_at = prior_ms + MAX_LOGIN_AGE_MS
-                    if prior_name != "unattributed":
-                        timeline.append((stale_at, "unattributed"))
-                    prior_name = "unattributed"
-                if name != prior_name:
-                    timeline.append((ms, name))
-                elif name != "unattributed" and (
-                    not timeline or ms - timeline[-1][0] >= MAX_LOGIN_AGE_MS // 2
-                ):
-                    timeline.append((ms, name))
-                prior_ms, prior_name = ms, name
-            if prior_ms is not None and prior_name != "unattributed" and now_ms - prior_ms > MAX_LOGIN_AGE_MS:
-                timeline.append((prior_ms + MAX_LOGIN_AGE_MS, "unattributed"))
+                alias = str(alias)
+                name = aliases.get(alias)
+                if name is None:
+                    name = glideslope.call_sign(alias)
+                    aliases[alias] = name
+                timeline.append((ms, name))
 
             # Use the latest complete row for each provider/account/meter without loading history.
             latest_meters = con.execute(
@@ -139,7 +138,27 @@ def _read_sample_state(db: Path, now_ms: int) -> tuple[dict, dict, dict, dict, d
         _log("sample database unavailable; Claude requests will be unattributed")
         return {}, {}, {}, {}, {}
 
-    timeline.sort()
+    switch_path = Path(switch_log) if switch_log is not None else claude_account.SWITCH_LOG
+    try:
+        with switch_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                ms = _iso_ms(record.get("at")) if isinstance(record, dict) else None
+                alias = record.get("to") if isinstance(record, dict) else None
+                if ms is None or not isinstance(alias, str) or not alias:
+                    continue
+                name = aliases.get(alias)
+                if name is None:
+                    name = glideslope.call_sign(alias)
+                    aliases[alias] = name
+                timeline.append((ms, name))
+    except OSError:
+        pass
+
+    timeline.sort(key=lambda point: point[0])
     names = [name for _, name in timeline]
     stamps = [stamp for stamp, _ in timeline]
     login_timeline = {"local": (stamps, names)} if stamps else {}
@@ -380,7 +399,7 @@ def build(collection: dict, now: dt.datetime | None = None, db: Path | None = No
     model_priced: dict[tuple[str, str], bool] = {}
 
     for record in records:
-        if not isinstance(record, dict):
+        if not isinstance(record, (dict, spend_collect.RequestRecord)):
             continue
         tool = record.get("tool")
         provider = {"claude": "Claude", "codex": "Codex", "grok": "Grok"}.get(tool)
@@ -601,33 +620,38 @@ def _atomic_json(data: dict, path: Path) -> None:
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", dir=path.parent, prefix="." + path.name + ".", delete=False
         ) as handle:
+            temporary = Path(handle.name)
             json.dump(data, handle, separators=(",", ":"))
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-            temporary = Path(handle.name)
         os.chmod(temporary, mode)
         os.replace(temporary, path)
         temporary = None
     finally:
         if temporary is not None:
-            temporary.unlink(missing_ok=True)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
-def _load_collection(path: Path) -> dict | None:
+def _load_saved_collection(store: Path) -> dict | None:
+    """Load last success metadata and rebuild its request collection from per-file cache."""
+    metadata_path = store / "spend" / "collection-state.json"
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or not isinstance(data.get("records"), list):
+    collected_at = metadata.get("collected_at") if isinstance(metadata, dict) else None
+    if not isinstance(collected_at, dict) or not collected_at:
         return None
-    if not spend_collect._cache_payload_valid("grok", {
-        "records": data["records"],
-        "grok_cost_ticks": data.get("grok_cost_ticks", {}),
-        "grok_model_calls": data.get("grok_model_calls", {}),
-    }):
+    collection = spend_collect.load_cached_collection(machine=glideslope.LOCAL_SATELLITE)
+    if collection is None:
         return None
-    return data
+    payload = collection.internal_payload()
+    payload["collected_at"] = collected_at
+    return payload
 
 
 def summary(data: dict) -> str:
@@ -647,22 +671,22 @@ def summary(data: dict) -> str:
 
 def _produce(no_collect: bool = False, print_summary: bool = False) -> int:
     store = Path(glideslope.STORE_DIR)
-    collection_path = store / "spend" / "last-collection.json"
+    collection_state = store / "spend" / "collection-state.json"
     now = dt.datetime.now(dt.timezone.utc)
     if no_collect:
-        collection = _load_collection(collection_path)
+        collection = _load_saved_collection(store)
         if collection is None:
             _log("no saved collection is available")
             return 2
     else:
         try:
             result = spend_collect.collect(machine=glideslope.LOCAL_SATELLITE)
-            collection = result.payload()
+            collection = result.internal_payload()
             collection["collected_at"] = {glideslope.LOCAL_SATELLITE: now.isoformat()}
-            _atomic_json(collection, collection_path)
+            _atomic_json({"collected_at": collection["collected_at"]}, collection_state)
         except Exception:  # noqa: BLE001 — a failed collection cannot corrupt the last good spend file
-            _log("request collection failed; keeping the last saved collection")
-            collection = _load_collection(collection_path)
+            _log("request collection failed; keeping the last saved per-file cache")
+            collection = _load_saved_collection(store)
             if collection is None:
                 return 1
 

@@ -143,6 +143,7 @@ def test_build_attribution_buckets_pricing_and_grok_model_calls(tmp_path, monkey
     }
     assert accounts["unattributed"]["all"]["requests"] == 1
     assert accounts["Alpha"]["d30"]["requests"] == 2
+    assert accounts["Bravo"]["d7"]["premium_usd"] == 6.0
     assert accounts["Bravo"]["d7"]["speed"]["fast"]["premium_usd"] == 6.0
     assert accounts["Alpha"]["window"]["fable_usd"] == 15.0
     assert data["meters"]["Alpha/weekly_fable"]["fable_tokens"] == 1_100_000
@@ -197,6 +198,88 @@ def test_steady_active_samples_keep_claude_attribution_fresh(tmp_path, monkeypat
     request_at = int((start + dt.timedelta(hours=36)).timestamp() * 1000)
 
     assert spend._account_at(timelines["local"], request_at) == "Test account"
+
+
+def _sampled_login_db(tmp_path, monkeypatch, samples, call_signs, switches=()):
+    start = dt.datetime(2026, 10, 1, 0, tzinfo=dt.timezone.utc)
+    roster = {
+        "work": {"email": "person@example.test", "tier": "default_claude_max_20x"},
+        "personal": {"email": "other@example.test", "tier": "default_claude_max_20x"},
+    }
+    roster_path = tmp_path / "roster.json"
+    roster_path.write_text(json.dumps(roster), encoding="utf-8")
+    monkeypatch.setattr(glideslope, "CLAUDE_ROSTER", roster_path)
+    monkeypatch.setattr(glideslope, "CLAUDE_CALL_SIGNS", dict(call_signs))
+    db = tmp_path / "samples.db"
+    with sqlite3.connect(db) as con:
+        con.executescript(sampler.SCHEMA)
+        for hour, alias in samples:
+            observed = start + dt.timedelta(hours=hour)
+            display = glideslope.call_sign(alias, roster[alias]["email"])
+            position = {"accounts": [{
+                "provider": "Claude", "account": alias, "display": display, "active": True,
+                "observed_at": _iso(observed), "plan": "Max 20x",
+                "limits": [{"meter_id": "weekly_all", "used_percent": 20.0,
+                            "window_minutes": 10080,
+                            "resets_at": _iso(start + dt.timedelta(days=7))}],
+            }]}
+            con.executemany(
+                "INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                sampler.rows_from(position, _iso(observed)),
+            )
+    # A detached producer starts with the original config, not the position
+    # process's runtime alias additions.
+    monkeypatch.setattr(glideslope, "CLAUDE_CALL_SIGNS", dict(call_signs))
+    switch_log = tmp_path / "switch-log.jsonl"
+    switch_log.write_text("".join(json.dumps({
+        "at": _iso(start + dt.timedelta(hours=hour)), "to": alias,
+    }) + "\n" for hour, alias in switches), encoding="utf-8")
+    return start, db, switch_log
+
+
+@pytest.mark.parametrize(
+    ("call_signs", "expected"),
+    [({}, "Alpha"), ({"person@example.test": "Work account"}, "Work account")],
+)
+def test_sampled_account_resolves_default_and_email_call_signs(
+    tmp_path, monkeypatch, call_signs, expected
+):
+    start, db, _switch_log = _sampled_login_db(
+        tmp_path, monkeypatch, [(0, "work")], call_signs
+    )
+
+    timelines, *_ = spend._read_sample_state(db, int((start + dt.timedelta(hours=1)).timestamp() * 1000))
+
+    assert spend._account_at(timelines["local"], int((start + dt.timedelta(minutes=10)).timestamp() * 1000)) == expected
+    assert expected in spend._account_names()
+
+
+def test_switch_log_moves_attribution_between_samples(tmp_path, monkeypatch):
+    start, db, switch_log = _sampled_login_db(
+        tmp_path, monkeypatch, [(0, "work"), (24, "personal")], {},
+        switches=[(12, "personal")],
+    )
+
+    timelines, *_ = spend._read_sample_state(
+        db, int((start + dt.timedelta(hours=25)).timestamp() * 1000), switch_log=switch_log
+    )
+
+    assert spend._account_at(timelines["local"], int((start + dt.timedelta(hours=18)).timestamp() * 1000)) == "Bravo"
+
+
+@pytest.mark.parametrize(
+    ("samples", "now_hour", "request_hour"),
+    [([(0, "work"), (12, "work"), (23, "work"), (48, "work")], 49, 40),
+     ([(0, "work"), (12, "work"), (23, "work")], 46, 46)],
+)
+def test_compressed_samples_remain_fresh_from_last_real_observation(
+    tmp_path, monkeypatch, samples, now_hour, request_hour
+):
+    start, db, _switch_log = _sampled_login_db(tmp_path, monkeypatch, samples, {"work": "Work account"})
+
+    timelines, *_ = spend._read_sample_state(db, int((start + dt.timedelta(hours=now_hour)).timestamp() * 1000))
+
+    assert spend._account_at(timelines["local"], int((start + dt.timedelta(hours=request_hour)).timestamp() * 1000)) == "Work account"
 
 
 def test_first_request_includes_unpriced_activity(monkeypatch):
@@ -255,23 +338,88 @@ def test_spend_prices_command_routes_to_the_existing_pricing_cli(monkeypatch):
     prices_cli.assert_called_once_with(force=True)
 
 
-def test_no_collect_prices_the_saved_minimal_collection_without_reading_transcripts(tmp_path, monkeypatch):
-    store = tmp_path / "store"
-    monkeypatch.setattr(glideslope, "STORE_DIR", store)
-    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
-    monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
-    saved = {
-        "records": [],
+def _seed_saved_collection(store: Path, request=None):
+    cache_dir = store / "spend-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "records": [request] if request else [],
         "grok_cost_ticks": {},
         "grok_model_calls": {},
-        "collected_at": {"laptop": "2026-10-04T12:00:00Z"},
     }
-    spend._atomic_json(saved, store / "spend" / "last-collection.json")
+    entry = {
+        "version": spend.spend_collect.FILE_CACHE_VERSION,
+        "kind": "claude",
+        "size": 0,
+        "mtime_ns": 0,
+        "payload": payload,
+    }
+    (cache_dir / ("a" * 64 + ".json")).write_text(json.dumps(entry), encoding="utf-8")
+    collected_at = {glideslope.LOCAL_SATELLITE: "2026-10-04T12:00:00Z"}
+    spend._atomic_json({"collected_at": collected_at}, store / "spend" / "collection-state.json")
+
+
+def test_no_collect_prices_the_saved_minimal_collection_without_reading_transcripts(tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    home = tmp_path / "home"
+    monkeypatch.setattr(glideslope, "STORE_DIR", store)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
+    request = _request("claude", "claude-opus-5-5", dt.datetime(2026, 10, 4, 11, tzinfo=dt.timezone.utc),
+                       key="saved", inp=100, out=25)
+    _seed_saved_collection(store, request)
     with patch.object(spend.spend_collect, "collect", side_effect=AssertionError("collected")) as collect, \
             patch.object(pricing, "refresh_prices", return_value="fresh"):
         assert spend._produce(no_collect=True) == 0
     collect.assert_not_called()
-    assert json.loads((store / "spend.json").read_text(encoding="utf-8"))["totals"]["all"]["requests"] == 0
+    data = json.loads((store / "spend.json").read_text(encoding="utf-8"))
+    assert data["collected_at"] == {glideslope.LOCAL_SATELLITE: "2026-10-04T12:00:00Z"}
+    assert data["first_request_at"] == spend._iso(request["ts"])
+    assert not (store / "spend" / "last-collection.json").exists()
+
+
+def test_collection_failure_falls_back_to_the_last_per_file_cache(tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    home = tmp_path / "home"
+    monkeypatch.setattr(glideslope, "STORE_DIR", store)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
+    request = _request("claude", "claude-opus-5-5", dt.datetime(2026, 10, 4, 11, tzinfo=dt.timezone.utc),
+                       key="saved", inp=100, out=25)
+    _seed_saved_collection(store, request)
+
+    with patch.object(spend.spend_collect, "collect", side_effect=OSError("forced")), \
+            patch.object(pricing, "refresh_prices", return_value="fresh"):
+        assert spend._produce() == 0
+
+    data = json.loads((store / "spend.json").read_text(encoding="utf-8"))
+    assert data["first_request_at"] == spend._iso(request["ts"])
+
+
+def test_atomic_json_preserves_old_file_and_cleans_temp_on_replace_failure(tmp_path, monkeypatch):
+    target = tmp_path / "spend.json"
+    target.write_text('{"old":true}\n', encoding="utf-8")
+
+    def fail_replace(_source, _destination):
+        raise OSError("forced replace failure")
+
+    monkeypatch.setattr(spend.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="forced replace failure"):
+        spend._atomic_json({"new": True}, target)
+
+    assert target.read_text(encoding="utf-8") == '{"old":true}\n'
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_atomic_json_cleans_temp_when_serialization_fails(tmp_path):
+    target = tmp_path / "spend.json"
+
+    with pytest.raises(TypeError):
+        spend._atomic_json({"not-json": object()}, target)
+
+    assert not target.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_sampler_spend_cadence_is_fifteen_minutes_and_nonblocking(tmp_path, monkeypatch):
@@ -286,6 +434,22 @@ def test_sampler_spend_cadence_is_fifteen_minutes_and_nonblocking(tmp_path, monk
         assert sampler.run_spend_if_due(now_seconds=1_800_000_000 + 15 * 60)
     assert popen.call_count == 2
     assert popen.call_args.kwargs["start_new_session"] is True
+
+
+def test_sampler_spend_producer_can_be_disabled_for_another_writer(tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    monkeypatch.setattr(glideslope, "CONFIG", {"spend": {"producer": False}})
+    monkeypatch.setattr(sampler, "STORE_DIR", store)
+    monkeypatch.setattr(sampler, "SPEND_LAST_ATTEMPT", store / "last")
+    monkeypatch.setattr(sampler, "SPEND_CADENCE_LOCK", store / "lock")
+    monkeypatch.setattr(sampler, "SPEND_LOG", store / "spend.log")
+
+    with patch.object(sampler.subprocess, "Popen") as popen:
+        assert not sampler.run_spend_if_due(now_seconds=1_800_000_000)
+
+    popen.assert_not_called()
+    assert not (store / "last").exists()
+    assert not store.exists()
 
 
 def test_sample_commits_when_spend_launch_fails(tmp_path, monkeypatch):

@@ -190,6 +190,8 @@ def fire_alerts(position: dict) -> list[str]:
 
 def run_spend_if_due(now_seconds: float | None = None) -> bool:
     """Start the optional producer at most every 15 minutes without holding the sample open."""
+    if glideslope.CONFIG.get("spend", {}).get("producer", True) is False:
+        return False
     now_seconds = time.time() if now_seconds is None else now_seconds
     try:
         STORE_DIR.mkdir(parents=True, exist_ok=True)
