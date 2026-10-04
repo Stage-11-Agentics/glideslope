@@ -53,7 +53,7 @@ Repository = "https://github.com/Stage-11-Agentics/glideslope"
 Issues = "https://github.com/Stage-11-Agentics/glideslope/issues"
 
 [tool.setuptools]
-py-modules = ["glideslope", "sampler", "notify", "claude_account"]
+py-modules = ["glideslope", "sampler", "notify", "claude_account", "pricing", "spend_collect"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

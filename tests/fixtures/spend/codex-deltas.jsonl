@@ -1,0 +1,4 @@
+{"type":"session_meta","timestamp":0,"payload":{"id":"thread-deltas"}}
+{"type":"turn_context","timestamp":1,"payload":{"model":"gpt-6.1-sol"}}
+{"type":"event_msg","timestamp":1000,"payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1100,"input_tokens":1000,"cached_input_tokens":400,"output_tokens":100,"reasoning_output_tokens":10},"last_token_usage":{"input_tokens":700,"output_tokens":100}}}}
+{"type":"event_msg","timestamp":2000,"payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1800,"input_tokens":1600,"cached_input_tokens":600,"output_tokens":200,"reasoning_output_tokens":20},"last_token_usage":{"input_tokens":450,"output_tokens":100}}}}
