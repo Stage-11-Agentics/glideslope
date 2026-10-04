@@ -89,7 +89,6 @@ def _read_sample_state(
     """Read active login observations, switch events, and each account's latest meter sample."""
     aliases = _alias_names()
     timeline: list[tuple[int, str]] = []
-    first_at: int | None = None
     latest_meters: list[tuple] = []
     if not db.exists():
         return {}, {}, {}, {}, {}
@@ -113,8 +112,6 @@ def _read_sample_state(
                 ms = _iso_ms(observed_at)
                 if ms is None:
                     continue
-                if first_at is None:
-                    first_at = ms
                 alias = str(alias)
                 name = aliases.get(alias)
                 if name is None:
@@ -162,7 +159,8 @@ def _read_sample_state(
     names = [name for _, name in timeline]
     stamps = [stamp for stamp, _ in timeline]
     login_timeline = {"local": (stamps, names)} if stamps else {}
-    attribution = {glideslope.LOCAL_SATELLITE: _iso(first_at)}
+    earliest_evidence = stamps[0] if stamps else None
+    attribution = {glideslope.LOCAL_SATELLITE: _iso(earliest_evidence)}
 
     account_plans: dict[str, str] = {}
     meters: dict[str, dict[str, Any]] = {}

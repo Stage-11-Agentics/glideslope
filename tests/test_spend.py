@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+import claude_account
 import glideslope
 import pricing
 import sampler
@@ -265,6 +266,35 @@ def test_switch_log_moves_attribution_between_samples(tmp_path, monkeypatch):
     )
 
     assert spend._account_at(timelines["local"], int((start + dt.timedelta(hours=18)).timestamp() * 1000)) == "Bravo"
+
+
+def test_pre_sample_switch_is_earliest_attribution_evidence(tmp_path, monkeypatch):
+    start, db, switch_log = _sampled_login_db(
+        tmp_path, monkeypatch, [(24, "work")], {}, switches=[(12, "work")]
+    )
+    monkeypatch.setattr(claude_account, "SWITCH_LOG", switch_log)
+    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
+    before_evidence = start + dt.timedelta(hours=11)
+    within_switch_age = start + dt.timedelta(hours=18)
+    beyond_sample_age = start + dt.timedelta(hours=49)
+    now = start + dt.timedelta(hours=50)
+    requests = [
+        _request("claude", "claude-sonnet-4-5", before_evidence, key="before-switch", inp=100),
+        _request("claude", "claude-sonnet-4-5", within_switch_age, key="within-switch-age", inp=100),
+        _request("claude", "claude-sonnet-4-5", beyond_sample_age, key="beyond-login-age", inp=100),
+    ]
+
+    data = spend.build(
+        {"records": requests}, now=now, db=db, pricer=pricing.Pricer(lite={})
+    )
+    accounts = {account["name"]: account for account in data["accounts"]}
+
+    assert accounts["Alpha"]["all"]["requests"] == 1
+    assert accounts["unattributed"]["all"]["requests"] == 2
+    assert spend._iso_ms(data["attribution"][glideslope.LOCAL_SATELLITE]) == int(
+        (start + dt.timedelta(hours=12)).timestamp() * 1000
+    )
 
 
 @pytest.mark.parametrize(
