@@ -22,7 +22,10 @@ Glideslope sits next to the login material of several paid accounts. These are t
 7. **No credential crosses the network between machines.** Satellite beacons carry numbers, reset clocks, login emails, organization IDs, token file names and hashes, and warning text; never a token.
 8. **Failed reads are not retried in a loop.** A provider that fails degrades to its last-known-good read. Glideslope does not hammer an endpoint with repeated authenticated requests.
 9. **Nothing is hosted.** The views are local files. Glideslope serves nothing on the network.
-9. **Prompt history is read for one timestamp.** `~/.claude/history.jsonl` is read only after a login change, to timestamp the `/login` that caused it. Nothing from it is stored, logged or transmitted.
+10. **Prompt history is read for one timestamp.** `~/.claude/history.jsonl` is read only after a login change, to timestamp the `/login` that caused it. Nothing from it is stored, logged or transmitted.
+11. **Spend reads transcripts for token counts only.** The spend producer extracts request metadata such as model, timestamp, token counts and speed evidence. Prompt and response text, raw transcript paths, titles and project names are not retained in request records or the store. The per-file cache uses an opaque hash of each source path.
+12. **Spend data stays in the store.** The per-file parsed-record cache, collection-time metadata, speed ledger, price table and `spend.json` live under the configured store. The producer does not write a full-collection dump. Its only network call fetches the public LiteLLM price table; that request sends no Glideslope data.
+13. **Built HTML carries no identity beyond display names.** The spend view reads `spend.json` and renders the display names its views already use.
 
 ## What counts
 
