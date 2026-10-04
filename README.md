@@ -78,9 +78,9 @@ a menu bar, a side panel, a dashboard cell: not shipped. the popup was drawn for
 <p align="center"><img src="docs/screenshots/deck-ledger.png" alt="the Detail view ledger: every window of every account as a burn clock, with state, reset and freshness"></p>
 <p align="center"><sub><i>the ledger. every window of every account as a burn clock: used against the ◆ mark, its state, its reset, and how fresh the read is. the footer prices every token at list, never money spent: on the afternoon this page was written the Claude line read $14,885 API-equivalent on $600/mo of plans. 24.8×.</i></sub></p>
 
-## api-equivalent spend.
+## API-equivalent spend.
 
-run `python3 spend.py --print` from a clone or `glideslope-spend --print` after package install to print combined dollar totals for 24 hours, 7 days, 30 days and all time, plus 7-day, 30-day and all-time rows for each claude account, codex, grok and unattributed spend. it values claude and codex tokens at api list rates and uses grok's cli cost ticks; these estimates aren't a bill. the sampler runs it every 15 minutes by default; a cold first run reads the transcript history and may take a minute or two. see the [spend contract](PROVIDERS.md#api-equivalent-spend).
+run `python3 spend.py --print` from a clone, or `glideslope-spend --print` after package install. it prints combined dollar totals for 24 hours, 7 days, 30 days and all time, plus 7-day, 30-day and all-time rows for each Claude account, Codex, Grok and unattributed spend. Claude and Codex tokens are valued at API list rates; Grok uses its CLI's own cost ticks. these are estimates, not a bill. the sampler runs it at most every 15 minutes by default; a cold first run reads the whole transcript history and may take a minute or two. see the [spend contract](PROVIDERS.md#api-equivalent-spend).
 
 ## for agents.
 

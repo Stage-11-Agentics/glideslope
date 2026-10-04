@@ -10,7 +10,7 @@ This file is for agents developing the repo. `AGENTS.md` is a symlink to it. Use
 |---|---|
 | Language | Python 3.11+ (`tomllib`), standard library only |
 | Optional | Pillow, for the alert image only |
-| Tests | pytest, hermetic, ~460 tests in ~6s |
+| Tests | pytest, hermetic, ~460 tests in ~3s |
 | Entry points | `glideslope`, `glideslope-sampler`, `glideslope-notify`, `glideslope-spend`, `claude-account` |
 | Config | `~/.glideslope/config.toml` (see below) |
 
