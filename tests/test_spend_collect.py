@@ -72,6 +72,44 @@ def test_claude_stream_and_resume_dedup_and_profile_roots(tmp_path):
     assert result.grok_cost_ticks == {}
 
 
+def test_per_file_cache_skips_unchanged_reparses_changes_and_drops_deleted_files(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    transcript = _copy("claude-stream-a.jsonl", home / ".claude" / "projects" / "one.jsonl")
+    cache_dir = tmp_path / "store" / "spend-cache"
+    parsed = []
+    original = collector._claude_file
+
+    def count_parse(path):
+        parsed.append(path)
+        return original(path)
+
+    monkeypatch.setattr(collector, "_claude_file", count_parse)
+    ledger = SpeedLedger(tmp_path / "speed-ledger.json")
+
+    first = collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    assert len(first.records) == 1
+    assert len(parsed) == 1
+    entries = list(cache_dir.glob("*.json"))
+    assert len(entries) == 1
+    cached_text = entries[0].read_text(encoding="utf-8")
+    assert str(home) not in cached_text
+    assert "prompt text" not in cached_text
+
+    warm = collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    assert warm.records == first.records
+    assert len(parsed) == 1
+
+    transcript.write_text(transcript.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    changed = collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    assert changed.records == first.records
+    assert len(parsed) == 2
+
+    transcript.unlink()
+    deleted = collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    assert deleted.records == []
+    assert list(cache_dir.glob("*.json")) == []
+
+
 def test_codex_live_archive_selection_tiers_and_read_only_log_gap(tmp_path):
     home = tmp_path / "home"
     _copy("codex-rollout.jsonl", home / ".codex" / "sessions" / "date" / "thread-main.jsonl")
