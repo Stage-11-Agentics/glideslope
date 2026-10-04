@@ -568,34 +568,130 @@ key), and a residual would mislead.
 
 ---
 
-## API-equivalent spend (added 2026-09-23)
+## API-equivalent spend
 
-Not a provider: a valuation of local Claude Code, Codex and Grok Build requests at API list
-rates. The `glideslope-spend` producer in this repo writes `<store>/spend.json`; the sampler
-runs it no more than once every 15 minutes, after saving the provider sample. A failed spend
-run is logged and does not fail the sample. The public producer covers this machine only and
-does not collect Kimi or remote machine spend. Claude requests are credited to the active
-Claude account shown by this machine's samples; requests before the first active sample or
-after its evidence is stale remain `unattributed`.
+This is a valuation of local Claude Code, Codex and Grok Build request records. Claude Code
+and Codex dollars use API list rates. Grok Build dollars use the `costUsdTicks` supplied by its
+local CLI, not the LiteLLM rate table. The totals are not subscription charges or an invoice.
+The producer covers this machine only. It does not collect Kimi or remote-machine requests.
 
-Run `glideslope-spend --print` to print the current summary, `glideslope-spend --no-collect`
-to rebuild from the saved collection, or `glideslope-spend prices` to show the current rates.
-When `<store>/spend.json` exists, the Detail view and popup draw it; when absent or malformed,
-they draw an empty panel and the rebuild carries on.
+Run the producer from the installed command or the repository:
 
-| | |
+~~~bash
+glideslope-spend --print
+glideslope-spend --no-collect --print
+glideslope-spend prices
+glideslope-spend prices --refresh
+~~~
+
+`--print` collects requests, prices them, writes `<store>/spend.json` and prints the
+24-hour, 7-day, 30-day and all-time totals plus Claude account totals. `--no-collect` rebuilds
+the latest collection from matching per-file cache entries under `<store>/spend-cache/`, using
+the collection time in `<store>/spend/collection-state.json`. It prices the records and writes
+`<store>/spend.json`; include `--print` to also display the totals. It does not reread transcript
+files or write a full-collection dump. It checks the parser version and cached payload, but
+cannot detect source file changes since the last normal collection. It may still refresh the
+price table when needed.
+`prices` lists the current rates; `prices --refresh` forces a price-table fetch. If collection
+fails, the producer reuses the per-file cache when available. A producer failure leaves the
+prior spend file in place.
+
+When enabled, the sampler starts this optional producer after saving the provider sample, no
+more than once every 15 minutes. It runs separately. A failed or slow spend run does not fail
+the sample.
+The Detail view and popup read `<store>/spend.json`. If it is absent or malformed, they draw an
+empty spend panel and continue the rebuild.
+
+### Sources and request records
+
+| Source | Local files and evidence |
 |---|---|
-| Path | `<store>/spend.json` |
-| Keys the views read | `generated_at`, `collected_at`, `first_request_at`, `attribution`, `totals.{d1,d7,d30,all}`, `machines`, `accounts[]`, `leverage`, `providers`, `meters["<display>/<meter_id>"]`, `daily.{days,series}` (see `spend_view()` in `views/deck-src/build.py`) |
-| Per meter | every anchored meter's current window, priced from the same records: the popup's $ column. The Fable row counts Fable only |
-| Per model | `model_tokens[]`: one row per `(provider, model)` with `priced` and `{d1,d7,d30,all}`, each `{tokens, input, cache_read, cache_write, output, reasoning, requests, usd}`. `reasoning` is the thinking share of `output`, never added to `tokens`. Drawn only in the Detail view's Tokens by model band, with no dollars; a model with no list price still counts there (`priced: false`) |
-| Bucket fields | every bucket carries `speed` breakdowns and `premium_usd` beside its regular API-list-price value |
-| Pricing | `pricing` reports table age, unpriced, underpriced, derived and estimated token counts, speed evidence, and `pricing.fast_mode_armed` for local Claude Code or Codex settings |
-| Credential | none. Request records come from local transcript files; the views only read `spend.json` |
+| Claude Code | `~/.claude/projects/**/*.jsonl` and real profile project roots under `~/.claude-profiles/*/projects/`. Requests are deduplicated by message id and request id; the copy with the largest output count wins. Speed comes from the request usage record. |
+| Codex | `~/.codex/sessions/` and `~/.codex/archived_sessions/`. Per-request usage records are preferred; cumulative token-count deltas are the fallback. Service tiers come from rollout state and read-only feedback-tag logs. A store-local speed ledger preserves log evidence past Codex's roughly ten-day log retention. |
+| Grok Build | `~/.grok/sessions/*/*/updates.jsonl`. The producer reads the CLI's per-model token counts and `costUsdTicks`; it uses those dollar ticks directly instead of applying the LiteLLM rate table. |
 
-**$ / 1%** divides the window's spend up to the meter's last read by that percent, so a stale
-read (an account nobody is logged into) is never divided into spend it did not see. 100× it is
-what one full week of that account is worth at list price.
+The collector reduces each request to this record. It does not retain transcript prose or raw
+transcript paths:
+
+~~~json
+{"tool":"claude|codex|grok","model":"...","ts":...,"in":...,"out":...,"cr":...,"cw5":...,"cw1":...,"think":...,"speed":"...","speed_src":"...","tier":"...","prompt":...,"key":"opaque id","machine":"display name"}
+~~~
+
+`ts` is the request time in milliseconds. `in` is uncached input; `out` is output;
+`cr` is cached input read; `cw5` and `cw1` are cache writes; `think` is
+reasoning output where the source reports it. `prompt` is the prompt size used for long-context
+pricing. `key` supports deduplication and tier history. `speed_src` records how speed was
+established, and `tier` keeps the source service tier.
+
+Claude attribution combines active-login observations in this machine's samples with account
+switch events from the local switch log. Aliases are resolved through `glideslope.call_sign`.
+Attribution starts at the earliest login evidence from either source. Each request uses the
+latest evidence at or before its timestamp; requests before that earliest evidence, or when the
+latest evidence is more than 24 hours old, stay `unattributed`. Codex and Grok requests are
+credited to their provider.
+
+### Speed and pricing evidence
+
+The normalized speed values are `standard`, `flex`, `fast`, `ultrafast` and
+`unknown`. Claude speed is read from request usage. Codex tiers are accepted from rollout
+state or from a feedback-tag log only when the rollout evidence agrees; confirmed log tiers are
+kept in `<store>/pricing/speed-ledger.json`. Grok cost ticks are provider-supplied.
+
+| Pricing label or counter | Meaning |
+|---|---|
+| `list` | A list rate is available and used. There is no separate `list_tokens` counter. |
+| `standard` | A premium speed has no separate rate, so its tokens use the standard rate. Those tokens are counted under `pricing.underpriced_tokens`. |
+| `derived` | A missing premium cache rate is derived by applying the premium-to-base input-rate ratio to the base cache rate. Its tokens appear under `derived_tokens`. |
+| `estimated` | An explicit model-and-speed multiplier is used where a premium rate is not published. Its tokens appear under `estimated_tokens`. |
+| `unpriced_tokens` | No usable model rate exists. Token counts remain; their dollars are omitted. Up to ten model entries are reported. |
+
+The `pricing` object also reports `litellm_age_h`, the hours since the cached LiteLLM
+table was fetched, `speed_evidence` counts by provider, speed and evidence source, and
+`fast_mode_armed`. `speed_evidence` counts requests, or Grok model calls, not tokens. The
+`fast_mode_armed` object lists positive detections of premium-speed defaults in local Claude
+Code or Codex settings; an absent provider is inconclusive because settings may be unarmed,
+missing or unreadable. It does not say that a request used premium speed. LiteLLM table age
+does not describe Grok's cost ticks. A missing or old API price table can make those rate-based
+totals a floor.
+
+### Price refresh and local cache
+
+The price table is fetched from the public LiteLLM model-price file when it is missing or more
+than 24 hours old. That GET sends no Glideslope data. A failed fetch keeps the last table. Price
+data and the change log live under `<store>/pricing/`.
+
+Parsed transcript records are cached per file under `<store>/spend-cache/`. Cache filenames use
+an opaque SHA-256 hash of each resolved source path. Entries include a SHA-256 hash of the
+collector source as the parser version, plus file size and modification time. A cached file is
+reused only when all three match; changed files and parser versions are reparsed, and entries
+for removed sources are pruned. There is no full-collection dump. In one Python 3.11 benchmark,
+cold initial collection took about 100 seconds and reached 1,059 MiB maximum resident memory.
+A separate warm full-producer run took about 18 seconds and reached 653 MiB maximum resident
+memory. These measurements used one collection and different run scopes; results vary with
+transcript history and machine. The collector uses two workers by default;
+`GLIDESLOPE_SPEND_WORKERS` sets a positive-integer worker count.
+
+### spend.json
+
+`<store>/spend.json` is the producer output. Its top-level keys are:
+
+| Key | Contents |
+|---|---|
+| `generated_at`, `collected_at`, `first_request_at` | Build time, per-machine collection time and earliest request time. |
+| `attribution`, `accounts[]`, `machines` | Claude account attribution and spend, plus machine totals. |
+| `totals`, `providers`, `meters`, `leverage` | Combined, provider, anchored meter-window and subscription comparison buckets. |
+| `daily` | 60-day date list and daily spend series. |
+| `model_tokens[]` | Per-provider and per-model token rows for `d1`, `d7`, `d30` and `all`. These rows retain token counts even when a model is unpriced. |
+| `pricing` | Price-table age, pricing counters, speed evidence and armed-speed settings. |
+
+Spend buckets include `usd`, `tokens`, `requests`, input/output/cache token
+breakdowns, reasoning output, a `speed` breakdown and `premium_usd`. The reasoning
+count is part of output, not extra tokens. Each speed bucket has its own dollars, tokens,
+requests and premium-price difference.
+
+**$ / 1%** divides the spend in a meter's current window by the used percentage from its last
+read. A stale meter is never divided into spend it did not see. Multiply by 100 for the
+list-price value of the full window represented by that meter.
 
 ---
 

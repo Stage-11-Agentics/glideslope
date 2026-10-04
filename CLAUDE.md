@@ -10,15 +10,20 @@ This file is for agents developing the repo. `AGENTS.md` is a symlink to it. Use
 |---|---|
 | Language | Python 3.11+ (`tomllib`), standard library only |
 | Optional | Pillow, for the alert image only |
-| Tests | pytest, hermetic, ~310 tests in ~2s |
-| Entry points | `glideslope`, `glideslope-sampler`, `glideslope-notify`, `claude-account` |
+| Tests | pytest, hermetic, ~455 tests in ~3s |
+| Entry points | `glideslope`, `glideslope-sampler`, `glideslope-notify`, `glideslope-spend`, `claude-account` |
 | Config | `~/.glideslope/config.toml` (see below) |
 
 ## Layout
 
 ```
 glideslope.py        the CLI and module: provider reads, normalization, pools, rendering
-sampler.py           one sample: read the position, append to samples.db, rebuild the views
+sampler.py           one sample: read the position, append to samples.db, rebuild the views; start spend at most every 15 min when enabled
+pricing.py           API-equivalent token rates, daily public price refresh, Codex speed ledger
+spend_collect.py     compact local request records and parser-hash-versioned per-file transcript cache
+                     GLIDESLOPE_SPEND_WORKERS caps concurrent file parsing; default 2
+spend.py             price request records, attribute Claude from the earliest login evidence in samples or switch log, write <store>/spend.json
+pyproject.toml       registers the glideslope-spend command for spend.py
 notify.py            threshold alerts on the position the sampler already holds
 claude_account.py    login homes and the Claude usage read (tools/claude-account is a thin shim)
 PROVIDERS.md         per-provider read path, units, failure modes, credential discipline

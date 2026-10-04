@@ -1,6 +1,6 @@
 ---
 name: glideslope
-description: Report the live cross-provider subscription position (Claude accounts, Codex, Kimi, Grok, OpenRouter) as one usage table with the ◆ Glideslope even-burn mark (used above it = ahead of budget). Load on any usage, limit, quota, position, "where am I", "how much is left", or "which account should I use" check.
+description: Report the live cross-provider subscription position (Claude accounts, Codex, Kimi, Grok, OpenRouter) as one usage table with the ◆ Glideslope even-burn mark (used above it = ahead of budget), or run and explain API-equivalent spend. Load on any usage, limit, quota, position, spend, "where am I", "how much is left", or "which account should I use" check.
 homepage: https://github.com/Stage-11-Agentics/glideslope
 ---
 
@@ -40,6 +40,48 @@ If `glideslope` is not on PATH, run it from the clone: `python3 <path-to-clone>/
 - **💸 amount** on a 5-hour or 7-day all-models cell is usage-credit spend during that window. Real money. The percent and the ◆ stay. The 5-hour amount is inside the 7-day amount. Absence means no known burn. `floor` after the amount means it understates. Relay it exactly. It is not the API-equivalent panel, and it is not on Fable.
 
 Output order: login banner, On remote seats (only when seats are live), Weekly status, All windows, OpenRouter, API-equivalent (only if the user keeps a ledger), Codex reset banks (only when credits are banked), Recent switches. Relay all of it, in order.
+
+## API-equivalent spend
+
+When asked for a spend estimate from local coding-agent records, run:
+
+~~~bash
+glideslope-spend --print
+~~~
+
+If the command is not on PATH, run `python3 <path-to-clone>/spend.py --print`. It updates
+`<store>/spend.json` and prints 24-hour, 7-day, 30-day and all-time totals plus Claude
+account totals. Claude and Codex dollars use API list rates. Grok Build dollars use the
+`costUsdTicks` supplied by its local CLI, not the LiteLLM rate table. The totals are estimates,
+not subscription charges or an invoice. It covers local Claude Code, Codex and Grok Build only.
+
+Claude account totals use active-login samples and switch-log events, with aliases resolved
+through `glideslope.call_sign`. Attribution starts at the earliest login evidence from either
+source. Requests without earlier evidence or with evidence more than 24 hours old remain
+`unattributed`. `--no-collect` rebuilds spend from cached per-file records, writes
+`<store>/spend.json`, and does not reread transcripts; add `--print` to also display totals.
+It can miss transcript changes since the last normal collection and may still refresh the price
+table.
+
+A cold first collection took about 100 seconds and reached 1,059 MiB maximum resident memory
+in one benchmark. A separate warm full-producer run took about 18 seconds and reached 653 MiB
+maximum resident memory. It reuses unchanged files from the store's per-file cache. Normal
+collection checks a SHA-256 hash of the collector source, file size and modification time;
+`--no-collect` checks the cached parser hash and payload without checking transcript files.
+These measurements are approximate and depend on history size and machine. Normal runs refresh
+the public price table when it is missing or more than 24 hours old. Use `glideslope-spend
+prices` to inspect rates or `glideslope-spend prices --refresh` to force a refresh.
+
+Read the `pricing` object in `spend.json` alongside the totals:
+
+- `list` uses an available list rate; there is no separate `list_tokens` counter.
+- `standard` means a premium-speed request used the standard rate because no premium rate was available. Its tokens are counted as `underpriced_tokens`.
+- `derived` means a missing premium cache rate was derived by applying the premium-to-base input-rate ratio to the base cache rate; its tokens appear in `derived_tokens`.
+- `estimated` means an explicit model-and-speed multiplier was used for a premium rate that is not published; its tokens appear in `estimated_tokens`.
+- `unpriced_tokens` lists up to ten model entries with no usable rate. Those tokens remain counted but have no dollar value.
+- `speed_evidence` counts requests, or Grok model calls, by provider, speed and evidence source. `unknown` means the request has no speed evidence.
+- `fast_mode_armed` lists positive detections of premium speed defaults in local Claude Code or Codex settings. An absent provider is inconclusive because settings may be unarmed, missing or unreadable. It does not show which requests used premium speed.
+- `litellm_age_h` is the cached LiteLLM price table's age in hours; `null` means no table is available. Old or missing rates can make list-rate totals a floor. This age does not describe Grok's cost ticks.
 
 ## Switching Claude accounts
 
