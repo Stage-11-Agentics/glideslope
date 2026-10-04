@@ -13,8 +13,8 @@ and Fable meters and its organization ID. The ID, not the file name, says whose 
 they are: it is joined to the roster's `org_uuid`, which is learned from Claude Code's
 own login record. A setup-token is inference-only and cannot read /usage, so without
 this an account nobody is logged into anywhere is unreadable, and spend on it is
-invisible until someone logs in (2026-09-26: two days of Prime seats on a token labelled
-"Charlie" that billed Bravo). Nothing here refreshes, rotates or stores a meter token.
+invisible until someone logs in (2026-09-26: a setup-token labelled for one account that
+billed another). Nothing here refreshes, rotates or stores a meter token.
 
 Login homes (added 2026-09-12). Claude Code keeps one login per config directory:
 with CLAUDE_CONFIG_DIR unset it uses ~/.claude + ~/.claude.json + the keychain item

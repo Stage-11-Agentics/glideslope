@@ -508,7 +508,7 @@ def run(accounts: list[dict[str, Any]], now: dt.datetime, *,
 
     The state is written only for alerts that were DELIVERED. An alert dropped
     because the sink was down stays unsent, so it fires on the next tick once the
-    Eye is back rather than being silently marked as told.
+    the sink is back rather than being silently marked as told.
     """
     alerts = notifiable_windows(accounts, now, threshold=threshold)
     state = prune(load_state(state_path), now)
