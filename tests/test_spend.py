@@ -172,6 +172,58 @@ def test_pre_sample_claude_request_stays_unattributed(tmp_path, monkeypatch):
     assert recent < now
 
 
+def test_steady_active_samples_keep_claude_attribution_fresh(tmp_path, monkeypatch):
+    start = dt.datetime(2026, 10, 1, 0, tzinfo=dt.timezone.utc)
+    now = start + dt.timedelta(hours=49)
+    db = tmp_path / "samples.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE samples ("
+            "provider TEXT, account TEXT, meter TEXT, used_percent REAL, window_minutes INTEGER,"
+            "resets_at TEXT, observed_at TEXT, active INTEGER, plan TEXT,"
+            "UNIQUE(provider, account, meter, observed_at))"
+        )
+        con.executemany(
+            "INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?)",
+            [
+                ("Claude", "test-alias", "weekly_all", 20.0, 10080,
+                 _iso(start + dt.timedelta(days=7)), _iso(start + dt.timedelta(hours=hour)), 1, "Max")
+                for hour in (0, 12, 24, 36, 48)
+            ],
+        )
+    monkeypatch.setattr(glideslope, "CLAUDE_CALL_SIGNS", {"test-alias": "Test account"})
+
+    timelines, *_ = spend._read_sample_state(db, int(now.timestamp() * 1000))
+    request_at = int((start + dt.timedelta(hours=36)).timestamp() * 1000)
+
+    assert spend._account_at(timelines["local"], request_at) == "Test account"
+
+
+def test_first_request_includes_unpriced_activity(monkeypatch):
+    now = dt.datetime(2026, 10, 4, 12, tzinfo=dt.timezone.utc)
+    first = now - dt.timedelta(days=2)
+    later = now - dt.timedelta(hours=1)
+    collection = {
+        "records": [
+            _request("grok", "grok-4.2-fast", first, key="unpriced-old", inp=100),
+            _request("codex", "gpt-6.1-sol", later, key="priced-new", inp=100),
+        ],
+        "grok_cost_ticks": {},
+        "grok_model_calls": {},
+    }
+    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
+
+    data = spend.build(
+        collection, now=now, db=Path("/missing/samples.db"),
+        pricer=pricing.Pricer(lite={"gpt-6.1-sol": {
+            "input_cost_per_token": 1e-5, "output_cost_per_token": 2e-5,
+        }}),
+    )
+
+    assert data["first_request_at"] == spend._iso(int(first.timestamp() * 1000))
+
+
 def test_produced_spend_file_flows_through_the_real_deck_builder(tmp_path, monkeypatch):
     now = dt.datetime(2026, 10, 4, 12, tzinfo=dt.timezone.utc)
     old, middle, recent = now - dt.timedelta(days=10), now - dt.timedelta(days=2), now - dt.timedelta(minutes=30)

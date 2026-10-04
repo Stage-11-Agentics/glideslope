@@ -92,7 +92,8 @@ def _read_sample_state(db: Path, now_ms: int) -> tuple[dict, dict, dict, dict, d
             plan_column = "s.plan" if "plan" in columns else "NULL"
             active_column = "active" if "active" in columns else "0"
 
-            # Compress unchanged active samples while retaining a stale boundary after a day.
+            # Compress unchanged active samples, refreshing the timeline often enough that
+            # _account_at does not age out a login that is still being sampled.
             rows = con.execute(
                 "SELECT observed_at, account FROM samples"
                 " WHERE provider = 'Claude' AND meter = 'weekly_all' AND " + active_column + " = 1"
@@ -113,6 +114,10 @@ def _read_sample_state(db: Path, now_ms: int) -> tuple[dict, dict, dict, dict, d
                         timeline.append((stale_at, "unattributed"))
                     prior_name = "unattributed"
                 if name != prior_name:
+                    timeline.append((ms, name))
+                elif name != "unattributed" and (
+                    not timeline or ms - timeline[-1][0] >= MAX_LOGIN_AGE_MS // 2
+                ):
                     timeline.append((ms, name))
                 prior_ms, prior_name = ms, name
             if prior_ms is not None and prior_name != "unattributed" and now_ms - prior_ms > MAX_LOGIN_AGE_MS:
@@ -387,6 +392,8 @@ def build(collection: dict, now: dt.datetime | None = None, db: Path | None = No
             ms = int(ms) if ms is not None else None
         except (TypeError, ValueError, OverflowError):
             ms = None
+        if ms is not None:
+            first_ms = ms if first_ms is None else min(first_ms, ms)
         split = tuple(max(0, int(record.get(key) or 0)) for key in ("in", "out", "cr", "cw5", "cw1"))
         token_split = (split[0], split[1], split[2], split[3] + split[4])
         tokens = sum(split)
@@ -443,8 +450,6 @@ def build(collection: dict, now: dt.datetime | None = None, db: Path | None = No
             for horizon in model_spans:
                 by_model_id[(model_provider, model, horizon)].add(*args)
             continue
-        if ms is not None:
-            first_ms = ms if first_ms is None else min(first_ms, ms)
         spans = ["all"] + ([h for h, cutoff in cutoffs.items() if ms is not None and ms >= cutoff])
         for horizon in spans:
             totals[horizon].add(*args)
