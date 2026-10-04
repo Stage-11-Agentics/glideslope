@@ -388,12 +388,21 @@ def _seed_saved_collection(store: Path, request=None):
     spend._atomic_json({"collected_at": collected_at}, store / "spend" / "collection-state.json")
 
 
+def _use_fake_spend_page_builder(tmp_path: Path, monkeypatch, source: str = "print('page built')\n") -> Path:
+    builder = tmp_path / "spend-page-builder.py"
+    builder.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(spend, "SPEND_PAGE_BUILDER", builder)
+    monkeypatch.setattr(spend, "SPEND_PAGE_OUT", tmp_path / "spend-page.html")
+    return builder
+
+
 def test_no_collect_prices_the_saved_minimal_collection_without_reading_transcripts(tmp_path, monkeypatch):
     store = tmp_path / "store"
     home = tmp_path / "home"
     monkeypatch.setattr(glideslope, "STORE_DIR", store)
     monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    _use_fake_spend_page_builder(tmp_path, monkeypatch)
     monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
     request = _request("claude", "claude-opus-5-5", dt.datetime(2026, 10, 4, 11, tzinfo=dt.timezone.utc),
                        key="saved", inp=100, out=25)
@@ -414,6 +423,7 @@ def test_collection_failure_falls_back_to_the_last_per_file_cache(tmp_path, monk
     monkeypatch.setattr(glideslope, "STORE_DIR", store)
     monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    _use_fake_spend_page_builder(tmp_path, monkeypatch)
     monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
     request = _request("claude", "claude-opus-5-5", dt.datetime(2026, 10, 4, 11, tzinfo=dt.timezone.utc),
                        key="saved", inp=100, out=25)
@@ -425,6 +435,30 @@ def test_collection_failure_falls_back_to_the_last_per_file_cache(tmp_path, monk
 
     data = json.loads((store / "spend.json").read_text(encoding="utf-8"))
     assert data["first_request_at"] == spend._iso(request["ts"])
+
+
+def test_page_builder_failure_is_logged_and_producer_still_exits_zero(tmp_path, monkeypatch, capsys):
+    store = tmp_path / "store"
+    home = tmp_path / "home"
+    monkeypatch.setattr(glideslope, "STORE_DIR", store)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    monkeypatch.setattr(pricing, "prices_age_h", lambda: None)
+    _use_fake_spend_page_builder(
+        tmp_path, monkeypatch,
+        "import sys; sys.stderr.write('fixture builder failed\\n'); sys.exit(7)\n",
+    )
+    request = _request("claude", "claude-opus-5-5", dt.datetime(2026, 10, 4, 11, tzinfo=dt.timezone.utc),
+                       key="saved", inp=100, out=25)
+    _seed_saved_collection(store, request)
+
+    with patch.object(pricing, "refresh_prices", return_value="fresh"):
+        assert spend._produce(no_collect=True) == 0
+
+    assert (store / "spend.json").is_file()
+    stderr = capsys.readouterr().err
+    assert "Spend page build failed rc=7" in stderr
+    assert "producer continues" in stderr
 
 
 def test_atomic_json_preserves_old_file_and_cleans_temp_on_replace_failure(tmp_path, monkeypatch):

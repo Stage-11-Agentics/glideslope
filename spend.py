@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -33,11 +34,38 @@ MAX_LOGIN_AGE_MS = 24 * 60 * 60 * 1000
 WEEK_MS = 7 * 24 * 60 * 60 * 1000
 DAILY_DAYS = 60
 GROK_TICKS_PER_USD = 10_000_000_000
+ROOT = Path(__file__).resolve().parent
+SPEND_PAGE_BUILDER = ROOT / "views" / "spend-src" / "build.py"
+SPEND_PAGE_OUT = ROOT / "views" / "spend.html"
+SPEND_PAGE_TIMEOUT_SECONDS = 10
 _PLAN_PRICE = {"max 20x": 200.0, "max 5x": 100.0, "pro": 20.0, "20x": 200.0}
 
 
 def _log(message: str) -> None:
     sys.stderr.write("[glideslope spend] %s\n" % message)
+
+
+def rebuild_spend_page(store: Path) -> bool:
+    """Refresh the local view after spend.json is committed; its failure is optional."""
+    command = [
+        sys.executable, str(SPEND_PAGE_BUILDER), "--spend", str(store / "spend.json"),
+        "--samples", str(store / "samples.db"), "--out", str(SPEND_PAGE_OUT),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True,
+                               timeout=SPEND_PAGE_TIMEOUT_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        _log(f"Spend page build timed out after {SPEND_PAGE_TIMEOUT_SECONDS}s; producer continues")
+        return False
+    except OSError as exc:
+        _log(f"Spend page build could not start: {exc}; producer continues")
+        return False
+    if result.returncode != 0:
+        detail = (result.stderr.strip() or result.stdout.strip() or "unknown error")[:400]
+        _log(f"Spend page build failed rc={result.returncode}: {detail}; producer continues")
+        return False
+    _log("Spend page rebuilt")
+    return True
 
 
 def _iso_ms(value: str | None) -> int | None:
@@ -696,6 +724,7 @@ def _produce(no_collect: bool = False, print_summary: bool = False) -> int:
         _log("producer failed; the prior spend file remains in place")
         return 1
     _log("spend file updated")
+    rebuild_spend_page(store)
     if print_summary:
         print(summary(data))
     return 0

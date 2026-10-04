@@ -26,6 +26,7 @@ views/
   deck-src/          Detail view: build.py + template
   popup-src/         compact approach-plot popup: template
   history-src/       History view: build.py + template
+  spend-src/         local API-equivalent Spend view: build.py + template
                      built HTML lands in views/ and is gitignored
 tools/               probes, refresh.sh, launchd installers, beacon, login watcher, hooks
 tests/               pytest
@@ -39,7 +40,7 @@ There is no `data/` directory. All state lives in the store.
 ```bash
 python3 glideslope.py                     # the position, as markdown
 python3 glideslope.py --json              # the normalized snapshot
-python3 glideslope.py --open [deck|popup|history]   # rebuild one view from this run and open it in the browser
+python3 glideslope.py --open [deck|popup|history|spend] # rebuild one view and open it in the browser
 python3 glideslope.py --help              # read-only
 python3 glideslope.py --skip-claude --codex-snapshot saved.json     # offline, from a saved payload
 ```
@@ -66,11 +67,17 @@ CI runs the suite on ubuntu-latest and macos-latest, Python 3.11 and 3.13, with 
 ## Rebuild the views
 
 ```bash
-bash tools/refresh.sh --no-gauge          # both views from the current position, no Claude usage GET
+bash tools/refresh.sh --no-gauge          # available views, no Claude usage GET
 bash tools/refresh.sh                     # gauge step included; still read-only, mints nothing
 python3 views/deck-src/build.py           # Detail view + popup, cached gauge
 python3 views/history-src/build.py        # History view, store only
+python3 views/spend-src/build.py          # Spend view from local spend.json + samples.db
 ```
+
+After each successful spend-ledger write, the producer tries to rebuild Spend with a 10-second
+timeout. A timeout or builder error is logged and does not fail the ledger write; the sampler
+starts the producer detached after committing its sample, so the sample never waits for the page.
+`refresh.sh` skips Spend when no ledger exists.
 
 After editing a template: run the tests, rebuild, and open the built page. Look at it. The popup is sized by its host and every provider costs register rows out of that budget, so check that the last window still clears the footer.
 

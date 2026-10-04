@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Refresh Glideslope end-to-end: gauge → the host's popup preview + Detail view.
+# Refresh Glideslope end-to-end: gauge → the host's popup preview + Detail + Spend views.
 #
 # Safe to run at any time, from anywhere, concurrently. `claude-account` borrows
 # the access token Claude Code already keeps and never refreshes it, so the gauge
@@ -9,7 +9,7 @@
 # 2026-08-06 along with the refresh-token store.
 #
 # Usage:
-#   tools/refresh.sh              gauge + both views   (the full thing)
+#   tools/refresh.sh              gauge + all views    (the full thing)
 #   tools/refresh.sh --no-gauge   views only           (skip the usage GET)
 #
 set -euo pipefail
@@ -55,6 +55,14 @@ fi
 step "views — rebuilding the host's popup preview + Detail view from live position + sample store"
 python3 views/deck-src/build.py 2>&1 | sed 's/^/  /'
 
+SPEND_JSON="$(python3 -c 'import glideslope; print(glideslope.STORE_DIR / "spend.json")')"
+if [ -f "$SPEND_JSON" ]; then
+  step "Spend view — rebuilding from spend.json + sample store"
+  python3 views/spend-src/build.py 2>&1 | sed 's/^/  /'
+else
+  printf '\n  Spend view skipped — no spend.json at %s\n' "$SPEND_JSON"
+fi
+
 python3 - <<'PY'
 import datetime as dt, os, glideslope
 g = dt.datetime.fromtimestamp(os.stat(glideslope.DEFAULT_CLAUDE_SNAPSHOT).st_mtime, dt.timezone.utc)
@@ -66,3 +74,6 @@ PY
 
 echo
 echo "Detail view: open views/deck.html"
+if [ -f "$ROOT/views/spend.html" ]; then
+  echo "Spend view:  open views/spend.html"
+fi

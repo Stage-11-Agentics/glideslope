@@ -4192,26 +4192,31 @@ def snapshot_payload(accounts: list[dict[str, Any]], openrouter: dict[str, Any] 
     return payload
 
 
-VIEW_FILES = {"deck": "deck.html", "popup": "popup.html", "history": "history.html"}
+VIEW_FILES = {"deck": "deck.html", "popup": "popup.html", "history": "history.html", "spend": "spend.html"}
 
 
 def build_views(payload: dict[str, Any], view: str) -> Path:
     """Rebuild the requested view from a position already in hand and return its path.
 
     The deck builder writes deck.html and popup.html from the position on stdin,
-    so no provider is read a second time. The history builder reads only the
-    sample store. Both live beside this file in the clone: a tool install carries
-    the CLI alone, and says so instead of opening a stale or missing page.
+    so no provider is read a second time. History reads only samples.db; Spend
+    reads the latest spend.json and samples.db. The builders live beside this
+    file in the clone: a tool install says so instead of opening a stale page.
     """
     views = ROOT / "views"
-    builder = views / ("history-src" if view == "history" else "deck-src") / "build.py"
+    builder_dir = {"history": "history-src", "spend": "spend-src"}.get(view, "deck-src")
+    builder = views / builder_dir / "build.py"
     if not builder.exists():
         raise PositionError(
             "the views ship with the clone, not the tool install: "
             "git clone https://github.com/Stage-11-Agentics/glideslope && cd glideslope && "
             f"python3 glideslope.py --open {view}")
-    cmd = [sys.executable, str(builder)] + ([] if view == "history" else ["--position-stdin"])
-    result = subprocess.run(cmd, input=None if view == "history" else json.dumps(payload),
+    cmd = [sys.executable, str(builder)]
+    if view == "spend":
+        cmd.extend(("--views-dir", str(views)))
+    elif view != "history":
+        cmd.append("--position-stdin")
+    result = subprocess.run(cmd, input=json.dumps(payload) if view in {"deck", "popup"} else None,
                             capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
@@ -4319,7 +4324,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--open", nargs="?", const="deck", choices=sorted(VIEW_FILES),
                         metavar="VIEW",
                         help="rebuild a view from this run's position and open it in the browser: "
-                             "deck (default), popup or history")
+                             "deck (default), popup, history or spend")
     parser.add_argument("--watch", action="store_true",
                         help="live-updating display for a dedicated pane/workspace")
     parser.add_argument("--interval", type=float, default=10.0,

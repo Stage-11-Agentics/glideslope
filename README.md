@@ -71,7 +71,7 @@ agents on cloud sandboxes, billing your accounts? point `[seats] file` at the JS
 two surfaces ship. both are the same position.
 
 - **the terminal.** `glideslope` is the position as a table, relay-ready markdown, and the only terminal interface. `--watch` keeps it redrawing in a pane; `--json` is the same position as one snapshot.
-- **the browser.** `glideslope --open` rebuilds the Detail view and opens it as a tab. the page is one self-contained HTML file on disk, nothing hosted, and it reloads itself every minute, so with the sampler installed the tab is a live instrument. `--open popup` is the plot and register alone, `--open history` the same plot on a real clock, weeks stacked behind you.
+- **the browser.** `glideslope --open` rebuilds the Detail view and opens it as a tab. the page is one self-contained HTML file on disk, nothing hosted, and it reloads itself every minute, so with the sampler installed the tab is a live instrument. `--open popup` is the plot and register alone, `--open history` the same plot on a real clock, weeks stacked behind you. `--open spend` opens the optional API-equivalent spend ledger from the local producer's `spend.json`.
 
 a menu bar, a side panel, a dashboard cell: not shipped. the popup was drawn for one. it expects a host that embeds it in a web view and rewrites the file every minute, and the sampler already does the rewriting. that wrapper is a short job for your agent, in whatever your platform calls a status item, and we would take the pull request.
 

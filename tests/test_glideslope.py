@@ -1939,6 +1939,30 @@ class OpenViewTests(unittest.TestCase):
             self.assertNotIn("--position-stdin", seen["cmd"])
             self.assertIsNone(seen["stdin"])
 
+    def test_spend_builds_from_the_ledger_without_position_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "views" / "spend-src").mkdir(parents=True)
+            (root / "views" / "spend-src" / "build.py").write_text("")
+            seen = {}
+
+            def fake_run(cmd, **kwargs):
+                seen["cmd"] = cmd
+                seen["stdin"] = kwargs.get("input")
+                (root / "views" / "spend.html").write_text("<html></html>")
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch.object(glideslope, "ROOT", root), \
+                 mock.patch.object(glideslope.subprocess, "run", fake_run), \
+                 mock.patch("webbrowser.open", return_value=True) as opened:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = glideslope.open_view("spend", self._payload())
+            self.assertEqual(code, 0)
+            self.assertNotIn("--position-stdin", seen["cmd"])
+            self.assertEqual(seen["cmd"][seen["cmd"].index("--views-dir") + 1], str(root / "views"))
+            self.assertIsNone(seen["stdin"])
+            opened.assert_called_once_with((root / "views" / "spend.html").resolve().as_uri())
+
     def test_tool_install_without_views_says_so_and_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             err = io.StringIO()
@@ -1969,4 +1993,4 @@ class OpenViewTests(unittest.TestCase):
     def test_open_defaults_to_the_deck_and_rejects_unknown_views(self):
         parser_args = glideslope.main.__globals__  # the parser is built inside main
         self.assertIn("VIEW_FILES", parser_args)
-        self.assertEqual(set(glideslope.VIEW_FILES), {"deck", "popup", "history"})
+        self.assertEqual(set(glideslope.VIEW_FILES), {"deck", "popup", "history", "spend"})
