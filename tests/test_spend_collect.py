@@ -1,7 +1,10 @@
 """Hermetic tests for the request-only spend collector."""
 
+import ast
+import json
 import shutil
 import sqlite3
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -84,15 +87,34 @@ def test_codex_live_archive_selection_tiers_and_read_only_log_gap(tmp_path):
     observations = collector.codex_tier_log(home / ".codex")
     assert observations["thread-main"] == [(800, "default"), (1500, "priority"), (3500, "default")]
 
+    ledger_path = tmp_path / "speed-ledger.json"
     result = collector.collect(
         home=home,
         machine="test-machine",
-        speed_ledger=SpeedLedger(tmp_path / "speed-ledger.json"),
+        speed_ledger=SpeedLedger(ledger_path),
     )
     codex = [request for request in result.records if request["tool"] == "codex"]
     assert len(codex) == 4
     assert [request["key"] for request in codex] == ["thread-main|0", "thread-main|1", "thread-main|2", "thread-main|3"]
+    expected_tiers = [
+        ("default", "standard", "log"),
+        ("priority", "fast", "log"),
+        ("priority", "fast", "log"),
+        ("default", "standard", "log"),
+    ]
+    assert [(request["tier"], request["speed"], request["speed_src"]) for request in codex] == expected_tiers
+    assert ledger_path.is_file()
+    assert set(json.loads(ledger_path.read_text(encoding="utf-8"))) == {"test-machine|thread-main"}
     assert database.stat().st_mtime_ns == before
+
+    database.unlink()
+    restored = collector.collect(
+        home=home,
+        machine="test-machine",
+        speed_ledger=SpeedLedger(ledger_path),
+    )
+    restored_codex = [request for request in restored.records if request["tool"] == "codex"]
+    assert [(request["tier"], request["speed"], request["speed_src"]) for request in restored_codex] == expected_tiers
 
 
 def test_codex_log_guard_log_next_refusal_and_rollout_fallback():
@@ -137,7 +159,7 @@ def test_codex_merged_delta_uses_last_request_prompt_size():
     assert requests[1]["in"] == 400
     assert requests[1]["cr"] == 200
     assert requests[1]["out"] == 100
-    assert requests[1]["prompt"] == 600
+    assert requests[1]["prompt"] == 450
 
 
 def test_grok_two_model_costs_stay_outside_the_request_shape(tmp_path):
@@ -158,8 +180,47 @@ def test_grok_two_model_costs_stay_outside_the_request_shape(tmp_path):
         "session-one|prompt-one|grok-4.2": 123456789,
         "session-one|prompt-one|grok-4.2-fast": 987654321,
     }
+    assert result.grok_model_calls == {
+        "session-one|prompt-one|grok-4.2": 7,
+        "session-one|prompt-one|grok-4.2-fast": 1,
+    }
     assert all(set(request) == set(collector.RECORD_FIELDS) for request in grok)
-    assert set(result.payload()) == {"records", "grok_cost_ticks"}
+    assert set(result.payload()) == {"records", "grok_cost_ticks", "grok_model_calls"}
+
+
+def test_unreadable_codex_tier_log_emits_one_path_free_line(tmp_path, capsys):
+    database = tmp_path / "logs_broken.sqlite"
+    database.write_text("not a sqlite database", encoding="utf-8")
+
+    assert collector.codex_tier_log(tmp_path) == {}
+    captured = capsys.readouterr()
+    assert captured.err == "[glideslope spend] unreadable Codex tier log; skipping database\n"
+    assert str(database) not in captured.err
+
+
+def test_py_modules_include_local_import_dependencies():
+    root = Path(__file__).resolve().parents[1]
+    with (root / "pyproject.toml").open("rb") as handle:
+        config = tomllib.load(handle)
+    modules = set(config["tool"]["setuptools"]["py-modules"])
+    local_modules = {path.stem for path in root.glob("*.py")}
+
+    missing = set()
+    for module in modules:
+        source = root / (module + ".py")
+        if not source.is_file():
+            continue
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported = {alias.name.split(".", 1)[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported = {node.module.split(".", 1)[0]}
+            else:
+                continue
+            missing.update((module, dependency) for dependency in imported & local_modules if dependency not in modules)
+
+    assert not missing, "listed modules import local modules absent from py-modules: %s" % sorted(missing)
 
 
 def test_worker_cap_requires_a_positive_integer(monkeypatch, tmp_path):

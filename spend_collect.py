@@ -31,13 +31,18 @@ _TIER_RE = re.compile(r'"service_tier"\s*:\s*"([a-z_]+)"')
 
 @dataclass(frozen=True)
 class Collection:
-    """Request records plus Grok's vendor cost, held outside the record shape."""
+    """Request records plus Grok's vendor cost and call count, held outside the record shape."""
 
     records: list[dict]
     grok_cost_ticks: dict[str, int]
+    grok_model_calls: dict[str, int]
 
     def payload(self) -> dict:
-        return {"records": self.records, "grok_cost_ticks": self.grok_cost_ticks}
+        return {
+            "records": self.records,
+            "grok_cost_ticks": self.grok_cost_ticks,
+            "grok_model_calls": self.grok_model_calls,
+        }
 
 
 def _integer(value, default: int = 0) -> int:
@@ -257,6 +262,7 @@ def codex_tier_log(codex_home: Path) -> dict[str, list[tuple[int, str]]]:
             finally:
                 connection.close()
         except sqlite3.Error:
+            sys.stderr.write("[glideslope spend] unreadable Codex tier log; skipping database\n")
             continue
         for thread_id, seconds, nanos, body in rows:
             match = _TIER_RE.search(body or "")
@@ -303,15 +309,16 @@ def stamp_codex_speed(requests: list[dict], observations: dict[str, list[tuple[i
     return stamped
 
 
-def _grok_file(path: Path) -> tuple[list[dict], dict[str, int]]:
+def _grok_file(path: Path) -> tuple[list[dict], dict[str, int], dict[str, int]]:
     requests: list[dict] = []
     costs: dict[str, int] = {}
+    model_calls: dict[str, int] = {}
     session_id = path.parent.name
     seen_turns = set()
     try:
         handle = path.open("r", encoding="utf-8", errors="ignore")
     except OSError:
-        return requests, costs
+        return requests, costs, model_calls
     with handle:
         for line in handle:
             if '"usage"' not in line:
@@ -355,7 +362,8 @@ def _grok_file(path: Path) -> tuple[list[dict], dict[str, int]]:
                 raw_cost = value.get("costUsdTicks")
                 if raw_cost is not None:
                     costs[key] = _integer(raw_cost)
-    return requests, costs
+                model_calls[key] = _integer(value.get("modelCalls")) or 1
+    return requests, costs, model_calls
 
 
 def _worker_count(workers: int | None) -> int:
@@ -429,8 +437,9 @@ def collect(
     grok_files = sorted(grok_root.glob("*/*/updates.jsonl")) if grok_root.is_dir() else []
     grok_requests = []
     grok_cost_ticks: dict[str, int] = {}
+    grok_model_calls: dict[str, int] = {}
     seen_grok_turns = set()
-    for requests, costs in _map_files(_grok_file, grok_files, worker_cap):
+    for requests, costs, model_calls in _map_files(_grok_file, grok_files, worker_cap):
         by_turn: dict[tuple[str, str], list[dict]] = {}
         for request in requests:
             session_id, prompt_id, _model = request["key"].split("|", 2)
@@ -444,10 +453,15 @@ def collect(
                 grok_requests.append(request)
                 if request["key"] in costs:
                     grok_cost_ticks[request["key"]] = costs[request["key"]]
+                grok_model_calls[request["key"]] = model_calls.get(request["key"], 1)
 
     records = list(claude_requests.values()) + codex_requests + grok_requests
     records.sort(key=lambda request: (request["ts"] or 0, request["tool"], request["key"]))
-    return Collection(records=records, grok_cost_ticks=dict(sorted(grok_cost_ticks.items())))
+    return Collection(
+        records=records,
+        grok_cost_ticks=dict(sorted(grok_cost_ticks.items())),
+        grok_model_calls=dict(sorted(grok_model_calls.items())),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
