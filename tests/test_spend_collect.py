@@ -1,6 +1,7 @@
 """Hermetic tests for the request-only spend collector."""
 
 import ast
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -9,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import glideslope
 import spend_collect as collector
 from pricing import CODEX_SPEED, SpeedLedger
 
@@ -70,6 +72,124 @@ def test_claude_stream_and_resume_dedup_and_profile_roots(tmp_path):
     assert subagent["speed_src"] is None
     assert all(set(request) == set(collector.RECORD_FIELDS) for request in result.records)
     assert result.grok_cost_ticks == {}
+
+
+def test_per_file_cache_skips_unchanged_reparses_changes_and_drops_deleted_files(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    transcript = _copy("claude-stream-a.jsonl", home / ".claude" / "projects" / "one.jsonl")
+    cache_dir = tmp_path / "store" / "spend-cache"
+    parsed = []
+    original = collector._claude_file
+
+    def count_parse(path):
+        parsed.append(path)
+        return original(path)
+
+    monkeypatch.setattr(collector, "_claude_file", count_parse)
+    ledger = SpeedLedger(tmp_path / "speed-ledger.json")
+
+    first = collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    assert len(first.records) == 1
+    assert len(parsed) == 1
+    entries = list(cache_dir.glob("*.json"))
+    assert len(entries) == 1
+    cached_text = entries[0].read_text(encoding="utf-8")
+    assert str(home) not in cached_text
+    assert "prompt text" not in cached_text
+
+    warm = collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    assert warm.records == first.records
+    assert len(parsed) == 1
+
+    transcript.write_text(transcript.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    changed = collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    assert changed.records == first.records
+    assert len(parsed) == 2
+
+    transcript.unlink()
+    deleted = collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    assert deleted.records == []
+    assert list(cache_dir.glob("*.json")) == []
+
+
+def test_cache_version_tracks_collector_source():
+    assert collector.FILE_CACHE_VERSION == hashlib.sha256(Path(collector.__file__).read_bytes()).hexdigest()
+
+
+def test_per_file_cache_reparses_a_stale_version(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _copy("claude-stream-a.jsonl", home / ".claude" / "projects" / "one.jsonl")
+    cache_dir = tmp_path / "store" / "spend-cache"
+    parsed = []
+    original = collector._claude_file
+
+    def count_parse(path):
+        parsed.append(path)
+        return original(path)
+
+    monkeypatch.setattr(collector, "_claude_file", count_parse)
+    ledger = SpeedLedger(tmp_path / "speed-ledger.json")
+    collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    cache_path = next(cache_dir.glob("*.json"))
+    entry = json.loads(cache_path.read_text(encoding="utf-8"))
+    entry["version"] = "stale-parser-version"
+    cache_path.write_text(json.dumps(entry), encoding="utf-8")
+
+    collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+
+    assert len(parsed) == 2
+
+
+def test_per_file_cache_reparses_a_wrong_kind_even_with_valid_other_kind_shape(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _copy("claude-stream-a.jsonl", home / ".claude" / "projects" / "one.jsonl")
+    cache_dir = tmp_path / "store" / "spend-cache"
+    parsed = []
+    original = collector._claude_file
+
+    def count_parse(path):
+        parsed.append(path)
+        return original(path)
+
+    monkeypatch.setattr(collector, "_claude_file", count_parse)
+    ledger = SpeedLedger(tmp_path / "speed-ledger.json")
+    collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+    cache_path = next(cache_dir.glob("*.json"))
+    entry = json.loads(cache_path.read_text(encoding="utf-8"))
+    entry["kind"] = "grok"
+    entry["payload"].update(grok_cost_ticks={}, grok_model_calls={})
+    cache_path.write_text(json.dumps(entry), encoding="utf-8")
+
+    collector.collect(home=home, machine="cache-test", speed_ledger=ledger, cache_dir=cache_dir)
+
+    assert len(parsed) == 2
+
+
+def test_spend_cache_lives_under_the_configured_store(tmp_path, monkeypatch):
+    store = tmp_path / "configured-store"
+    monkeypatch.setattr(glideslope, "STORE_DIR", store)
+
+    assert collector._spend_cache_dir() == store / "spend-cache"
+
+
+def test_saved_collection_rehydrates_from_per_file_cache_without_transcripts(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _copy("claude-stream-a.jsonl", home / ".claude" / "projects" / "one.jsonl")
+    cache_dir = tmp_path / "store" / "spend-cache"
+    expected = collector.collect(
+        home=home, machine="cache-test", speed_ledger=SpeedLedger(tmp_path / "speed-ledger.json"),
+        cache_dir=cache_dir,
+    )
+    monkeypatch.setattr(collector, "_claude_file", lambda _path: pytest.fail("read transcript"))
+    monkeypatch.setattr(collector, "codex_tier_log", lambda _path: pytest.fail("read Codex log"))
+
+    cached = collector.load_cached_collection(
+        home=home, machine="cache-test", cache_dir=cache_dir,
+        speed_ledger=SpeedLedger(tmp_path / "cached-speed-ledger.json"),
+    )
+
+    assert cached is not None
+    assert cached.records == expected.records
 
 
 def test_codex_live_archive_selection_tiers_and_read_only_log_gap(tmp_path):

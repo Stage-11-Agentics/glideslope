@@ -24,12 +24,14 @@ launchd simply tries again in a minute. A sampler must never page anyone.
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import json
 import os
 import re
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -41,6 +43,11 @@ DB_PATH = STORE_DIR / "samples.db"
 KEYS_FILE = glideslope.KEYS_FILE
 DECK_BUILDER = ROOT / "views" / "deck-src" / "build.py"
 HISTORY_BUILDER = ROOT / "views" / "history-src" / "build.py"
+SPEND_PRODUCER = ROOT / "spend.py"
+SPEND_INTERVAL_SECONDS = 15 * 60
+SPEND_LAST_ATTEMPT = STORE_DIR / "spend-sampler-last-attempt"
+SPEND_CADENCE_LOCK = STORE_DIR / ".spend-sampler.lock"
+SPEND_LOG = STORE_DIR / "spend.log"
 
 
 KEY_NAMES = ("OPENROUTER_API_KEY", "KIMI_API_KEY")
@@ -181,6 +188,66 @@ def fire_alerts(position: dict) -> list[str]:
         return []
 
 
+def run_spend_if_due(now_seconds: float | None = None) -> bool:
+    """Start the optional producer at most every 15 minutes without holding the sample open."""
+    if glideslope._config_table("spend").get("producer", True) is False:
+        return False
+    now_seconds = time.time() if now_seconds is None else now_seconds
+    try:
+        STORE_DIR.mkdir(parents=True, exist_ok=True)
+        lock = SPEND_CADENCE_LOCK.open("a+")
+    except OSError:
+        print("spend producer cadence state unavailable", file=sys.stderr)
+        return False
+
+    try:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        try:
+            last = float(SPEND_LAST_ATTEMPT.read_text())
+        except (OSError, ValueError):
+            last = 0.0
+        if now_seconds - last < SPEND_INTERVAL_SECONDS:
+            return False
+
+        temporary = SPEND_LAST_ATTEMPT.with_name(SPEND_LAST_ATTEMPT.name + ".tmp")
+        try:
+            temporary.write_text(str(now_seconds))
+            os.replace(temporary, SPEND_LAST_ATTEMPT)
+        except OSError:
+            print("spend producer cadence state could not be saved", file=sys.stderr)
+            return False
+
+        try:
+            output = SPEND_LOG.open("a", encoding="utf-8")
+        except OSError:
+            print("spend producer log unavailable", file=sys.stderr)
+            return False
+        try:
+            subprocess.Popen(
+                [sys.executable, str(SPEND_PRODUCER)],
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                env=subprocess_env(),
+                start_new_session=True,
+                close_fds=True,
+            )
+        except Exception:  # noqa: BLE001 — spend cannot delay or fail the saved sample
+            print("spend producer could not be started", file=sys.stderr)
+            return False
+        finally:
+            output.close()
+        return True
+    finally:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock.close()
+
+
 def rows_from(position: dict, ts: str) -> list[tuple]:
     rows: list[tuple] = []
     for account in position.get("accounts", []):
@@ -246,6 +313,10 @@ def main() -> int:
         fresh = cur.rowcount if cur.rowcount != -1 else 0
     finally:
         con.close()
+
+    # The sample is committed before this detached optional work starts. A slow or
+    # broken spend run must not postpone the view rebuild or undo the observation.
+    run_spend_if_due()
 
     try:
         deck_result = rebuild_deck(position)

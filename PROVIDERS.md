@@ -568,14 +568,20 @@ key), and a residual would mislead.
 
 ---
 
-## API-equivalent spend (optional input, added 2026-09-23)
+## API-equivalent spend (added 2026-09-23)
 
-Not a provider: a valuation of the tokens behind the Claude and Codex meters. Glideslope does
-not compute it. When `<store>/spend.json` exists, the Detail view and the popup draw it; when it
-is absent or malformed they draw an empty panel and the rebuild carries on. The producer (a
-collector that prices local Claude Code, Codex, Kimi and Grok requests at API list rates and
-credits each one to the Claude account logged in on its machine at that moment) is not part of
-this repo.
+Not a provider: a valuation of local Claude Code, Codex and Grok Build requests at API list
+rates. The `glideslope-spend` producer in this repo writes `<store>/spend.json`; the sampler
+runs it no more than once every 15 minutes, after saving the provider sample. A failed spend
+run is logged and does not fail the sample. The public producer covers this machine only and
+does not collect Kimi or remote machine spend. Claude requests are credited to the active
+Claude account shown by this machine's samples; requests before the first active sample or
+after its evidence is stale remain `unattributed`.
+
+Run `glideslope-spend --print` to print the current summary, `glideslope-spend --no-collect`
+to rebuild from the saved collection, or `glideslope-spend prices` to show the current rates.
+When `<store>/spend.json` exists, the Detail view and popup draw it; when absent or malformed,
+they draw an empty panel and the rebuild carries on.
 
 | | |
 |---|---|
@@ -583,7 +589,9 @@ this repo.
 | Keys the views read | `generated_at`, `collected_at`, `first_request_at`, `attribution`, `totals.{d1,d7,d30,all}`, `machines`, `accounts[]`, `leverage`, `providers`, `meters["<display>/<meter_id>"]`, `daily.{days,series}` (see `spend_view()` in `views/deck-src/build.py`) |
 | Per meter | every anchored meter's current window, priced from the same records: the popup's $ column. The Fable row counts Fable only |
 | Per model | `model_tokens[]`: one row per `(provider, model)` with `priced` and `{d1,d7,d30,all}`, each `{tokens, input, cache_read, cache_write, output, reasoning, requests, usd}`. `reasoning` is the thinking share of `output`, never added to `tokens`. Drawn only in the Detail view's Tokens by model band, with no dollars; a model with no list price still counts there (`priced: false`) |
-| Credential | none. Glideslope only reads the file |
+| Bucket fields | every bucket carries `speed` breakdowns and `premium_usd` beside its regular API-list-price value |
+| Pricing | `pricing` reports table age, unpriced, underpriced, derived and estimated token counts, speed evidence, and `pricing.fast_mode_armed` for local Claude Code or Codex settings |
+| Credential | none. Request records come from local transcript files; the views only read `spend.json` |
 
 **$ / 1%** divides the window's spend up to the meter's last read by that percent, so a stale
 read (an account nobody is logged into) is never divided into spend it did not see. 100× it is

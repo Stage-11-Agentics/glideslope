@@ -45,6 +45,7 @@ dev = [
 glideslope = "glideslope:main"
 glideslope-sampler = "sampler:main"
 glideslope-notify = "notify:main"
+glideslope-spend = "spend:main"
 claude-account = "claude_account:main"
 
 [project.urls]
@@ -53,7 +54,7 @@ Repository = "https://github.com/Stage-11-Agentics/glideslope"
 Issues = "https://github.com/Stage-11-Agentics/glideslope/issues"
 
 [tool.setuptools]
-py-modules = ["glideslope", "sampler", "notify", "claude_account", "pricing", "spend_collect"]
+py-modules = ["glideslope", "sampler", "notify", "claude_account", "pricing", "spend_collect", "spend"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

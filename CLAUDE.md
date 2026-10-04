@@ -102,6 +102,7 @@ After editing a template: run the tests, rebuild, and open the built page. Look 
 | `[notify] sink` | `macos` | `macos` (osascript banner), `url` (POST JSON), `none` |
 | `[notify] url` | `""` | url sink only |
 | `[notify] percent` | `90` | alert line for windows on the active Claude account |
+| `[spend] producer` | `true` | sampler launches the API-equivalent spend producer; set `false` when another local writer owns spend production |
 
 launchd labels are `ai.stage11.glideslope.<job>`.
 

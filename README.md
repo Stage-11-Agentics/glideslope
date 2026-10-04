@@ -62,6 +62,8 @@ or `uv tool install git+https://github.com/Stage-11-Agentics/glideslope` for the
 
 configuration is one optional file, `~/.glideslope/config.toml`, and every key has a default: [`config.example.toml`](config.example.toml).
 
+The sampler starts the spend producer by default. When another local writer owns spend production, set `[spend] producer = false` to disable the sampler's producer; the sampler will skip its launch and cadence state.
+
 agents on cloud sandboxes, billing your accounts? point `[seats] file` at the JSON list your launcher writes, and the position names who is on a remote seat and which account pays for it: `On remote seats: 6 Grok (Grok) · 1 Claude (Alpha)`. the shape is in [`PROVIDERS.md`](PROVIDERS.md#remote-agent-seats).
 
 ## seeing it.

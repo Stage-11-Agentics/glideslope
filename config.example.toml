@@ -75,3 +75,8 @@ sink = "macos"
 url = ""              # url sink only
 # The line past which a window is worth interrupting for. Default: 90.
 percent = 90
+
+# API-equivalent spend producer launched by the sampler.
+# Default: true. Set false when another local writer owns spend production.
+[spend]
+producer = true

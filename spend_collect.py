@@ -7,14 +7,17 @@ import argparse
 import bisect
 import concurrent.futures
 import datetime as dt
+import hashlib
 import json
 import os
 import re
 import socket
 import sqlite3
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable, Iterator
 from urllib.parse import quote
 
 from pricing import CODEX_SPEED, SpeedLedger
@@ -26,20 +29,87 @@ RECORD_FIELDS = (
 )
 WORKERS_ENV = "GLIDESLOPE_SPEND_WORKERS"
 DEFAULT_WORKERS = 2
+FILE_CACHE_VERSION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 _TIER_RE = re.compile(r'"service_tier"\s*:\s*"([a-z_]+)"')
+_RECORD_ATTRIBUTES = {field: ("input_tokens" if field == "in" else field) for field in RECORD_FIELDS}
+_INTERN_FIELDS = frozenset(("tool", "model", "speed", "speed_src", "tier", "machine"))
+
+
+class RequestRecord:
+    """Compact mutable in-memory request with the public mapping interface."""
+
+    __slots__ = tuple(_RECORD_ATTRIBUTES.values())
+
+    def __init__(self, values: dict):
+        for field, attribute in _RECORD_ATTRIBUTES.items():
+            value = values.get(field)
+            if field in _INTERN_FIELDS and isinstance(value, str):
+                value = sys.intern(value)
+            setattr(self, attribute, value)
+
+    def __getitem__(self, key: str):
+        attribute = _RECORD_ATTRIBUTES.get(key)
+        if attribute is None:
+            raise KeyError(key)
+        return getattr(self, attribute)
+
+    def __setitem__(self, key: str, value) -> None:
+        attribute = _RECORD_ATTRIBUTES.get(key)
+        if attribute is None:
+            raise KeyError(key)
+        if key in _INTERN_FIELDS and isinstance(value, str):
+            value = sys.intern(value)
+        setattr(self, attribute, value)
+
+    def get(self, key: str, default=None):
+        attribute = _RECORD_ATTRIBUTES.get(key)
+        return default if attribute is None else getattr(self, attribute)
+
+    def __iter__(self):
+        return iter(RECORD_FIELDS)
+
+    def __len__(self) -> int:
+        return len(RECORD_FIELDS)
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, RequestRecord):
+            return all(self[field] == other[field] for field in RECORD_FIELDS)
+        if isinstance(other, dict):
+            return self.as_dict() == other
+        return NotImplemented
+
+    def as_dict(self) -> dict:
+        return {field: self[field] for field in RECORD_FIELDS}
+
+
+def _memory_payload(payload: dict) -> dict:
+    return {
+        **payload,
+        "records": [row if isinstance(row, RequestRecord) else RequestRecord(row)
+                    for row in payload["records"]],
+    }
 
 
 @dataclass(frozen=True)
 class Collection:
     """Request records plus Grok's vendor cost and call count, held outside the record shape."""
 
-    records: list[dict]
+    records: list[RequestRecord]
     grok_cost_ticks: dict[str, int]
     grok_model_calls: dict[str, int]
 
-    def payload(self) -> dict:
+    def internal_payload(self) -> dict:
+        """Expose compact records to the producer without rematerializing dictionaries."""
         return {
             "records": self.records,
+            "grok_cost_ticks": self.grok_cost_ticks,
+            "grok_model_calls": self.grok_model_calls,
+        }
+
+    def payload(self) -> dict:
+        """Return the stable public JSON shape for callers that need plain dictionaries."""
+        return {
+            "records": [record.as_dict() for record in self.records],
             "grok_cost_ticks": self.grok_cost_ticks,
             "grok_model_calls": self.grok_model_calls,
         }
@@ -377,51 +447,160 @@ def _worker_count(workers: int | None) -> int:
     return count
 
 
-def _map_files(function, paths: list[Path], workers: int) -> list:
+def _map_files(function, paths: list[Path], workers: int) -> Iterator:
+    """Map with a bounded in-flight window so large collections stay bounded."""
     if not paths:
-        return []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(paths))) as pool:
-        return list(pool.map(function, paths))
+        return
+    limit = min(workers, len(paths))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=limit) as pool:
+        pending = []
+        iterator = iter(paths)
+        for _ in range(limit):
+            try:
+                pending.append(pool.submit(function, next(iterator)))
+            except StopIteration:
+                break
+        while pending:
+            future = pending.pop(0)
+            yield future.result()
+            try:
+                pending.append(pool.submit(function, next(iterator)))
+            except StopIteration:
+                pass
 
 
-def collect(
-    home: Path | None = None,
-    machine: str | None = None,
-    workers: int | None = None,
+def _cache_identity(path: Path) -> str:
+    """Return a stable opaque key; raw transcript paths never enter the cache."""
+    try:
+        value = str(path.resolve())
+    except OSError:
+        value = str(path.absolute())
+    return hashlib.sha256(os.fsencode(value)).hexdigest()
+
+
+def _spend_cache_dir() -> Path:
+    """Resolve the cache under Glideslope's configured store, never the repository."""
+    import glideslope
+
+    return Path(glideslope.STORE_DIR) / "spend-cache"
+
+
+def _cache_payload_valid(kind: str, payload) -> bool:
+    if not isinstance(payload, dict) or not isinstance(payload.get("records"), list):
+        return False
+    if any(not isinstance(row, dict) or set(row) != set(RECORD_FIELDS)
+           for row in payload["records"]):
+        return False
+    if kind == "codex":
+        return isinstance(payload.get("session_id"), str)
+    if kind == "grok":
+        return (isinstance(payload.get("grok_cost_ticks"), dict)
+                and isinstance(payload.get("grok_model_calls"), dict))
+    return kind == "claude"
+
+
+def _cached_file(path: Path, kind: str, cache_dir: Path, parser):
+    """Reuse minimal parsed request records when a source file's size and mtime match."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    if not os.access(path, os.R_OK):
+        return None
+    cache_path = cache_dir / (_cache_identity(path) + ".json")
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if (cached.get("version") == FILE_CACHE_VERSION
+                and cached.get("kind") == kind
+                and cached.get("size") == stat.st_size
+                and cached.get("mtime_ns") == stat.st_mtime_ns
+                and _cache_payload_valid(kind, cached.get("payload"))):
+            return _memory_payload(cached["payload"])
+    except (OSError, ValueError, AttributeError):
+        pass
+
+    try:
+        payload = parser(path)
+    except OSError:
+        return None
+    if not _cache_payload_valid(kind, payload):
+        return payload
+    entry = {
+        "version": FILE_CACHE_VERSION,
+        "kind": kind,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "payload": payload,
+    }
+    temporary: Path | None = None
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=cache_dir, prefix=".spend-cache-", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(entry, handle, separators=(",", ":"))
+        os.replace(temporary, cache_path)
+        temporary = None
+    except OSError:
+        pass
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return _memory_payload(payload)
+
+
+def _prune_file_cache(cache_dir: Path, active: set[str]) -> None:
+    """Drop entries for source files deleted since the prior collection."""
+    try:
+        for entry in cache_dir.glob("*.json"):
+            if entry.stem not in active:
+                entry.unlink()
+    except OSError:
+        # Cache cleanup is an optimization and must not make collection fail.
+        pass
+
+
+def _assemble_collection(
+    machine: str,
+    codex_home: Path,
+    claude_payloads: Iterable[tuple[str, dict | None]],
+    codex_payloads: Iterable[tuple[str, dict | None]],
+    grok_payloads: Iterable[tuple[str, dict | None]],
     speed_ledger: SpeedLedger | None = None,
+    read_codex_log: bool = True,
+    cache_dir: Path | None = None,
+    active_cache: set[str] | None = None,
 ) -> Collection:
-    """Read transcript token usage and return only the contracted request fields."""
-    home = Path.home() if home is None else Path(home)
-    machine = machine or socket.gethostname().split(".", 1)[0].lower()
-    worker_cap = _worker_count(workers)
-
+    """Apply cross-file deduplication and enrichment to cached file payloads."""
     claude_requests: dict[str, dict] = {}
-    for root in claude_project_roots(home):
-        for file_requests in _map_files(_claude_file, _request_files(root), worker_cap):
-            for request in file_requests:
-                request["machine"] = machine
-                previous = claude_requests.get(request["key"])
-                if previous is None:
-                    claude_requests[request["key"]] = request
-                else:
-                    if request["out"] > previous["out"]:
-                        previous["out"] = request["out"]
-                        previous["think"] = max(previous["think"], request["think"])
-                    if request["ts"] is not None and (previous["ts"] is None or request["ts"] < previous["ts"]):
-                        previous["ts"] = request["ts"]
+    for _cache_key, payload in claude_payloads:
+        for request in (payload or {}).get("records", []):
+            request["machine"] = machine
+            previous = claude_requests.get(request["key"])
+            if previous is None:
+                claude_requests[request["key"]] = request
+            else:
+                if request["out"] > previous["out"]:
+                    previous["out"] = request["out"]
+                    previous["think"] = max(previous["think"], request["think"])
+                if request["ts"] is not None and (previous["ts"] is None or request["ts"] < previous["ts"]):
+                    previous["ts"] = request["ts"]
 
-    codex_home = home / ".codex"
-    codex_files = _request_files(codex_home / "sessions") + _request_files(codex_home / "archived_sessions")
     best: dict[str, tuple[int, str, list[dict]]] = {}
-    ordered_codex_files = sorted(codex_files)
-    parsed_codex = _map_files(_codex_file, ordered_codex_files, worker_cap)
-    for path, (session_id, requests) in zip(ordered_codex_files, parsed_codex):
-        path_key = str(path)
+    for cache_key, payload in codex_payloads:
+        if not payload:
+            continue
+        session_id, requests = payload["session_id"], payload["records"]
         previous = best.get(session_id)
-        if previous is None or len(requests) > previous[0] or (len(requests) == previous[0] and path_key < previous[1]):
-            best[session_id] = (len(requests), path_key, requests)
+        if (previous is None or len(requests) > previous[0]
+                or (len(requests) == previous[0] and cache_key < previous[1])):
+            best[session_id] = (len(requests), cache_key, requests)
 
-    observations = codex_tier_log(codex_home)
+    observations = codex_tier_log(codex_home) if read_codex_log else {}
     ledger = speed_ledger if speed_ledger is not None else SpeedLedger()
     codex_requests = []
     for session_id in sorted(best):
@@ -433,13 +612,16 @@ def collect(
             codex_requests.append(request)
     ledger.save()
 
-    grok_root = home / ".grok" / "sessions"
-    grok_files = sorted(grok_root.glob("*/*/updates.jsonl")) if grok_root.is_dir() else []
     grok_requests = []
     grok_cost_ticks: dict[str, int] = {}
     grok_model_calls: dict[str, int] = {}
     seen_grok_turns = set()
-    for requests, costs, model_calls in _map_files(_grok_file, grok_files, worker_cap):
+    for _cache_key, payload in grok_payloads:
+        if not payload:
+            continue
+        requests = payload["records"]
+        costs = payload["grok_cost_ticks"]
+        model_calls = payload["grok_model_calls"]
         by_turn: dict[tuple[str, str], list[dict]] = {}
         for request in requests:
             session_id, prompt_id, _model = request["key"].split("|", 2)
@@ -455,12 +637,144 @@ def collect(
                     grok_cost_ticks[request["key"]] = costs[request["key"]]
                 grok_model_calls[request["key"]] = model_calls.get(request["key"], 1)
 
+    if cache_dir is not None and active_cache is not None:
+        _prune_file_cache(cache_dir, active_cache)
     records = list(claude_requests.values()) + codex_requests + grok_requests
     records.sort(key=lambda request: (request["ts"] or 0, request["tool"], request["key"]))
     return Collection(
         records=records,
         grok_cost_ticks=dict(sorted(grok_cost_ticks.items())),
         grok_model_calls=dict(sorted(grok_model_calls.items())),
+    )
+
+
+def collect(
+    home: Path | None = None,
+    machine: str | None = None,
+    workers: int | None = None,
+    speed_ledger: SpeedLedger | None = None,
+    cache_dir: Path | None = None,
+) -> Collection:
+    """Read token usage, reusing unchanged files from a store-local cache."""
+    home = Path.home() if home is None else Path(home)
+    machine = machine or socket.gethostname().split(".", 1)[0].lower()
+    worker_cap = _worker_count(workers)
+    cache_dir = Path(cache_dir) if cache_dir is not None else _spend_cache_dir()
+    active_cache: set[str] = set()
+
+    claude_paths = sorted(
+        (path for root in claude_project_roots(home) for path in _request_files(root)),
+        key=_cache_identity,
+    )
+    active_cache.update(_cache_identity(path) for path in claude_paths)
+    claude_payloads = (
+        (_cache_identity(path), payload)
+        for path, payload in zip(
+            claude_paths,
+            _map_files(
+                lambda item: _cached_file(
+                    item, "claude", cache_dir,
+                    lambda transcript: {"records": _claude_file(transcript)},
+                ),
+                claude_paths,
+                worker_cap,
+            ),
+        )
+    )
+
+    codex_home = home / ".codex"
+    codex_paths = sorted(
+        _request_files(codex_home / "sessions") + _request_files(codex_home / "archived_sessions"),
+        key=_cache_identity,
+    )
+    active_cache.update(_cache_identity(path) for path in codex_paths)
+
+    def parse_codex(path: Path) -> dict:
+        session_id, records = _codex_file(path)
+        return {"session_id": session_id, "records": records}
+
+    codex_payloads = (
+        (_cache_identity(path), payload)
+        for path, payload in zip(
+            codex_paths,
+            _map_files(
+                lambda item: _cached_file(item, "codex", cache_dir, parse_codex),
+                codex_paths,
+                worker_cap,
+            ),
+        )
+    )
+
+    grok_root = home / ".grok" / "sessions"
+    grok_paths = sorted(
+        grok_root.glob("*/*/updates.jsonl") if grok_root.is_dir() else [],
+        key=_cache_identity,
+    )
+    active_cache.update(_cache_identity(path) for path in grok_paths)
+
+    def parse_grok(path: Path) -> dict:
+        records, costs, model_calls = _grok_file(path)
+        return {"records": records, "grok_cost_ticks": costs, "grok_model_calls": model_calls}
+
+    grok_payloads = (
+        (_cache_identity(path), payload)
+        for path, payload in zip(
+            grok_paths,
+            _map_files(
+                lambda item: _cached_file(item, "grok", cache_dir, parse_grok),
+                grok_paths,
+                worker_cap,
+            ),
+        )
+    )
+    return _assemble_collection(
+        machine,
+        codex_home,
+        claude_payloads,
+        codex_payloads,
+        grok_payloads,
+        speed_ledger=speed_ledger,
+        cache_dir=cache_dir,
+        active_cache=active_cache,
+    )
+
+
+def load_cached_collection(
+    machine: str | None = None,
+    home: Path | None = None,
+    cache_dir: Path | None = None,
+    speed_ledger: SpeedLedger | None = None,
+) -> Collection | None:
+    """Rebuild the last collection from complete, current per-file cache entries only."""
+    home = Path.home() if home is None else Path(home)
+    machine = machine or socket.gethostname().split(".", 1)[0].lower()
+    codex_home = home / ".codex"
+    cache_dir = Path(cache_dir) if cache_dir is not None else _spend_cache_dir()
+    try:
+        files = sorted(cache_dir.glob("*.json"))
+    except OSError:
+        return None
+    if not files:
+        return Collection([], {}, {})
+
+    entries: dict[str, list[tuple[str, dict]]] = {"claude": [], "codex": [], "grok": []}
+    try:
+        for path in files:
+            entry = json.loads(path.read_text(encoding="utf-8"))
+            kind = entry.get("kind")
+            if (kind not in entries or entry.get("version") != FILE_CACHE_VERSION
+                    or not _cache_payload_valid(kind, entry.get("payload"))):
+                return None
+            entries[kind].append((path.stem, _memory_payload(entry["payload"])))
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+
+    return _assemble_collection(
+        machine,
+        codex_home,
+        *(entries[kind] for kind in ("claude", "codex", "grok")),
+        speed_ledger=speed_ledger,
+        read_codex_log=False,
     )
 
 
@@ -471,7 +785,8 @@ def main(argv: list[str] | None = None) -> int:
         result = collect()
     except ValueError as exc:
         parser.error(str(exc))
-    json.dump(result.payload(), sys.stdout, separators=(",", ":"))
+    json.dump(result.internal_payload(), sys.stdout, separators=(",", ":"),
+              default=lambda value: value.as_dict() if isinstance(value, RequestRecord) else None)
     sys.stdout.write("\n")
     return 0
 
