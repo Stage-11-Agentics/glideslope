@@ -173,11 +173,12 @@ class MarkTest(unittest.TestCase):
         glideslope.mark_early_resets([account], START + dt.timedelta(minutes=6), db=db)
         self.assertNotIn("rebased_at", account["limits"][0])
 
-    def test_pace_and_exhaustion_run_from_the_reset(self):
+    def test_pace_stays_on_the_window_clock_and_exhaustion_runs_from_the_reset(self):
         now = CLEARED + (RESET - CLEARED) / 2
         limit = {"resets_at": RESET, "window_minutes": WEEK, "used_percent": 25.0,
                  "rebased_at": CLEARED}
-        self.assertAlmostEqual(glideslope.even_pace_percent(limit, now), 50.0, places=3)
+        window_elapsed = (now - START) / (RESET - START) * 100
+        self.assertAlmostEqual(glideslope.even_pace_percent(limit, now), window_elapsed, places=3)
         # 25% in half the budget's span: the rate lands it at 50% by the deadline, not exhausted
         self.assertIsNone(glideslope.exhausts_at(limit, now))
         limit["used_percent"] = 75.0

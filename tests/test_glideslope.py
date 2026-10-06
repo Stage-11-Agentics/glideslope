@@ -292,9 +292,21 @@ class GrokTests(unittest.TestCase):
         self.assertEqual(session["label"], "5h session")
         self.assertEqual(session["window_minutes"], 300)
 
-    def test_missing_percent_is_rejected(self):
+    def test_missing_percent_beside_a_period_is_zero(self):
+        # proto3 omits zero: a fresh period's body has no percent and no products
         payload = grok_payload()
         del payload["config"]["creditUsagePercent"]
+        del payload["config"]["productUsage"]
+        position = glideslope.normalize_grok(payload, NOW)
+        self.assertEqual(position["limits"][0]["used_percent"], 0.0)
+        self.assertEqual(position["product_usage"], [])
+
+    def test_missing_percent_without_a_period_is_rejected(self):
+        payload = grok_payload()
+        del payload["config"]["creditUsagePercent"]
+        payload["config"].pop("currentPeriod", None)
+        payload["config"].pop("billingPeriodStart", None)
+        payload["config"].pop("billingPeriodEnd", None)
         with self.assertRaises(glideslope.PositionError):
             glideslope.normalize_grok(payload, NOW)
 

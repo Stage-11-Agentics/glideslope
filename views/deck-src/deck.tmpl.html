@@ -966,10 +966,6 @@
   @media (prefers-reduced-motion: reduce) {
     .ils-reset.fresh .reset-cloth, .ils-reset.fresh .reset-flag { animation: none; }
   }
-  /* the reset window's own glideslope: even burn from the reset to the deadline,
-     dotted because the frame's beam is the one solid reference on the glass */
-  .selection-reticle .ils-rebeam { stroke: var(--ink-2); stroke-width: 1.4; stroke-dasharray: 3 4;
-    opacity: .9; }
   .selection-reticle .reset-label {
     fill: var(--ink); font: 600 12px var(--mono); letter-spacing: .04em;
     paint-order: stroke; stroke: var(--void); stroke-width: 3px; stroke-linejoin: round;
@@ -1513,12 +1509,12 @@ const leftMs = w => endOf(w) == null ? null : endOf(w) - NOW;
 /* ── an early reset ──
    A plan reset (or a Codex reset credit) clears the meter mid-window and leaves
    the deadline where it was (glideslope.mark_early_resets). From that instant the
-   window is a fresh budget with a shorter span. So there are two notions of pace
-   here, and they are kept apart on purpose: the plot's x axis stays on the
-   window's own clock (clockPaceOf), because that is the axis every other mark
-   shares, while every READING of pace — the ◆ figures, the deviation, the state
-   words, the burn-clock bars, the forecasts — is measured from the reset
-   (paceOf). A rebase outside the window's own span is not one it can have had. */
+   window holds a fresh budget, but every reading of position (the ◆ figures,
+   the deviation, the state words, the burn-clock bars) stays on the window's own
+   clock, against the one glide slope the plot draws (operator, 2026-10-06: 36%
+   used past mid-week is well under the slope, whatever reset came before). Only
+   rates restart at the reset: the forecasts and the exhaustion clock. A rebase
+   outside the window's own span is not one it can have had. */
 const rebasedOf = w => {
   const at = Date.parse(w.rebasedAt || ""), s = startOf(w), e = endOf(w);
   return Number.isFinite(at) && s != null && at > s && at < e ? at : null;
@@ -1529,45 +1525,40 @@ const elapsedAt = (w, t) => {
   const s = startOf(w), e = endOf(w);
   return s == null || e == null ? null : (t - s) / (e - s) * 100;
 };
-/* An early reset breaks a trail. The meter fell somewhere between its last
-   reading before the reset and its first after it, and the chequered drop marks
-   where. A line joined across that gap would draw a steady descent through hours
+/* An early reset breaks a trail. A line joined across the gap between the last
+   reading before it and the first after would draw a steady descent through hours
    nobody read (Charlie, 2026-10-06: fifteen unread hours became a long diagonal
-   from 98% to 0). The trail lifts at the midpoint of the gap and lands again. */
+   from 98% to 0). Instead the trail holds its last reading flat out to the
+   chequered drop, which carries the fall, and lands again at the drop's foot.
+   A meter only climbs inside a window, so the held level is a floor, never a
+   claim that it rose no further: a window that ran into its ceiling runs along
+   the top until the reset rather than vanishing below it. */
 const trailPath = (w, trail, x, y) => {
-  const cuts = (w.earlyResets || []).map(event => {
-    const after = Date.parse(event.at || ""), before = Date.parse(event.last_before || "");
-    return elapsedAt(w, Number.isFinite(before) ? (before + after) / 2 : after);
-  }).filter(Number.isFinite);
+  const cuts = (w.earlyResets || []).map(event => Date.parse(event.at || ""))
+    .filter(Number.isFinite).map(at => ({ at, e: elapsedAt(w, at) }));
+  /* crossing is decided on the samples' own timestamps where they carry one:
+     a sample's elapsed figure is computed against its own read of the reset
+     clock, which jitters by a second, so it need not match the event's */
+  const crosses = (before, after, cut) => Number.isFinite(before[2]) && Number.isFinite(after[2])
+    ? before[2] < cut.at && cut.at <= after[2] : before[0] < cut.e && cut.e <= after[0];
   return trail.map(([e, u], index) => {
-    const lift = index && cuts.some(cut => trail[index - 1][0] < cut && cut <= e);
-    return `${index && !lift ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`;
+    const cut = index ? cuts.find(c => crosses(trail[index - 1], trail[index], c)) : undefined;
+    const hold = cut == null ? "" : `H${x(clamp(cut.e, trail[index - 1][0], e)).toFixed(1)} `;
+    return `${hold}${index && cut == null ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`;
   }).join(" ");
 };
-/* a plot position's elapsed percent, restated against the budget's own span */
-const budgetElapsed = (w, e) => {
-  const rebased = rebasedOf(w);
-  if (rebased == null || e == null) return e;
-  const from = elapsedAt(w, rebased);
-  return clamp((e - from) / (100 - from) * 100, 0, 100);
-};
-/* where the mark sits across the frame: the window's own clock, reset or not */
-function clockPaceOf(w) {
+/* the ◆ reading, and where the mark sits across the frame: the share of the
+   window's own clock already gone, reset or not */
+function paceOf(w) {
   const s = startOf(w), e = endOf(w);
   if (s == null || w.pct == null) return null;
   return clamp((NOW - s) / (e - s) * 100, 0, 100);
 }
-/* the ◆ reading: the share of the budget's own span already gone */
-function paceOf(w) {
-  const pace = clockPaceOf(w);
-  return pace == null ? null : budgetElapsed(w, pace);
-}
 function needMultiple(w) {
   const lm = leftMs(w);
   if (lm == null || lm <= 0 || w.pct == null || !w.minutes) return null;
-  /* the budget's span, not the window's: after an early reset a full budget is
-     meant to last from the reset to the deadline (the beam the plot draws for it) */
-  const span = endOf(w) - budgetStartOf(w);
+  /* the window's span: even burn is the one glide slope the plot draws */
+  const span = endOf(w) - startOf(w);
   return ((100 - w.pct) / 100 * span) / lm;
 }
 function exhaustAt(w) {
@@ -2993,18 +2984,15 @@ function render() {
       }
     }
 
-    /* A reset window is judged against its own beam: even burn from the reset
-       to the deadline, drawn while the mark is selected, with the reset named
-       beside the flag at the head of its chequered drop. The label goes right of
-       the flag unless that would carry it out of the frame, then left of it. */
+    /* A selected reset window names its reset beside the flag at the head of
+       its chequered drop. The label goes right of the flag unless that would
+       carry it out of the frame, then left of it. */
     function drawRebase(g, w) {
       const rebased = rebasedOf(w);
       if (rebased == null) return;
       const e = elapsedAt(w, rebased);
       const resets = w.earlyResets || [];
       const last = resets[resets.length - 1];
-      const floor = Number(last?.to_percent) || 0;
-      mk("line", { x1: x(e), y1: y(floor), x2: x(100), y2: y(100), class: "ils-rebeam" }, null, g);
       const top = y(Number(last?.from_percent ?? 100));
       const plans = resetPlanPhrase(last);
       const label = mk("text", { x: x(e) + 16, y: Math.max(M.t + 10, top + 8),
@@ -3034,15 +3022,14 @@ function render() {
             ? { at: Number(point[0]), e: Number(point[1]), u: Number(point[2]) }
             : { at: null, e: Number(point[0]), u: Number(point[1]) })
           .filter(point => Number.isFinite(point.e) && Number.isFinite(point.u));
-        const trail = samples.map(point => [point.e, point.u]);
+        const trail = samples.map(point => [point.e, point.u, point.at]);
         let at = null;
         let plottable = false;
         let position = null;
         if (w.pct != null && !rolled(w) && !state.unknown && Boolean(w.resets)) {
-          /* the position is the window's own clock, not the rebased reading: a
-             reset window stays where its calendar puts it, and its deviation is
-             restated from the reset where the register computes it */
-          const pace = clockPaceOf(w);
+          /* the position is the window's own clock: a reset window stays where
+             its calendar puts it, and its deviation is read from there too */
+          const pace = paceOf(w);
           if (pace != null) {
             /* A last-known read is pinned to its observation, not dragged along
                to now: the clock moved, the cached number did not. */
@@ -3357,10 +3344,8 @@ function render() {
         row.dataset.here = String(hereMark(t.m.p));
         row.dataset.there = String(thereMark(t.m.p));
         row.style.setProperty("--acc", `var(--${ck(t.m.p.display)})`);
-        /* the mark sits on the window's own clock; its deviation is read from
-           the budget, which after an early reset starts at the reset */
-        const dev = t.e == null || t.m.w.pct == null ? null
-          : t.m.w.pct - budgetElapsed(t.m.w, t.e);
+        /* the mark and its deviation both sit on the window's own clock */
+        const dev = t.e == null || t.m.w.pct == null ? null : t.m.w.pct - t.e;
         const mag = dev == null ? 0 : Math.min(Math.abs(dev), 50);
         const side = capped ? "side-cap" : st.dev === "dev-hot" ? "side-hot"
           : st.dev === "dev-bank" ? "side-bank" : dev == null || dev >= 0 ? "side-even-r" : "side-even-l";
@@ -3377,7 +3362,8 @@ function render() {
                with the number: an orange dash would name a position, and the
                absence of a number is exactly the claim that there is none -->
           <span class="reg-val num ${dev == null ? "nil" : st.dev}">${dev == null ? "—"
-            : (dev >= 0 ? "+" : "−") + Math.abs(dev).toFixed(0) + "<small>%</small>"}</span>`;
+            : (Math.round(Math.abs(dev)) === 0 ? "0" : (dev > 0 ? "+" : "−") + Math.round(Math.abs(dev)))
+              + "<small>%</small>"}</span>`;
         rows.appendChild(row);
         bindTip(row, () => (pooled
           ? `<b>Claude pool${t.m.w.id === "weekly_fable" ? " · Fable" : ""} — ${windowChip(t.m.w)}</b><br>` +
@@ -3397,8 +3383,7 @@ function render() {
           (t.m.lastKnown ? `Last known read, ${fmtDur(observedAge(t.m.p))} ago — plotted where it was observed.<br>` : "") +
           `${t.e.toFixed(1)}% of the window elapsed · ${esc(t.m.w.pct)}% used<br>` +
           (rebasedOf(t.m.w) != null
-            ? `Reset used ${windowTime(rebasedOf(t.m.w), t.m.w)}: even burn since then would sit at ` +
-              `<b>${budgetElapsed(t.m.w, t.e).toFixed(1)}%</b>.<br>` : "") +
+            ? `Reset used ${windowTime(rebasedOf(t.m.w), t.m.w)}.<br>` : "") +
           (t.m.session
             ? `A 5 HOUR session is a throttle, not a budget — above the line only means the next hours are slower.`
             : `${capped ? "At the ceiling until reset." : (dev >= 0 ? "Ahead of" : "Trailing") + " the glideslope by " + Math.abs(dev).toFixed(0) + " points."}`))));

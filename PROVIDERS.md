@@ -478,7 +478,7 @@ into one column.
 | Prices | SuperGrok $30/mo and SuperGrok Plus $100/mo (x.ai/pricing, 2026-10-01), the weights in `PLAN_PRICE_USD`. Lite and Heavy are named and left out of the pool until that page prints a dollar amount |
 | Auth | Grok Build OIDC session in `~/.grok/auth.json`. Access token under `key`; refresh in place when expired. The user GET uses the same token as billing |
 | Windows | plan quota (7d cycle, `USAGE_PERIOD_TYPE_WEEKLY`) → `weekly_all`. No 5h session is published today |
-| Units | `creditUsagePercent`, 0–100. A missing percent is rejected, never read as zero |
+| Units | `creditUsagePercent`, 0–100. The body is proto3 JSON, which omits zero values: a missing percent beside a named period reads as 0% (a fresh period arrives with no percent and no `productUsage`, seen 2026-10-06). Missing with no period is rejected |
 | Credential | the Grok CLI's own session. This program refreshes it the same way Grok does (OIDC `refresh_token` grant against `auth.x.ai`), atomically, under flock, never copying the token elsewhere |
 | Probe | `python3 tools/grok_probe.py` |
 | In-session boost | `~/.grok/hooks/glideslope-usage.json` → `tools/grok_hook.py` on `SessionStart` and `Stop` only |

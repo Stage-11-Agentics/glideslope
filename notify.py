@@ -367,18 +367,16 @@ def draw_approach(alert: dict[str, Any], now: dt.datetime, size: int = 512) -> P
     # the ceiling: the thing the red path terminates at, drawn as a place
     draw.line([(frame[0], py(100)), (frame[2], py(100))], fill=CAPPED_DIM, width=3)
     # the beam — reference, not subject, so it stays dim and thin under the track.
-    # After an early reset the budget is judged against its own beam, from the
-    # reset to the deadline; the window's original beam stays as a ghost.
+    # One beam even after an early reset: position is read on the window's own
+    # clock, as in the popup and the Detail view (operator, 2026-10-06).
+    _dashed(draw, (px(0), py(0)), (px(100), py(100)), BEAM, 3, on=4, off=9)
+    # rates still restart at a reset: the flight path below runs from it
     rebased = parse_timestamp(alert.get("rebased_at"))
     origin = (0.0, 0.0)
     if rebased is not None and start < rebased < reset:
         resets = alert.get("early_resets") or []
         floor = float((resets[-1] if resets else {}).get("to_percent") or 0)
         origin = ((rebased - start).total_seconds() / span * 100, floor)
-        _dashed(draw, (px(0), py(0)), (px(100), py(100)), GRID, 2, on=4, off=9)
-        _dashed(draw, (px(origin[0]), py(origin[1])), (px(100), py(100)), BEAM, 3, on=4, off=9)
-    else:
-        _dashed(draw, (px(0), py(0)), (px(100), py(100)), BEAM, 3, on=4, off=9)
 
     hue = ACCOUNT_HUES.get(str(alert["account"]), INK)
     track = [point for point in approach_track(alert) if point[1] is not None]

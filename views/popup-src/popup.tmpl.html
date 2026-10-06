@@ -350,8 +350,6 @@
   @media (prefers-reduced-motion: reduce) {
     .ils-reset.fresh .reset-cloth, .ils-reset.fresh .reset-flag { animation: none; }
   }
-  .selection-reticle .ils-rebeam { stroke: var(--ink-2); stroke-width: 1.4; stroke-dasharray: 3 4;
-    opacity: .9; }
   .selection-reticle .reset-label {
     fill: var(--ink); font: 600 11px var(--mono); letter-spacing: .04em;
     paint-order: stroke; stroke: var(--void); stroke-width: 3px; stroke-linejoin: round;
@@ -1084,8 +1082,10 @@ const rolled = window => endOf(window) != null && endOf(window) < Date.now();
 /* ── an early reset ──
    A plan reset (or a Codex reset credit) clears the meter mid-window and leaves
    the deadline where it was (glideslope.mark_early_resets). From that instant the
-   window is a fresh budget with a shorter span: the plot keeps the window's own
-   clock across, but every reading of pace is measured from the reset. */
+   window holds a fresh budget, but its position is still read on the window's
+   own clock, against the one glide slope the plot draws (operator, 2026-10-06:
+   36% used past mid-week is well under the slope, whatever reset came before).
+   Only rates restart at the reset: the burn since it, and when that runs out. */
 const rebasedOf = window => {
   const at = Date.parse(window.rebased_at || ""), start = startOf(window), end = endOf(window);
   return Number.isFinite(at) && start != null && at > start && at < end ? at : null;
@@ -1096,27 +1096,32 @@ const elapsedAt = (window, at) => {
   const start = startOf(window), end = endOf(window);
   return start == null || end == null ? null : (at - start) / (end - start) * 100;
 };
-/* An early reset breaks a trail. The meter fell somewhere between its last
-   reading before the reset and its first after it, and the chequered drop marks
-   where. A line joined across that gap would draw a steady descent through hours
+/* An early reset breaks a trail. A line joined across the gap between the last
+   reading before it and the first after would draw a steady descent through hours
    nobody read (Charlie, 2026-10-06: fifteen unread hours became a long diagonal
-   from 98% to 0). The trail lifts at the midpoint of the gap and lands again. */
+   from 98% to 0). Instead the trail holds its last reading flat out to the
+   chequered drop, which carries the fall, and lands again at the drop's foot.
+   A meter only climbs inside a window, so the held level is a floor, never a
+   claim that it rose no further: a window that ran into its ceiling runs along
+   the top until the reset rather than vanishing below it. */
 const trailPath = (window, trail, x, y) => {
-  const cuts = (window.early_resets || []).map(event => {
-    const after = Date.parse(event.at || ""), before = Date.parse(event.last_before || "");
-    return elapsedAt(window, Number.isFinite(before) ? (before + after) / 2 : after);
-  }).filter(Number.isFinite);
+  const cuts = (window.early_resets || []).map(event => Date.parse(event.at || ""))
+    .filter(Number.isFinite).map(at => ({ at, e: elapsedAt(window, at) }));
+  /* crossing is decided on the samples' own timestamps where they carry one:
+     a sample's elapsed figure is computed against its own read of the reset
+     clock, which jitters by a second, so it need not match the event's */
+  const crosses = (before, after, cut) => Number.isFinite(before[2]) && Number.isFinite(after[2])
+    ? before[2] < cut.at && cut.at <= after[2] : before[0] < cut.e && cut.e <= after[0];
   return trail.map(([e, u], index) => {
-    const lift = index && cuts.some(cut => trail[index - 1][0] < cut && cut <= e);
-    return `${index && !lift ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`;
+    const cut = index ? cuts.find(c => crosses(trail[index - 1], trail[index], c)) : undefined;
+    const hold = cut == null ? "" : `H${x(clamp(cut.e, trail[index - 1][0], e)).toFixed(1)} `;
+    return `${hold}${index && cut == null ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`;
   }).join(" ");
 };
-/* a plot position's elapsed percent, restated against the budget's own span */
-const budgetElapsed = (window, e) => {
-  const rebased = rebasedOf(window);
-  if (rebased == null || e == null) return e;
-  const from = elapsedAt(window, rebased);
-  return clamp((e - from) / (100 - from) * 100, 0, 100);
+/* a deviation in whole points, signed; one that rounds to zero carries no sign */
+const signedPoints = value => {
+  const points = Math.round(Math.abs(value));
+  return points === 0 ? "0" : (value > 0 ? "+" : "−") + points;
 };
 /* A window past its reset is advanced upstream (glideslope.roll_forward_windows).
    `presumed` means zeroed because nothing here could have spent it; `unread`
@@ -1133,17 +1138,11 @@ const paceOf = window => {
   if (start == null || end == null || window.used_percent == null) return null;
   return clamp((Date.now() - start) / (end - start) * 100, 0, 100);
 };
-const budgetPaceOf = window => {
-  const pace = paceOf(window);
-  return pace == null ? null : budgetElapsed(window, pace);
-};
 const needMultiple = window => {
   const left = leftMs(window);
   if (left == null || left <= 0 || window.used_percent == null || !window.window_minutes) return null;
-  /* the budget's span, not the window's: after an early reset a full budget is
-     meant to last from the reset to the deadline, and even burn over that span
-     is the pace this reads against (the same beam the plot draws for it) */
-  const span = endOf(window) - budgetStartOf(window);
+  /* the window's span: even burn is the one glide slope the plot draws */
+  const span = endOf(window) - startOf(window);
   return ((100 - window.used_percent) / 100 * span) / left;
 };
 /* When this window runs out if the rate it has burned so far simply continues —
@@ -1366,7 +1365,7 @@ function usedHTML(account, window) {
   if (window.used_percent == null || !window.resets_at) return `<span class="used-read">—</span>`;
   /* a presumed-fresh window carries THIS window's clock, so its ◆ mark is honest
      even though the account's own gauge is stale */
-  const pace = (account.stale && !window.presumed) || rolled(window) ? null : budgetPaceOf(window);
+  const pace = (account.stale && !window.presumed) || rolled(window) ? null : paceOf(window);
   return `<span class="used-read num">${Math.round(window.used_percent)}%` +
     `${window.presumed ? `<span class="qual">presumed</span>` : ""}` +
     /* the ◆ read is a value like any other: when it cannot be computed the cell
@@ -1658,7 +1657,7 @@ function plotEntries() {
           ? { at: Number(point[0]), e: Number(point[1]), u: Number(point[2]) }
           : { at: null, e: Number(point[0]), u: Number(point[1]) })
         .filter(point => Number.isFinite(point.e) && Number.isFinite(point.u));
-      const trail = samples.map(point => [point.e, point.u]);
+      const trail = samples.map(point => [point.e, point.u, point.at]);
       /* A last-known read is pinned to the moment it was observed, not dragged
          along to now: the clock kept moving, the number did not, and a mark
          sliding rightwards on a frozen value would invent burn that never
@@ -1916,17 +1915,13 @@ function renderPlot() {
     return { node, horizon: horizon.id, ceiling, at, endU };
   }
 
-  /* A reset window is judged against its own beam: even burn from the reset to
-     the deadline, drawn while the mark is selected, with the reset named at the
-     head of its chequered drop. */
+  /* A selected reset window names its reset at the head of its chequered drop. */
   function drawRebase(reticle, window) {
     const rebased = rebasedOf(window);
     if (rebased == null) return;
     const e = elapsedAt(window, rebased);
     const resets = window.early_resets || [];
     const last = resets[resets.length - 1];
-    const floor = Number(last?.to_percent) || 0;
-    mk("line", { x1: x(e), y1: y(floor), x2: x(100), y2: y(100), class: "ils-rebeam" }, null, reticle);
     const top = y(Number(last?.from_percent ?? 100));
     const plans = resetPlanPhrase(last);
     const label = mk("text", { x: x(e) + 14, y: Math.max(M.t + 10, top + 7),
@@ -2215,7 +2210,7 @@ function fillRegister(register, entries) {
       }
       const state = stateOf(entry.account, entry.window);
       const deviation = entry.plottable
-        ? entry.window.used_percent - budgetElapsed(entry.window, entry.at) : null;
+        ? entry.window.used_percent - entry.at : null;
       const name = registerNameHTML(entry.account, entry.window, entry.session);
       const row = document.createElement("div");
       row.className = `reg-row ${entry.session ? "session" : "weekly"}`
@@ -2235,7 +2230,7 @@ function fillRegister(register, entries) {
         <span class="reg-name">${name}</span>
         ${spendCell(`${entry.account.display}/${entry.window.meter_id}`)}
         <span class="reg-dev num ${state.tone}">${deviation == null ? "—"
-          : (deviation >= 0 ? "+" : "−") + Math.abs(deviation).toFixed(0) + "%"}</span>
+          : signedPoints(deviation) + "%"}</span>
         <span class="reg-used num">${used}</span>`;
       if (entry.account.provider === "Claude" && !entry.account.dormant) {
         row.classList.add("switchable");
@@ -2281,7 +2276,7 @@ function fillRegister(register, entries) {
         <span class="reg-key">${glyph}</span>
         <span class="reg-name"><span class="reg-account">${escapeHTML(name)}</span> <span class="reg-window"><span class="window-chip weekly">7D</span>${Number.isFinite(resetIn) ? ":" : ""}</span> <span class="reg-clock${Number.isFinite(resetIn) ? "" : " missing"}">${Number.isFinite(resetIn) ? escapeHTML(fmtDur(resetIn)) : "—"}</span></span>
         <span class="reg-spend num" title="API-equivalent, rolling 7 days">${spendFmt(SPEND && SPEND.providers && SPEND.providers[provider === "Claude" ? "Anthropic" : "Total"] ? SPEND.providers[provider === "Claude" ? "Anthropic" : "Total"].d7.usd : null)}</span>
-        <span class="reg-dev num ${tone}">${(deviation >= 0 ? "+" : "−") + Math.abs(deviation).toFixed(0)}%</span>
+        <span class="reg-dev num ${tone}">${signedPoints(deviation)}%</span>
         <span class="reg-used num">${Math.round(pool.used_percent)}%${pool.floor ? "+" : ""}</span>`;
       rows.appendChild(row);
     }

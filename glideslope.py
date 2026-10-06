@@ -1903,12 +1903,20 @@ def normalize_grok(payload: dict[str, Any], observed_at: dt.datetime) -> dict[st
     config = payload.get("config") if isinstance(payload.get("config"), dict) else None
     if config is None:
         raise PositionError("Grok billing returned no config")
-    percent = _grok_percent(config.get("creditUsagePercent"))
+    raw_percent = config.get("creditUsagePercent")
+    reset, minutes = _grok_period_minutes(config)
+    # The body is proto3 JSON, which omits a field at its zero value: a fresh
+    # period with nothing spent arrives with no creditUsagePercent and no
+    # productUsage (seen 2026-10-06, minutes after the weekly rollover; idle
+    # products already arrive with no usagePercent). Absent beside a named
+    # period is 0%. Absent with no period is still a payload we cannot read.
+    if raw_percent is None and reset is not None:
+        raw_percent = 0.0
+    percent = _grok_percent(raw_percent)
     if percent is None:
         raise PositionError("Grok billing has no creditUsagePercent")
     if not -0.001 <= percent <= 100.001:
         raise PositionError(f"Grok weekly usage is out of range: {percent}")
-    reset, minutes = _grok_period_minutes(config)
     limits: list[dict[str, Any]] = [{
         "meter_id": "weekly_all" if minutes != 300 else "session",
         "slot": "primary",
@@ -2488,15 +2496,17 @@ def window_start(limit: dict[str, Any]) -> dt.datetime | None:
 
 
 def even_pace_percent(limit: dict[str, Any], now: dt.datetime) -> float | None:
-    """Where even burn would put you: the share of the budget's span already elapsed.
+    """Where even burn would put you: the share of the window already elapsed.
 
-    After an early reset the span is reset-to-deadline, not the whole window: a
-    full budget over half a week has to be spent twice as fast to land on 100%.
+    Always the window's own clock, even after an early reset: position is read
+    against the one glide slope the views draw (operator, 2026-10-06). Only rates
+    restart at a reset (`exhausts_at` measures from `window_start`).
     """
     reset = limit.get("resets_at")
-    start = window_start(limit)
-    if not isinstance(reset, dt.datetime) or start is None:
+    duration = limit.get("window_minutes")
+    if not isinstance(reset, dt.datetime) or not duration:
         return None
+    start = reset - dt.timedelta(minutes=duration)
     remaining = (reset - now).total_seconds()
     if remaining < 0:
         return None
