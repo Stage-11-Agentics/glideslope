@@ -1529,6 +1529,21 @@ const elapsedAt = (w, t) => {
   const s = startOf(w), e = endOf(w);
   return s == null || e == null ? null : (t - s) / (e - s) * 100;
 };
+/* An early reset breaks a trail. The meter fell somewhere between its last
+   reading before the reset and its first after it, and the chequered drop marks
+   where. A line joined across that gap would draw a steady descent through hours
+   nobody read (Charlie, 2026-10-06: fifteen unread hours became a long diagonal
+   from 98% to 0). The trail lifts at the midpoint of the gap and lands again. */
+const trailPath = (w, trail, x, y) => {
+  const cuts = (w.earlyResets || []).map(event => {
+    const after = Date.parse(event.at || ""), before = Date.parse(event.last_before || "");
+    return elapsedAt(w, Number.isFinite(before) ? (before + after) / 2 : after);
+  }).filter(Number.isFinite);
+  return trail.map(([e, u], index) => {
+    const lift = index && cuts.some(cut => trail[index - 1][0] < cut && cut <= e);
+    return `${index && !lift ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`;
+  }).join(" ");
+};
 /* a plot position's elapsed percent, restated against the budget's own span */
 const budgetElapsed = (w, e) => {
   const rebased = rebasedOf(w);
@@ -3057,7 +3072,7 @@ function render() {
          while unread has no y value and stays off the frame. A presumed window
          has no sample history, so its one mark gets no synthesized trail. */
       if (m.presumed || !m.plottable || m.trail.length < 2) continue;
-      const d = m.trail.map(([e, u], i) => `${i ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`).join(" ");
+      const d = trailPath(m.w, m.trail, x, y);
       /* the trail knows its source: which seat(s) flew this stretch of burn.
          `color` carries the account hue so the elsewhere-glow can radiate in
          the trail's own light (currentColor), not a borrowed one. */

@@ -1096,6 +1096,21 @@ const elapsedAt = (window, at) => {
   const start = startOf(window), end = endOf(window);
   return start == null || end == null ? null : (at - start) / (end - start) * 100;
 };
+/* An early reset breaks a trail. The meter fell somewhere between its last
+   reading before the reset and its first after it, and the chequered drop marks
+   where. A line joined across that gap would draw a steady descent through hours
+   nobody read (Charlie, 2026-10-06: fifteen unread hours became a long diagonal
+   from 98% to 0). The trail lifts at the midpoint of the gap and lands again. */
+const trailPath = (window, trail, x, y) => {
+  const cuts = (window.early_resets || []).map(event => {
+    const after = Date.parse(event.at || ""), before = Date.parse(event.last_before || "");
+    return elapsedAt(window, Number.isFinite(before) ? (before + after) / 2 : after);
+  }).filter(Number.isFinite);
+  return trail.map(([e, u], index) => {
+    const lift = index && cuts.some(cut => trail[index - 1][0] < cut && cut <= e);
+    return `${index && !lift ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`;
+  }).join(" ");
+};
 /* a plot position's elapsed percent, restated against the budget's own span */
 const budgetElapsed = (window, e) => {
   const rebased = rebasedOf(window);
@@ -1735,8 +1750,7 @@ function renderPlot() {
   for (const entry of entries) {
     if (!entry.plottable || entry.trail.length < 2) continue;
     const markId = `${entry.account.display}/${entry.window.meter_id}`;
-    const path = entry.trail
-      .map(([e, u], index) => `${index ? "L" : "M"}${x(e).toFixed(1)},${y(u).toFixed(1)}`).join(" ");
+    const path = trailPath(entry.window, entry.trail, x, y);
     mk("path", { d: path, class: `ils-trail ${entry.session ? "session" : "weekly"}${entry.fable ? " fable" : ""}`,
                  "data-mark": markId, "data-provider": entry.account.provider,
                  "data-class": classOf(entry), stroke: colorFor(entry.account.display) });
