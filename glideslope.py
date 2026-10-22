@@ -3337,8 +3337,11 @@ def _ledger_usd(value: Any) -> str:
 def _spend_summary_lines(data: dict[str, Any]) -> list[str]:
     """The ledger's totals, per-account rows and leverage, as the CLI prints them."""
     t = data["totals"]
+    # since 6 AM and 36 h exist in ledgers written from 2026-10-22; an older ledger simply omits them
+    extra = lambda key, label: f"{label} {_ledger_usd(t[key]['usd'])} · " if isinstance(t.get(key), dict) else ""  # noqa: E731
     lines = [
-        f"  24h {_ledger_usd(t['d1']['usd'])} · 7d {_ledger_usd(t['d7']['usd'])} · 30d {_ledger_usd(t['d30']['usd'])} · "
+        f"  {extra('since6', 'since 6 AM')}24h {_ledger_usd(t['d1']['usd'])} · {extra('h36', '36h')}7d {_ledger_usd(t['d7']['usd'])} · "
+        f"30d {_ledger_usd(t['d30']['usd'])} · "
         f"all {_ledger_usd(t['all']['usd'])} ({float(t['all'].get('tokens', 0)) / 1e9:.1f}B tokens since "
         f"{str(data.get('first_request_at') or '—')[:10]})",
         "",

@@ -297,6 +297,18 @@
   .spend-table td small { color: var(--muted); font-size: 10px; margin-left: 3px; }
   .spend-table td.nil, .spend-table .nil { color: var(--muted-2); }
   .spend-table tr.sum td { border-top: 1px solid var(--bezel-bright); color: var(--ink); font-weight: 700; }
+  .spend-burn { grid-column: 1 / -1; border-top: 1px solid var(--bezel); padding: 10px 18px 6px; }
+  .spend-burn .chart-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .spend-burn .legend { color: var(--muted); font: 10px/1.4 var(--mono); }
+  .burn-table { margin-top: 6px; }
+  .burn-table th:first-child, .burn-table td:first-child { width: 16%; }
+  .burn-table th small { display: block; color: var(--muted-2); font: 9px/1.2 var(--mono); letter-spacing: 0; text-transform: none; margin-top: 2px; }
+  .burn-table td .v { font: 700 15px/1.1 var(--mono); color: var(--ink); }
+  .burn-table td .s { color: var(--muted); font: 10px/1.4 var(--mono); margin-top: 2px; }
+  .burn-table td .s b { color: var(--fable-ink); font-weight: 650; }
+  .burn-table td.nil { color: var(--muted-2); font: 15px/1.1 var(--mono); }
+  .burn-table tr.sum td .v { color: var(--pace-hot); }
+  .burn-table tbody tr { height: 46px; }
   .spend-chart { grid-column: 1 / -1; border-top: 1px solid var(--bezel); padding: 10px 18px 12px; }
   .spend-chart .chart-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
   .spend-chart svg { display: block; width: 100%; height: 150px; margin-top: 8px; overflow: visible; }
@@ -2441,6 +2453,30 @@ function render() {
           </div>
         </div>`;
 
+      /* Burn by provider: the ledger's provider groups across the short horizons, so
+         "what have I burned since this morning" reads off one row. Every provider is a
+         row every time (a quiet one reads —) and the columns are fixed, so the table
+         never changes shape. Horizon starts and labels come from the ledger; a ledger
+         written before it had a horizon leaves that column —, never 0. */
+      const P = S.providers || {};
+      const H = S.horizons || {};
+      const BURN_H = [["since6", "since 6 AM"], ["d1", "24 h"], ["h36", "36 h"], ["d7", "7 d"]];
+      const fmtAt = iso => iso ? new Intl.DateTimeFormat("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "";
+      /* — is a horizon this ledger never priced; a muted $0 is a span it priced and found empty */
+      const burnCell = (b, fable) => !b ? `<td class="nil">—</td>` : !b.requests ? `<td class="nil">$0</td>`
+        : `<td><div class="v">${usd(b.usd)}</div><div class="s">${tok(b.tokens)} tok${fable && b.fable_usd ? ` · <b>F ${usd(b.fable_usd)}</b>` : ""}</div></td>`;
+      const burnRow = (name, acc, cls) => `<tr class="${cls || ""}" style="--acc: var(${acc})"><td class="acct"><i></i>${esc(name)}</td>
+        ${BURN_H.map(([h]) => burnCell(P[name] && P[name][h], name === "Anthropic" || name === "Total")).join("")}</tr>`;
+      const burn = `
+        <div class="spend-burn">
+          <div class="chart-head"><span class="kicker">Burn by provider · API-equivalent · ${BURN_H.map(([, l]) => l).join(" · ")}</span>
+            <span class="legend">F = the Fable share</span></div>
+          <table class="spend-table burn-table">
+            <thead><tr><th>Provider</th>${BURN_H.map(([h, l]) => `<th title="${esc((H[h] || {}).start ? "from " + fmtAt(H[h].start) : "")}">${esc(((H[h] || {}).label) || l)}${h === "since6" && (H[h] || {}).start ? `<small>${esc(fmtAt(H[h].start))}</small>` : ""}</th>`).join("")}</tr></thead>
+            <tbody>${burnRow("Anthropic", "--alpha")}${burnRow("Codex", "--codex")}${burnRow("Kimi", "--kimi")}${burnRow("Grok", "--grok")}${burnRow("Total", "--muted-2", "sum")}</tbody>
+          </table>
+        </div>`;
+
       const rows = (S.accounts || []).map(a => {
         const w = a.window;
         /* a percent read long ago (nobody logged in there) is marked, never passed off as now */
@@ -2516,7 +2552,7 @@ function render() {
           <span class="kicker">API-equivalent spend · what the tokens would cost at list prices</span>
           <span class="section-note">Claude Code, Codex, Kimi, Grok · collected ${collected || "—"} · not money spent</span>
         </div>
-        <div class="spend-body">${tiles}${table}${chart}
+        <div class="spend-body">${tiles}${table}${burn}${chart}
           <div class="spend-foot">Each Claude Code and Codex request on ${machineList} (plus any Kimi-plan and Grok Build turns) is priced at API list rates (cache reads and writes included) and credited to the Claude account logged in on its machine at that moment, read from Glideslope's samples and login switches. Unattributed = no login read within a day of the request${lateStarts.length ? ` (${lateStarts.join("; ")})` : ""}. $ / 1% = this window's Claude Code cost up to the meter's last read, divided by that meter. The meter also counts claude.ai, mobile and other machines, so $ / 1% is a floor.</div>
         </div>`;
     } catch (err) {

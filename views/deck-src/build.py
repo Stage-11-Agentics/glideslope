@@ -78,6 +78,7 @@ def spend_view(path: Path = SPEND_PATH) -> dict | None:
             "first_request_at": data.get("first_request_at"),
             "attribution": data.get("attribution") or {},
             "totals": totals,
+            "horizons": data.get("horizons") if isinstance(data.get("horizons"), dict) else {},
             "machines": data.get("machines") or {},
             "accounts": [{"name": a.get("name"), "provider": a.get("provider"),
                           **{k: a.get(k) for k in keep}}
