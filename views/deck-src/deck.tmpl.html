@@ -2460,7 +2460,7 @@ function render() {
          written before it had a horizon leaves that column —, never 0. */
       const P = S.providers || {};
       const H = S.horizons || {};
-      const BURN_H = [["since6", "since 6 AM"], ["d1", "24 h"], ["h36", "36 h"], ["d7", "7 d"]];
+      const BURN_H = [["since6", "since 6 AM"], ["d1", "24 h"], ["h36", "36 h"], ["d7", "7 d"], ["d30", "30 d"]];
       const fmtAt = iso => iso ? new Intl.DateTimeFormat("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "";
       /* — is a horizon this ledger never priced; a muted $0 is a span it priced and found empty */
       const burnCell = (b, fable) => !b ? `<td class="nil">—</td>` : !b.requests ? `<td class="nil">$0</td>`
@@ -2477,6 +2477,8 @@ function render() {
           </table>
         </div>`;
 
+      /* the tokens behind a span's dollars, so "how much did I run" reads beside "what it was worth" */
+      const usdTok = b => `${usd(b && b.usd)}${b && b.tokens ? `<small title="tokens, cache reads included">${tok(b.tokens)} tok</small>` : ""}`;
       const rows = (S.accounts || []).map(a => {
         const w = a.window;
         /* a percent read long ago (nobody logged in there) is marked, never passed off as now */
@@ -2493,12 +2495,12 @@ function render() {
           <td class="acct"><i></i>${esc(label)}</td>
           <td>${wcell}</td><td>${fcell}</td>
           <td>${per(w && w.usd_per_pct_all)}</td><td>${per(w && w.usd_per_pct_fable)}</td>
-          <td>${usd(a.d7 && a.d7.usd)}</td><td>${usd(a.d30 && a.d30.usd)}</td>
+          <td>${usdTok(a.d7)}</td><td>${usdTok(a.d30)}</td>
           <td>${usd(a.all && a.all.usd)}${fAll != null && a.provider === "Claude" ? `<small title="share of this account's all-time API-equivalent spent on Fable">${fAll}% F</small>` : ""}</td>
         </tr>`;
       });
       rows.push(`<tr class="sum"><td class="acct">Total</td><td></td><td></td><td></td><td></td>
-        <td>${usd(T.d7.usd)}</td><td>${usd(T.d30.usd)}</td><td>${usd(T.all.usd)}</td></tr>`);
+        <td>${usdTok(T.d7)}</td><td>${usdTok(T.d30)}</td><td>${usd(T.all.usd)}</td></tr>`);
       const table = `
         <table class="spend-table">
           <thead><tr><th>Account</th><th>This ${wclass("7 DAY", false)}</th><th>Fable</th>
