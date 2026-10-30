@@ -232,6 +232,25 @@ class TwoOrganizationsOneEmailTests(ToolCase):
         signs = self.tool.call_signs_by_login(configured={"same@example.com": "Bravo"})
         self.assertEqual(signs, {})
 
+    def test_a_failed_read_with_a_refused_journal_still_carries_a_limits_list(self):
+        import contextlib, io
+        self.tool.cache_put("old", "same@example.com", [("session (5h)", 9.0, None)])  # email only: refused
+        out = io.StringIO()
+
+        def live(home):
+            if home.name == "bravo":
+                raise RuntimeError("expired")
+            return home.name
+
+        with mock.patch.object(self.tool, "live_token", side_effect=live), \
+             mock.patch.object(self.tool, "fetch_usage", return_value={"limits": []}), \
+             mock.patch.object(self.tool, "meter_reads", return_value=({}, [])), \
+             mock.patch.object(self.tool.time, "sleep"), contextlib.redirect_stdout(out):
+            self.tool.cmd_status(["--json"])
+        report = json.loads(out.getvalue())
+        self.assertEqual((report["old"]["limits"], report["old"]["stale"]), ([], True))
+        self.assertIn("expired", report["old"]["error"])
+
     def test_saving_under_a_name_renames_an_auto_named_account(self):
         self.tool.roster_write({"old": {"email": "same@example.com", "org_uuid": "org-old"}})
         import contextlib, io

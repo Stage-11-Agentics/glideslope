@@ -1564,7 +1564,11 @@ def cmd_status(args: list[str]) -> None:
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {C['cyan']}{email}{C['off']}  "
                              f"{C['dim']}○ last known ({age_str(cached.get('fetched_at'))} ago){C['off']}"
                              ] + lines(cached["limits"])
-        elif alias not in report:
+        elif alias in report:
+            # A failed read with no journal of its own: still the list, empty. Glideslope
+            # rejects a snapshot with any account lacking it.
+            report[alias].setdefault("limits", [])
+        else:
             # limits: [] — Glideslope rejects a snapshot with any account lacking the list
             report[alias] = {**base, "stale": True, "limits": [], "error": "never read while logged in"}
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {email}",
