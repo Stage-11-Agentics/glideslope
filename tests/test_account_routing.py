@@ -33,24 +33,24 @@ class LocalLoginTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def logins(self):
-        return glideslope.local_login_emails(self.default, self.profiles)
+        return glideslope.local_login_ids(self.default, self.profiles)
 
     def test_every_home_with_a_login_counts_default_first(self):
         self.assertEqual(self.logins(), ["lab@example.com", "personal@example.com"])
 
     def test_no_selection_means_the_default_home(self):
-        self.assertEqual(glideslope.selected_login_email(
+        self.assertEqual(glideslope.selected_login_id(
             self.selection, logins=self.logins(), default_config=self.default), "lab@example.com")
 
     def test_the_selection_names_the_account_new_sessions_use(self):
         self.selection.write_text(json.dumps({"email": "personal@example.com"}))
-        self.assertEqual(glideslope.selected_login_email(
+        self.assertEqual(glideslope.selected_login_id(
             self.selection, logins=self.logins(), default_config=self.default),
             "personal@example.com")
 
     def test_a_selection_without_a_login_falls_back_like_the_launcher(self):
         self.selection.write_text(json.dumps({"email": "work@example.com"}))
-        self.assertEqual(glideslope.selected_login_email(
+        self.assertEqual(glideslope.selected_login_id(
             self.selection, logins=self.logins(), default_config=self.default), "lab@example.com")
 
 
@@ -146,7 +146,7 @@ class SatelliteLoginTests(unittest.TestCase):
                        "login_emails": ["personal@example.com", "work@example.com"]}]
         glideslope.reconcile_satellite_logins(
             accounts, ["charlie@example.test", "personal@example.com"], satellites,
-            live_email="charlie@example.test")
+            live_login="charlie@example.test")
         self.assertEqual(by_display(accounts, "Charlie")["logins"], [LOCAL])
         self.assertEqual(by_display(accounts, "Bravo")["logins"], ["studio"])
         self.assertEqual(by_display(accounts, "Alpha")["logins"], [])
@@ -157,7 +157,7 @@ class SatelliteLoginTests(unittest.TestCase):
                        "login_emails": ["personal@example.com", "work@example.com"]}]
         glideslope.reconcile_satellite_logins(
             accounts, ["charlie@example.test", "personal@example.com"], satellites,
-            live_email="charlie@example.test")
+            live_login="charlie@example.test")
         self.assertEqual(by_display(accounts, "Charlie")["held_on"], [LOCAL])
         self.assertEqual(by_display(accounts, "Bravo")["held_on"], [LOCAL, "studio"])
         self.assertEqual(by_display(accounts, "Alpha")["held_on"], ["studio"])
@@ -166,7 +166,7 @@ class SatelliteLoginTests(unittest.TestCase):
         accounts = glideslope.normalize_claude(claude_snapshot_with_charlie(), NOW)
         glideslope.reconcile_satellite_logins(
             accounts, ["charlie@example.test", "personal@example.com", "work@example.com"], [],
-            live_email="work@example.com")
+            live_login="work@example.com")
         here = [a["display"] for a in accounts
                 if a.get("provider") == "Claude" and LOCAL in a["logins"]]
         self.assertEqual(here, ["Alpha"])
@@ -226,3 +226,91 @@ class PickTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TwoOrganizationsOneEmailTests(unittest.TestCase):
+    """One sign-in, two subscriptions: Bravo and Delta share an email, never an identity."""
+
+    SNAPSHOT = {
+        "old": {"email": "same@example.com", "org_uuid": "org-old", "active": False, "logged_in": True,
+                "limits": [{"label": "session (5h)", "percent": 60.0, "resets_at": "2026-10-30T22:00:00+00:00"}]},
+        "new": {"email": "same@example.com", "org_uuid": "org-new", "active": True, "logged_in": True,
+                "limits": [{"label": "session (5h)", "percent": 1.0, "resets_at": "2026-10-30T22:00:00+00:00"}]},
+    }
+
+    def setUp(self):
+        self._signs = dict(glideslope.CLAUDE_CALL_SIGNS)
+        glideslope.CLAUDE_CALL_SIGNS.update({"old": "Bravo", "new": "Delta"})
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.default = root / ".claude.json"
+        self.profiles = root / ".claude-profiles"
+        self.selection = root / "selection.json"
+        for path, org in ((self.default, "ORG-NEW"), (self.profiles / "bravo" / ".claude.json", "org-old")):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"oauthAccount": {"emailAddress": "same@example.com",
+                                                         "organizationUuid": org}}))
+
+    def tearDown(self):
+        glideslope.CLAUDE_CALL_SIGNS.clear()
+        glideslope.CLAUDE_CALL_SIGNS.update(self._signs)
+        self._tmp.cleanup()
+
+    def accounts(self):
+        return glideslope.normalize_claude(json.loads(json.dumps(self.SNAPSHOT)), NOW)
+
+    def test_each_home_is_its_own_login(self):
+        logins = glideslope.local_login_ids(self.default, self.profiles)
+        self.assertEqual(logins, ["same@example.com#org-new", "same@example.com#org-old"])
+        self.selection.write_text(json.dumps({"email": "same@example.com", "org_uuid": "org-old"}))
+        self.assertEqual(glideslope.selected_login_id(self.selection, logins=logins, default_config=self.default),
+                         "same@example.com#org-old")
+
+    def test_an_email_only_selection_names_one_concrete_home(self):
+        logins = glideslope.local_login_ids(self.default, self.profiles)
+        self.selection.write_text(json.dumps({"email": "same@example.com"}))
+        self.assertEqual(glideslope.selected_login_id(self.selection, logins=logins, default_config=self.default),
+                         "same@example.com#org-new")
+
+    def test_only_the_live_organization_is_active(self):
+        accounts = glideslope.reconcile_login(self.accounts(), "same@example.com#org-old")
+        self.assertEqual({a["account"]: a["active"] for a in accounts}, {"old": True, "new": False})
+
+    def test_the_cached_gauge_must_match_both_organizations(self):
+        logins = ["same@example.com#org-new", "same@example.com#org-old"]
+        self.assertTrue(glideslope.snapshot_matches_logins(self.SNAPSHOT, logins, logins[0]))
+        self.assertFalse(glideslope.snapshot_matches_logins(self.SNAPSHOT, logins, logins[1]))
+
+    def test_a_satellite_is_logged_into_one_organization(self):
+        accounts = self.accounts()
+        glideslope.reconcile_satellite_logins(
+            accounts, [], [{"name": "studio", "login_email": "same@example.com#org-old",
+                            "login_emails": ["same@example.com#org-old"]}], live_login=None)
+        self.assertEqual({a["account"]: a["logins"] for a in accounts}, {"old": ["studio"], "new": []})
+
+    def test_a_satellite_reading_joins_by_organization_and_an_email_alone_is_skipped(self):
+        snapshot = json.loads(json.dumps(self.SNAPSHOT))
+        snapshot["old"].update(stale=True, fetched_at="2026-10-30T10:00:00+00:00")
+        fresh = {"email": "same@example.com", "org_uuid": "org-old", "logged_in": True,
+                 "limits": [{"label": "session (5h)", "percent": 75.0, "resets_at": None}]}
+        satellite = {"name": "studio", "snapshot": {"bf": fresh}, "observed_at": NOW, "age_seconds": 10}
+        glideslope.merge_satellite_claude(snapshot, [satellite], NOW, warnings=[])
+        self.assertEqual(snapshot["old"]["limits"][0]["percent"], 75.0)
+        self.assertEqual(snapshot["new"]["limits"][0]["percent"], 1.0)
+
+        snapshot = json.loads(json.dumps(self.SNAPSHOT))
+        snapshot["old"].update(stale=True)
+        bare = {**fresh, "org_uuid": None}
+        warnings: list[str] = []
+        glideslope.merge_satellite_claude(snapshot, [{**satellite, "snapshot": {"bf": bare}}], NOW,
+                                          warnings=warnings)
+        self.assertEqual(snapshot["old"]["limits"][0]["percent"], 60.0)
+        self.assertTrue(any("share it" in warning for warning in warnings))
+
+    def test_plans_and_dormancy_join_by_alias_not_email(self):
+        roster = {"old": {"email": "same@example.com", "tier": "default_claude_max_5x", "dormant": True},
+                  "new": {"email": "same@example.com", "tier": "default_claude_max_20x"}}
+        accounts = glideslope.reconcile_plans(self.accounts(), roster)
+        glideslope.reconcile_dormant(accounts, roster)
+        self.assertEqual({a["account"]: (a["plan"], a["dormant"]) for a in accounts},
+                         {"old": ("Max 5x", True), "new": ("Max 20x", False)})

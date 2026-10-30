@@ -95,8 +95,20 @@ home here is a **live** row, with `logged_in` / `home` in its JSON beside the ol
 Before this, the limit was one login per machine (from 2026-08-15, each satellite held one),
 and every other account was journaled.
 
+**An account is an email and an organization (added 2026-10-30).** One sign-in can hold several
+subscriptions, each in its own organization with its own meters: the account picker on the web
+login lists them all under one email. So the identity every join rides on is a **login id**,
+`email#organization` (`login_id()` in both `glideslope.py` and `claude_account.py`), taken from
+`oauthAccount.emailAddress` and `organizationUuid`. A roster entry is found by both; a login in
+an organization the roster has not seen under its email becomes a new entry (with a warning),
+never a correction of the old one. A bare email is a login id whose organization is unknown (an
+old selection, snapshot or beacon): it matches every organization under that email, and where
+that is more than one account, a reading that names no organization is skipped rather than
+credited to a guess. `claude-account save <alias>` names (or renames) the account the default home
+holds.
+
 **Switching is choosing a home, not logging in.** `claude-account use <account|auto>` writes
-`~/.claude/accounts/selection.json` — an email, never a token — and a shell `claude()`
+`~/.claude/accounts/selection.json` — an email and an organization, never a token — and a shell `claude()`
 wrapper (for example in `~/.zshrc`) starts every new session via `claude-account exec`, which sets
 `CLAUDE_CONFIG_DIR` to the selected account's home. `CLAUDE_ACCOUNT=<account>` overrides one
 launch; a session's children inherit its home (`CLAUDE_CONFIG_DIR` / `CLAUDE_ACCOUNT_HOME`), so
@@ -177,7 +189,7 @@ no API call, so a fresh login shows up immediately even on a warm gauge.
 **Dormant accounts (added 2026-09-11).** `claude-account` now writes `"dormant": true,
 "dormant_since": "YYYY-MM-DD"` onto a roster entry (`~/.claude/accounts/roster.json`) once its
 subscription is no longer active. Glideslope joins this onto each
-Claude account by email and folds it into the shared shape as `"dormant": bool` /
+Claude account by its roster alias and folds it into the shared shape as `"dormant": bool` /
 `"dormant_since": str | None`, the read-only half of the `--json` contract every surface
 builds against.
 
@@ -204,8 +216,8 @@ windows would just be noise.
 |---|---|
 | Source | `ssh <host> cat ~/.glideslope/satellite.json` — a file the satellite wrote for itself |
 | Publisher | `tools/satellite_beacon.py` under launchd, every 300s (`tools/install-satellite.sh`) |
-| Join key | **email** — store aliases are per-machine (`personal` on one satellite, `personal-2` on another) |
-| Credential | none crosses the network; the beacon carries numbers, reset clocks, and login emails only |
+| Join key | **login id** (email and organization) — store aliases are per-machine (`personal` on one satellite, `personal-2` on another). The beacon carries `login_id` / `login_ids` beside the older `login_email` / `login_emails`, which a reader uses only when the ids are absent |
+| Credential | none crosses the network; the beacon carries numbers, reset clocks, and login ids only |
 | `holds` | single-account providers the satellite is also signed into (`{"Codex": "<email>"}`) — email decoded from the cached id_token's claims, the token never read past that |
 
 **Shared single-account meters (Codex).** Codex's windows are server-side and account-global:

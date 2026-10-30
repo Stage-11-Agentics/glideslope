@@ -59,7 +59,8 @@ Commands
                              bills another account, 4 when one bills an org the roster lacks,
                              2 when a probe fails
 
-An <account> is a call-sign (Bravo), a roster alias (personal) or an email.
+An <account> is a call-sign (Bravo), a roster alias (personal), an email, or email#org
+when one email holds accounts in several organizations.
 CLAUDE_ACCOUNT=<account> overrides the selection for one launch.
 """
 
@@ -118,9 +119,44 @@ METER_TIMEOUT_S = 10
 METER_BUDGET_S = 25.0  # all probes in one run; a beacon's whole status call has 45s
 GLIDESLOPE = Path(__file__).resolve().parent / "glideslope.py"
 
+
+# An account is an email AND an organization. One sign-in can hold several
+# subscriptions, each its own organization with its own meters (2026-10-30: a second
+# Max organization under an email that already had one), so an email alone cannot
+# name an account. A login id is "email#org"; a bare email is a login id whose
+# organization is unknown (an old journal, beacon or selection) and it matches every
+# organization under that email. glideslope.py keeps the same three functions.
+
+def login_id(email: str | None, org_uuid: str | None = None) -> str | None:
+    if not isinstance(email, str) or not email.strip():
+        return None
+    org = (org_uuid or "").strip().lower() if isinstance(org_uuid, str) else ""
+    return f"{email.strip().lower()}#{org}" if org else email.strip().lower()
+
+
+def split_login(login: str | None) -> tuple[str, str]:
+    email, _, org = (login or "").partition("#")
+    return email.strip().lower(), org.strip().lower()
+
+
+def same_login(a: str | None, b: str | None) -> bool:
+    """Whether two login ids can name the same account. An unknown organization matches any."""
+    a_email, a_org = split_login(a)
+    b_email, b_org = split_login(b)
+    return bool(a_email) and a_email == b_email and (not a_org or not b_org or a_org == b_org)
+
+
+def entry_login(entry: dict | None) -> str | None:
+    """A roster entry's login id."""
+    entry = entry or {}
+    return login_id(entry.get("email"), entry.get("org_uuid"))
+
+
 # Call-signs come from Glideslope's config ([claude] call_signs), keyed by email
 # or by roster alias. Emails are the same on every machine; aliases are this
-# machine's bookkeeping, so alias keys are resolved through the local roster.
+# machine's bookkeeping, so alias keys are resolved through the local roster to
+# the login id they name (email and organization), which is what tells two
+# accounts under one email apart.
 # Nothing here is a credential. This tool also runs alone on satellites where
 # glideslope.py is not installed, so the config is read directly.
 CONFIG_PATH = Path(os.environ.get("GLIDESLOPE_CONFIG") or (Path.home() / ".glideslope" / "config.toml"))
@@ -153,25 +189,22 @@ def _call_signs_without_tomllib(path: Path) -> dict[str, str]:
     return {quoted or bare: value for quoted, bare, value in pairs}
 
 
-def call_signs_by_email(roster: dict | None = None,
+def call_signs_by_login(roster: dict | None = None,
                         configured: dict[str, str] | None = None) -> dict[str, str]:
-    """{email: call-sign} from the config; alias keys are resolved via the roster."""
+    """{login id: call-sign} from the config; alias keys are resolved via the roster."""
     configured = _configured_call_signs() if configured is None else configured
     if not configured:
         return {}
-    by_email: dict[str, str] = {}
+    by_login: dict[str, str] = {}
     roster = roster_read() if roster is None else roster
     for key, name in configured.items():
-        if "@" in key:
-            by_email[key.lower()] = name
-        else:
-            email = (roster.get(key) or {}).get("email")
-            if email:
-                by_email[str(email).lower()] = name
-    return by_email
+        login = login_id(key) if "@" in key else entry_login(roster.get(key))
+        if login:
+            by_login[login] = name
+    return by_login
 
 
-CALL_SIGNS: dict[str, str] = {}  # filled by main() once the roster can be read
+CALL_SIGNS: dict[str, str] = {}  # login id -> call-sign; filled by main() once the roster can be read
 
 # Entries of ~/.claude a profile home keeps for itself instead of linking. They are
 # per-install runtime state (the background daemon and its jobs, session sockets,
@@ -260,6 +293,11 @@ class Home:
         email = self.account().get("emailAddress")
         return email if isinstance(email, str) and email else None
 
+    def login(self) -> str | None:
+        """The login id this home holds: its email and organization."""
+        account = self.account()
+        return login_id(account.get("emailAddress"), account.get("organizationUuid"))
+
     def env_value(self) -> str:
         return "" if self.config_dir is None else str(self.config_dir)
 
@@ -283,38 +321,53 @@ def homes() -> list[Home]:
     return found
 
 
-def home_for(email: str | None, all_homes: list[Home] | None = None) -> Home | None:
-    """The home holding a login for EMAIL — the default home first, then profiles by name."""
-    if not email:
+def home_for(login: str | None, all_homes: list[Home] | None = None) -> Home | None:
+    """The home holding LOGIN — the default home first, then profiles by name.
+
+    A home in LOGIN's own organization wins; a login id with no organization takes
+    the first home under its email.
+    """
+    if not login:
         return None
-    return next((home for home in (all_homes or homes()) if home.email() == email), None)
+    held = [(home, home.login()) for home in (all_homes or homes())]
+    wanted = login_id(*split_login(login))
+    return (next((home for home, have in held if have == wanted), None)
+            or next((home for home, have in held if same_login(have, login)), None))
 
 
-def call_sign_for(email: str | None) -> str | None:
-    return CALL_SIGNS.get((email or "").lower())
+def call_sign_for(login: str | None) -> str | None:
+    """LOGIN's call-sign: its own, else the one sign every account it can name shares."""
+    if not login:
+        return None
+    wanted = login_id(*split_login(login))
+    if wanted in CALL_SIGNS:
+        return CALL_SIGNS[wanted]
+    signs = {sign for key, sign in CALL_SIGNS.items() if same_login(key, login)}
+    return signs.pop() if len(signs) == 1 else None
 
 
-def label_for(email: str | None, roster: dict | None = None) -> str:
-    if not email:
+def label_for(login: str | None, roster: dict | None = None) -> str:
+    if not login:
         return "?"
-    if email.lower() in CALL_SIGNS:
-        return CALL_SIGNS[email.lower()]
+    sign = call_sign_for(login)
+    if sign:
+        return sign
     roster = roster_read() if roster is None else roster
-    return next((alias for alias, entry in roster.items() if entry.get("email") == email), email)
+    return alias_for(login, roster) or split_login(login)[0]
 
 
-def resolve_email(name: str, roster: dict | None = None) -> str | None:
-    """An account named by call-sign, roster alias or email → its email."""
+def resolve_login(name: str, roster: dict | None = None) -> str | None:
+    """An account named by call-sign, roster alias, email or login id → its login id."""
     wanted = name.strip().lower()
     if "@" in wanted:
-        return wanted
-    for email, sign in CALL_SIGNS.items():
+        return login_id(*split_login(wanted))
+    for login, sign in CALL_SIGNS.items():
         if sign.lower() == wanted:
-            return email
+            return login
     roster = roster_read() if roster is None else roster
     for alias, entry in roster.items():
         if alias.lower() == wanted and entry.get("email"):
-            return entry["email"]
+            return entry_login(entry)
     return None
 
 
@@ -436,16 +489,43 @@ def roster_write(roster: dict) -> None:
     os.replace(tmp, ROSTER)
 
 
+def new_alias(email: str, org_uuid: str | None, roster: dict) -> str:
+    """A free alias for an account the roster has not seen: the email's, then that plus its org."""
+    base = default_alias(email)
+    if base not in roster:
+        return base
+    candidate = f"{base}-{(org_uuid or 'new')[:8]}"
+    suffix = 2
+    while candidate in roster:
+        candidate, suffix = f"{base}-{(org_uuid or 'new')[:8]}-{suffix}", suffix + 1
+    return candidate
+
+
 def roster_note(account: dict, alias: str | None = None) -> str | None:
-    """Record a logged-in account's identity, returning its alias. Idempotent."""
+    """Record a logged-in account's identity, returning its alias. Idempotent.
+
+    The entry is found by email AND organization: a login in an organization the
+    roster has not seen under that email is a new account, never a correction of
+    the old one. Naming ALIAS for an account the roster already knows renames it.
+    """
     email = account.get("emailAddress")
     if not email:
         return None
     roster = roster_read()
-    alias = alias or next((a for a, e in roster.items() if e.get("email") == email),
-                          default_alias(email))
-    entry = dict(roster.get(alias) or {})
     org_uuid = (account.get("organizationUuid") or "").strip().lower() or None
+    found = alias_for(login_id(email, org_uuid), roster)
+    if alias and found and found != alias and alias not in roster:
+        roster[alias] = roster.pop(found)
+        rename_cache(found, alias)
+        warn(f"renamed '{found}' to '{alias}'")
+    elif not alias:
+        if found is None and any(str(e.get("email") or "").lower() == email.lower()
+                                 for e in roster.values()):
+            warn(f"{email} is logged in under organization {(org_uuid or '?')[:8]}…, which no roster "
+                 "entry under that email names: recorded as its own account (one email can hold "
+                 "several). If an older entry was a mistaken note, drop it: claude-account remove <alias>")
+        alias = found or new_alias(email, org_uuid, roster)
+    entry = dict(roster.get(alias) or {})
     for other, held in roster.items():
         if (other != alias and org_uuid and str(held.get("org_uuid") or "").lower() == org_uuid
                 and held.get("email") != email):
@@ -453,8 +533,8 @@ def roster_note(account: dict, alias: str | None = None) -> str | None:
                  "holds it; cleared from the other entry")
             held.pop("org_uuid", None)
     if org_uuid and entry.get("org_uuid") and entry["org_uuid"].lower() != org_uuid:
-        # A login is the truth about its own org; a noted one was evidence. Say so, then correct it.
-        warn(f"roster had {email} as org {entry['org_uuid'][:8]}…, but its login says "
+        # Only an explicit ALIAS lands here. A login is the truth about its own org; say so, then correct it.
+        warn(f"roster had '{alias}' as org {entry['org_uuid'][:8]}…, but the login saved under it says "
              f"{org_uuid[:8]}…; meter readings now follow the login")
     entry.update({
         "email": email,
@@ -469,8 +549,19 @@ def roster_note(account: dict, alias: str | None = None) -> str | None:
     return alias
 
 
-def alias_for(email: str, roster: dict) -> str | None:
-    return next((a for a, e in roster.items() if e.get("email") == email), None)
+def alias_for(login: str | None, roster: dict) -> str | None:
+    """LOGIN's roster entry: the one in its organization, else one under its email with no
+    organization recorded. A login id with no organization names an entry only when it is
+    the only one under its email."""
+    email, org = split_login(login)
+    if not email:
+        return None
+    under = sorted(a for a, e in roster.items() if str(e.get("email") or "").lower() == email)
+    if not org:
+        return under[0] if len(under) == 1 else None
+    exact = [a for a in under if str(roster[a].get("org_uuid") or "").lower() == org]
+    unclaimed = [a for a in under if not roster[a].get("org_uuid")]
+    return (exact or unclaimed or [None])[0]
 
 
 def aliases_for_org(org_uuid: str | None, roster: dict) -> list[str]:
@@ -488,7 +579,7 @@ def aliases_for_org(org_uuid: str | None, roster: dict) -> list[str]:
 
 # ---------------------------------------------------------------- selection
 # Which account a new session starts in. A pointer, not a login: it names an
-# email, and the email is looked up among the homes at launch.
+# email and an organization, which are looked up among the homes at launch.
 
 def selection_read() -> dict:
     try:
@@ -498,19 +589,22 @@ def selection_read() -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def selected_email(all_homes: list[Home] | None = None) -> str | None:
-    """The account new sessions go to: the selection if a home holds it, else the default home's."""
+def selected_login(all_homes: list[Home] | None = None) -> str | None:
+    """The account new sessions go to: the selection if a home holds it, else the default home's.
+
+    Answers with the holding home's own login id, so a selection written before
+    organizations were recorded still names exactly one account.
+    """
     all_homes = all_homes or homes()
-    chosen = selection_read().get("email")
-    if chosen and home_for(chosen, all_homes):
-        return chosen
-    return all_homes[0].email()
+    chosen = selection_read()
+    home = home_for(login_id(chosen.get("email"), chosen.get("org_uuid")), all_homes)
+    return (home or all_homes[0]).login()
 
 
-def switch_log_append(from_email: str | None, to_email: str, source: str, note: str | None) -> None:
+def switch_log_append(from_login: str | None, to_login: str, source: str, note: str | None) -> None:
     roster = roster_read()
-    from_alias = alias_for(from_email, roster) if from_email else None
-    to_alias = alias_for(to_email, roster) or default_alias(to_email)
+    from_alias = alias_for(from_login, roster) if from_login else None
+    to_alias = alias_for(to_login, roster) or default_alias(split_login(to_login)[0])
     record = {"at": now_iso(), "from": from_alias, "to": to_alias, "source": source,
               "usage": {alias: None for alias in (from_alias, to_alias) if alias}}
     if note:
@@ -523,12 +617,14 @@ def switch_log_append(from_email: str | None, to_email: str, source: str, note: 
         pass  # the journal must never block a switch
 
 
-def select(email: str, *, mode: str, source: str, note: str | None = None) -> bool:
-    """Point new sessions at EMAIL. Returns True when the selected account changed."""
-    previous = selected_email()
-    write_json_atomic(SELECTION, {"email": email, "mode": mode, "set_at": now_iso(), "source": source})
-    if previous != email:
-        switch_log_append(previous, email, source, note)
+def select(login: str, *, mode: str, source: str, note: str | None = None) -> bool:
+    """Point new sessions at LOGIN. Returns True when the selected account changed."""
+    previous = selected_login()
+    email, org = split_login(login)
+    write_json_atomic(SELECTION, {"email": email, "org_uuid": org or None, "mode": mode,
+                                  "set_at": now_iso(), "source": source})
+    if previous != login_id(email, org):
+        switch_log_append(previous, login_id(email, org), source, note)
         return True
     return False
 
@@ -553,6 +649,11 @@ def glideslope_pick() -> dict:
     return pick
 
 
+def pick_login(pick: dict) -> str:
+    """The login id a Glideslope pick names: its own, else its email."""
+    return pick.get("login") or login_id(pick["email"])
+
+
 def resolve_launch_home(requested: str | None) -> Home:
     """The home a new session should start in. Raises RuntimeError with a readable reason."""
     all_homes = homes()
@@ -560,19 +661,19 @@ def resolve_launch_home(requested: str | None) -> Home:
     name = requested or os.environ.get("CLAUDE_ACCOUNT") or ""
     if name.lower() == "auto" or (not name and selection_read().get("mode") == "auto"):
         pick = glideslope_pick()
-        email = pick["email"]
+        login = pick_login(pick)
         if not name:  # only the persistent auto mode moves the pointer
-            select(email, mode="auto", source="claude-account-auto", note=pick.get("reason"))
+            select(login, mode="auto", source="claude-account-auto", note=pick.get("reason"))
     elif name:
-        email = resolve_email(name, roster)
-        if not email:
+        login = resolve_login(name, roster)
+        if not login:
             raise RuntimeError(f"unknown account '{name}'")
     else:
-        email = selected_email(all_homes)
-    home = home_for(email, all_homes)
+        login = selected_login(all_homes)
+    home = home_for(login, all_homes)
     if home is None:
-        raise RuntimeError(f"no login for {label_for(email, roster)} on this machine — "
-                           f"run: claude-account login {label_for(email, roster).lower()}")
+        raise RuntimeError(f"no login for {label_for(login, roster)} on this machine — "
+                           f"run: claude-account login {label_for(login, roster).lower()}")
     if home.config_dir is not None:
         link_profile(home.config_dir)
     return home
@@ -604,6 +705,14 @@ def cache_put(alias: str, email: str, rows: list[tuple[str, float, str]],
         os.replace(tmp, p)
     except Exception:
         pass  # a cache write must never break a status read
+
+
+def rename_cache(old: str, new: str) -> None:
+    """Carry an account's last-known usage over to its new alias."""
+    try:
+        (USAGE_CACHE / f"{old}.json").replace(USAGE_CACHE / f"{new}.json")
+    except OSError:
+        pass  # nothing journaled yet, or nothing to carry
 
 
 def cache_get(alias: str) -> dict | None:
@@ -1001,13 +1110,13 @@ def meter_reads(roster: dict, want: set | None = None) -> tuple[dict[str, dict],
                          + "; its reading is dropped (claude-account note <email> --org <id>)")
             continue
         alias = owners[0]
-        email = roster[alias]["email"]
-        named = resolve_email(path.stem, roster)
-        if named and named.lower() != email.lower():
+        login = entry_login(roster[alias])
+        named = resolve_login(path.stem, roster)
+        if named and not same_login(named, login):
             notes.append(f"meter token {path.name} is named for {label_for(named, roster)} but bills "
-                         f"{label_for(email, roster)}; the reading is credited to {label_for(email, roster)}")
+                         f"{label_for(login, roster)}; the reading is credited to {label_for(login, roster)}")
         if fallback:
-            notes.append(f"meter token {path.name}: {fallback}, so {label_for(email, roster)}'s Fable weekly "
+            notes.append(f"meter token {path.name}: {fallback}, so {label_for(login, roster)}'s Fable weekly "
                          "is unread this run")
         if alias in reads:
             notes.append(f"meter tokens {reads[alias]['read_via']} and {path.name} bill the same account; "
@@ -1042,28 +1151,29 @@ def bar(pct: float, width: int = 18) -> str:
 
 def cmd_which(_args: list[str]) -> None:
     all_homes = homes()
-    email = selected_email(all_homes)
-    if not email:
+    login = selected_login(all_homes)
+    if not login:
         print("not logged in")
         return
-    held = [home.name for home in all_homes if home.email() == email]
+    held = [home.name for home in all_homes if home.login() == login]
     mode = selection_read().get("mode") or "default"
-    print(f"{C['bold']}{label_for(email)}{C['off']}  {email}  "
+    print(f"{C['bold']}{label_for(login)}{C['off']}  {split_login(login)[0]}  "
           f"{C['dim']}new sessions · {mode} · home {', '.join(held) or '—'}{C['off']}")
 
 
 def cmd_homes(args: list[str]) -> None:
     all_homes = homes()
-    chosen = selected_email(all_homes)
+    chosen = selected_login(all_homes)
     rows = []
     for home in all_homes:
-        email = home.email()
+        login = home.login()
         state, hours = token_state(home)
         rows.append({
-            "home": home.name, "config_dir": home.env_value() or None, "email": email,
-            "call_sign": call_sign_for(email), "keychain_service": home.keychain_service,
+            "home": home.name, "config_dir": home.env_value() or None, "email": home.email(),
+            "org_uuid": split_login(login)[1] or None,
+            "call_sign": call_sign_for(login), "keychain_service": home.keychain_service,
             "token": state, "token_hours_left": round(hours, 2) if hours is not None else None,
-            "selected": bool(email) and email == chosen,
+            "selected": bool(login) and login == chosen,
         })
     if "--json" in args:
         print(json.dumps(rows, indent=2))
@@ -1086,25 +1196,26 @@ def cmd_use(args: list[str]) -> None:
             pick = glideslope_pick()
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
             die(str(exc))
-        changed = select(pick["email"], mode="auto", source="claude-account-auto", note=pick.get("reason"))
+        changed = select(pick_login(pick), mode="auto", source="claude-account-auto", note=pick.get("reason"))
         verb = "switched to" if changed else "staying on"
-        print(f"auto · {verb} {C['bold']}{label_for(pick['email'])}{C['off']}  "
+        print(f"auto · {verb} {C['bold']}{label_for(pick_login(pick))}{C['off']}  "
               f"{C['dim']}{pick.get('reason', '')}{C['off']}")
         return
     roster = roster_read()
-    email = resolve_email(args[0], roster)
-    if not email:
+    login = resolve_login(args[0], roster)
+    if not login:
         die(f"unknown account '{args[0]}'. try a call-sign ({', '.join(CALL_SIGNS.values())}) or an alias")
-    home = home_for(email)
+    home = home_for(login)
     if home is None:
-        die(f"no login for {label_for(email, roster)} on this machine — "
-            f"run: claude-account login {label_for(email, roster).lower()}")
-    entry = roster.get(alias_for(email, roster) or "", {})
+        die(f"no login for {label_for(login, roster)} on this machine — "
+            f"run: claude-account login {label_for(login, roster).lower()}")
+    login = home.login() or login  # the account the home really holds, organization and all
+    entry = roster.get(alias_for(login, roster) or "", {})
     if entry.get("dormant"):
-        warn(f"{label_for(email, roster)} is marked dormant in the roster; routing to it anyway")
-    changed = select(email, mode="fixed", source="claude-account-use")
+        warn(f"{label_for(login, roster)} is marked dormant in the roster; routing to it anyway")
+    changed = select(login, mode="fixed", source="claude-account-use")
     verb = "new sessions now use" if changed else "already on"
-    print(f"{verb} {C['bold']}{label_for(email, roster)}{C['off']}  "
+    print(f"{verb} {C['bold']}{label_for(login, roster)}{C['off']}  "
           f"{C['dim']}home {home.name}{C['off']}")
 
 
@@ -1149,12 +1260,13 @@ def cmd_login(args: list[str]) -> None:
     if not args:
         die("usage: claude-account login <account|name>")
     roster = roster_read()
-    email = resolve_email(args[0], roster)
-    existing = home_for(email) if email else None
+    login = resolve_login(args[0], roster)
+    existing = home_for(login) if login else None
     if existing is not None:
-        print(f"{label_for(email, roster)} is already logged in (home {existing.name})")
+        print(f"{label_for(login, roster)} is already logged in (home {existing.name})")
         return
-    name = (call_sign_for(email) or args[0]).lower().replace("@", "-at-")
+    email = split_login(login)[0] or None
+    name = (call_sign_for(login) or args[0]).lower().replace("@", "-at-").replace("#", "-")
     profile_dir = ensure_profile(name)
     print(f"login home ready: {profile_dir}")
     watcher = GLIDESLOPE.parent / "tools" / "install-login-watch.sh"
@@ -1212,12 +1324,15 @@ def cmd_note(args: list[str]) -> None:
         die("usage: claude-account note <email> --org <organization-uuid> [--alias <alias>]")
     org = org.strip().lower()
     roster = roster_read()
-    alias = alias or alias_for(email, roster) or default_alias(email)
+    alias = alias or alias_for(login_id(email, org), roster) or new_alias(email, org, roster)
     holders = [a for a in aliases_for_org(org, roster) if roster[a].get("email", "").lower() != email]
     if holders:
         die(f"org {org[:8]}… already belongs to {roster[holders[0]].get('email')} ('{holders[0]}')")
     if alias in roster and str(roster[alias].get("email") or email).lower() != email:
         die(f"alias '{alias}' already names {roster[alias].get('email')}; pass --alias")
+    held_org = str(roster.get(alias, {}).get("org_uuid") or "").lower()
+    if held_org and held_org != org:
+        die(f"alias '{alias}' already names organization {held_org[:8]}… under {email}; pass a new --alias")
     entry = dict(roster.get(alias) or {})
     entry.update({"email": email, "org_uuid": org})
     entry.setdefault("first_seen", datetime.now(timezone.utc).isoformat())
@@ -1234,7 +1349,7 @@ def cmd_whose(args: list[str]) -> None:
     if not files:
         die(f"no token files given and none in {METER_TOKENS}")
     roster = roster_read()
-    expected = resolve_email(expect, roster) if expect else None
+    expected = resolve_login(expect, roster) if expect else None
     if expect and not expected:
         die(f"unknown account '{expect}'. try a call-sign or an alias")
     results, worst = [], 0
@@ -1253,8 +1368,9 @@ def cmd_whose(args: list[str]) -> None:
         owners = aliases_for_org(org, roster)
         alias = owners[0] if len(owners) == 1 else None
         email = roster[alias]["email"] if alias else None
+        login = entry_login(roster[alias]) if alias else None
         row.update({"org_uuid": org, "alias": alias, "email": email, "limits": rows,
-                    "call_sign": call_sign_for(email) if email else None,
+                    "call_sign": call_sign_for(login) if login else None,
                     "observed_at": now_iso()})
         if fallback:
             row["note"] = f"{fallback}; Fable weekly unread"
@@ -1262,8 +1378,8 @@ def cmd_whose(args: list[str]) -> None:
             row["error"] = (f"bills org {org}, which no roster entry names" if not owners
                             else f"bills org {org}, which {len(owners)} roster entries share ({', '.join(owners)})")
             worst = max(worst, 4)
-        elif expected and email.lower() != expected.lower():
-            row["error"] = f"bills {label_for(email, roster)}, not {label_for(expected, roster)}"
+        elif expected and not same_login(login, expected):
+            row["error"] = f"bills {label_for(login, roster)}, not {label_for(expected, roster)}"
             worst = max(worst, 3)
         else:
             row["verified"] = True
@@ -1302,12 +1418,13 @@ def cmd_list(_args: list[str]) -> None:
     if not roster:
         print("roster is empty -- run: claude-account save")
         return
-    logged_in = {home.email() for home in homes()} - {None}
-    chosen = selected_email()
+    logged_in = [home.login() for home in homes() if home.login()]
+    chosen = selected_login()
     for alias, entry in sorted(roster.items()):
-        email = entry.get("email")
-        mark = (f"{C['green']}▶{C['off']}" if email == chosen
-                else f"{C['green']}●{C['off']}" if email in logged_in else f"{C['dim']}○{C['off']}")
+        email, login = entry.get("email"), entry_login(entry)
+        mark = (f"{C['green']}▶{C['off']}" if same_login(login, chosen)
+                else f"{C['green']}●{C['off']}" if any(same_login(login, held) for held in logged_in)
+                else f"{C['dim']}○{C['off']}")
         print(f"{mark} {C['bold']}{alias:<14}{C['off']} {email or '?':<34} "
               f"{C['dim']}{entry.get('tier','?')}{C['off']}")
 
@@ -1325,7 +1442,7 @@ def cmd_status(args: list[str]) -> None:
         if home.email():
             roster_note(home.account())   # the roster keeps itself
     roster = roster_read()
-    chosen = selected_email(all_homes)
+    chosen = selected_login(all_homes)
     report: dict[str, dict] = {}
     blocks: dict[str, list[str]] = {}  # the text view, per account, printed in roster order
     paused_until = backoff_until()
@@ -1337,11 +1454,11 @@ def cmd_status(args: list[str]) -> None:
 
     bases: dict[str, dict] = {}
     for alias, entry in sorted(roster.items()):
-        email = entry.get("email", "?")
-        home = home_for(email, all_homes)
-        is_active = email == chosen
-        base = bases[alias] = {"email": email, "active": is_active, "logged_in": home is not None,
-                               "home": home.name if home else None}
+        email, login = entry.get("email", "?"), entry_login(entry)
+        home = home_for(login, all_homes)
+        is_active = same_login(login, chosen)
+        base = bases[alias] = {"email": email, "org_uuid": entry.get("org_uuid"), "active": is_active,
+                               "logged_in": home is not None, "home": home.name if home else None}
         if home is None:
             continue
         if paused_until is not None:
@@ -1439,7 +1556,7 @@ def main() -> None:
     if argv and argv[0] in ("-h", "--help", "help"):
         print(__doc__)
         return
-    CALL_SIGNS.update(call_signs_by_email())
+    CALL_SIGNS.update(call_signs_by_login())
     cmd = argv[0] if argv and not argv[0].startswith("-") else "status"
     rest = argv[1:] if argv and not argv[0].startswith("-") else argv
     fn = COMMANDS.get(cmd)

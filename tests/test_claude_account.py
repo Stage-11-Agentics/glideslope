@@ -97,16 +97,16 @@ class HomeTests(ToolCase):
 
     def test_accounts_resolve_by_call_sign_alias_or_email(self):
         self.tool.roster_write({"personal": {"email": "personal@example.com"}})
-        self.assertEqual(self.tool.resolve_email("charlie"), "lab@example.com")
-        self.assertEqual(self.tool.resolve_email("Delta"), "team@example.com")
-        self.assertEqual(self.tool.resolve_email("Bravo"), "personal@example.com")
-        self.assertEqual(self.tool.resolve_email("personal"), "personal@example.com")
-        self.assertIsNone(self.tool.resolve_email("zulu"))
+        self.assertEqual(self.tool.resolve_login("charlie"), "lab@example.com")
+        self.assertEqual(self.tool.resolve_login("Delta"), "team@example.com")
+        self.assertEqual(self.tool.resolve_login("Bravo"), "personal@example.com")
+        self.assertEqual(self.tool.resolve_login("personal"), "personal@example.com")
+        self.assertIsNone(self.tool.resolve_login("zulu"))
 
 
 class SelectionTests(ToolCase):
     def test_without_a_selection_new_sessions_use_the_default_home(self):
-        self.assertEqual(self.tool.selected_email(), "personal@example.com")
+        self.assertEqual(self.tool.selected_login(), "personal@example.com")
         self.assertTrue(self.tool.resolve_launch_home(None).is_default)
 
     def test_use_routes_new_sessions_and_journals_the_switch(self):
@@ -125,7 +125,7 @@ class SelectionTests(ToolCase):
     def test_a_selection_whose_login_is_gone_falls_back_to_the_default_home(self):
         self.tool.SELECTION.parent.mkdir(parents=True, exist_ok=True)
         self.tool.SELECTION.write_text(json.dumps({"email": "lab@example.com", "mode": "fixed"}))
-        self.assertEqual(self.tool.selected_email(), "personal@example.com")
+        self.assertEqual(self.tool.selected_login(), "personal@example.com")
 
     def test_one_launch_override_names_an_account_without_a_login(self):
         with mock.patch.dict("os.environ", {"CLAUDE_ACCOUNT": "charlie"}):
@@ -143,6 +143,84 @@ class SelectionTests(ToolCase):
         self.assertEqual(home.name, "charlie")
         stored = json.loads(self.tool.SELECTION.read_text())
         self.assertEqual((stored["email"], stored["mode"]), ("lab@example.com", "auto"))
+
+
+def write_login(path: Path, email: str, org: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"oauthAccount": {"emailAddress": email, "organizationUuid": org}}))
+
+
+class TwoOrganizationsOneEmailTests(ToolCase):
+    """One sign-in, two subscriptions: each organization is its own account (2026-10-30)."""
+
+    def setUp(self):
+        super().setUp()
+        write_login(self.home / ".claude.json", "same@example.com", "ORG-NEW")
+        self.profile = self.tool.ensure_profile("bravo")
+        write_login(self.profile / ".claude.json", "same@example.com", "org-old")
+        self.tool.roster_write({
+            "old": {"email": "same@example.com", "org_uuid": "org-old"},
+            "new": {"email": "same@example.com", "org_uuid": "org-new"},
+        })
+        self.tool.CALL_SIGNS = self.tool.call_signs_by_login(configured={"old": "Bravo", "new": "Delta"})
+
+    def test_login_ids_carry_the_organization_and_a_bare_email_matches_either(self):
+        self.assertEqual(self.tool.login_id("Same@Example.com", "ORG-NEW"), "same@example.com#org-new")
+        self.assertTrue(self.tool.same_login("same@example.com", "same@example.com#org-old"))
+        self.assertFalse(self.tool.same_login("same@example.com#org-new", "same@example.com#org-old"))
+
+    def test_each_organization_has_its_own_call_sign_home_and_alias(self):
+        self.assertEqual(self.tool.resolve_login("delta"), "same@example.com#org-new")
+        self.assertTrue(self.tool.home_for("same@example.com#org-new").is_default)
+        self.assertEqual(self.tool.home_for(self.tool.resolve_login("bravo")).name, "bravo")
+        self.assertEqual(self.tool.label_for("same@example.com#org-old"), "Bravo")
+        self.assertIsNone(self.tool.call_sign_for("same@example.com"))  # ambiguous, never guessed
+        self.assertEqual(self.tool.alias_for("same@example.com#org-new", self.tool.roster_read()), "new")
+        self.assertIsNone(self.tool.alias_for("same@example.com", self.tool.roster_read()))
+
+    def test_use_routes_by_organization_and_records_it(self):
+        self.assertTrue(self.tool.select(self.tool.resolve_login("bravo"), mode="fixed", source="test"))
+        self.assertEqual(self.tool.resolve_launch_home(None).config_dir, self.profile)
+        stored = json.loads(self.tool.SELECTION.read_text())
+        self.assertEqual((stored["email"], stored["org_uuid"]), ("same@example.com", "org-old"))
+        event = json.loads(self.tool.SWITCH_LOG.read_text().splitlines()[-1])
+        self.assertEqual((event["from"], event["to"]), ("new", "old"))
+
+    def test_an_email_only_selection_resolves_to_a_concrete_home(self):
+        self.tool.SELECTION.parent.mkdir(parents=True, exist_ok=True)
+        self.tool.SELECTION.write_text(json.dumps({"email": "same@example.com", "mode": "fixed"}))
+        self.assertEqual(self.tool.selected_login(), "same@example.com#org-new")
+
+    def test_status_reads_each_organization_once_and_never_mixes_them(self):
+        import contextlib, io
+        out = io.StringIO()
+        reads = {"default": {"limits": [{"kind": "session", "percent": 1}]},
+                 "bravo": {"limits": [{"kind": "session", "percent": 60}]}}
+        with mock.patch.object(self.tool, "live_token", side_effect=lambda home: home.name), \
+             mock.patch.object(self.tool, "fetch_usage", side_effect=lambda token: reads[token]), \
+             mock.patch.object(self.tool, "meter_reads", return_value=({}, [])), \
+             mock.patch.object(self.tool.time, "sleep"), contextlib.redirect_stdout(out):
+            self.tool.cmd_status(["--json"])
+        report = json.loads(out.getvalue())
+        self.assertEqual(set(report), {"old", "new"})
+        self.assertEqual((report["new"]["home"], report["new"]["limits"][0]["percent"]), ("default", 1.0))
+        self.assertEqual((report["old"]["home"], report["old"]["limits"][0]["percent"]), ("bravo", 60.0))
+        self.assertEqual(report["new"]["org_uuid"], "org-new")
+        self.assertTrue(report["new"]["active"])
+        self.assertFalse(report["old"]["active"])
+        self.assertEqual(set(self.tool.roster_read()), {"old", "new"})  # no flip-flop, no stray entry
+
+    def test_saving_under_a_name_renames_an_auto_named_account(self):
+        self.tool.roster_write({"old": {"email": "same@example.com", "org_uuid": "org-old"}})
+        import contextlib, io
+        with contextlib.redirect_stderr(io.StringIO()):
+            auto = self.tool.roster_note({"emailAddress": "same@example.com", "organizationUuid": "org-new"})
+            renamed = self.tool.roster_note({"emailAddress": "same@example.com", "organizationUuid": "org-new"},
+                                            "delta")
+        roster = self.tool.roster_read()
+        self.assertNotIn(auto, roster)
+        self.assertEqual((renamed, roster["delta"]["org_uuid"]), ("delta", "org-new"))
+        self.assertEqual(roster["old"]["org_uuid"], "org-old")
 
 
 if __name__ == "__main__":
@@ -377,13 +455,16 @@ class MeterTokenTests(MeterCase):
                                   lambda token, **_: ("org-stranger", [], None))
         self.assertEqual(code, 4)
 
-    def test_a_login_corrects_a_wrong_note_loudly(self):
+    def test_a_login_in_a_new_organization_is_its_own_account_loudly(self):
         import contextlib, io
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.tool.roster_note({"emailAddress": "lab@example.com", "organizationUuid": "org-real"})
-        self.assertEqual(self.tool.roster_read()["lab"]["org_uuid"], "org-real")
-        self.assertIn("login says", err.getvalue())
+            alias = self.tool.roster_note({"emailAddress": "lab@example.com", "organizationUuid": "org-real"})
+        roster = self.tool.roster_read()
+        self.assertNotEqual(alias, "lab")
+        self.assertEqual(roster["lab"]["org_uuid"], "org-lab")
+        self.assertEqual(roster[alias]["org_uuid"], "org-real")
+        self.assertIn("its own account", err.getvalue())
 
     def test_note_refuses_an_org_another_account_owns(self):
         _, err, code = self.run_cmd(self.tool.cmd_note,

@@ -30,8 +30,8 @@ SAMPLER_LABEL = "ai.stage11.glideslope.sampler"
 
 
 def fingerprint() -> dict:
-    logins = glideslope.local_login_emails()
-    return {"logins": sorted(logins), "selected": glideslope.selected_login_email(logins=logins)}
+    logins = glideslope.local_login_ids()
+    return {"logins": sorted(logins), "selected": glideslope.selected_login_id(logins=logins)}
 
 
 def previous() -> dict | None:

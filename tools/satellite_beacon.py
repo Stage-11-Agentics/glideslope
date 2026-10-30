@@ -10,7 +10,7 @@ Aqua session, and be left somewhere plain to collect.
 
 So this writes one small file, `~/.glideslope/satellite.json`:
 
-    {"satellite": "<name>", "observed_at": "…Z", "login_email": "…",
+    {"satellite": "<name>", "observed_at": "…Z", "login_email": "…", "login_id": "email#org",
      "snapshot": { "<alias>": { "email": …, "active": true, "limits": [...] } },
      "holds": { "Codex": "…", "Grok": "…" }}
 
@@ -200,17 +200,26 @@ def held_logins() -> dict[str, str]:
     return holds
 
 
-def login_email(config_path: Path = CLAUDE_JSON) -> str | None:
-    """Who a login home is logged in as — a free local fact, no API call."""
+def login_id(config_path: Path = CLAUDE_JSON) -> str | None:
+    """Who a login home is logged in as — a free local fact, no API call.
+
+    "email#organization": one email can hold several accounts, one per organization
+    (glideslope.py, login_id). An email alone when the login names no organization.
+    """
     try:
         config = json.loads(config_path.read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
-    email = (config.get("oauthAccount") or {}).get("emailAddress")
-    return email if isinstance(email, str) and email else None
+    account = config.get("oauthAccount") if isinstance(config, dict) else None
+    account = account if isinstance(account, dict) else {}
+    email, org = account.get("emailAddress"), account.get("organizationUuid")
+    if not isinstance(email, str) or not email.strip():
+        return None
+    org = org.strip().lower() if isinstance(org, str) else ""
+    return f"{email.strip().lower()}#{org}" if org else email.strip().lower()
 
 
-def login_emails() -> list[str]:
+def login_ids() -> list[str]:
     """Every account this satellite holds a login for: the default home, then each profile home."""
     configs = [CLAUDE_JSON]
     try:
@@ -218,21 +227,31 @@ def login_emails() -> list[str]:
                     if entry.is_dir() and not entry.name.startswith(".")]
     except OSError:
         pass
-    emails: list[str] = []
+    logins: list[str] = []
     for config in configs:
-        email = login_email(config)
-        if email and email not in emails:
-            emails.append(email)
-    return emails
+        login = login_id(config)
+        if login and login not in logins:
+            logins.append(login)
+    return logins
 
 
-def selected_email(logins: list[str]) -> str | None:
+def selected_login(logins: list[str]) -> str | None:
     """The account new sessions here start in — claude-account's selection, else the default home."""
     try:
-        chosen = json.loads(SELECTION.read_text()).get("email")
+        stored = json.loads(SELECTION.read_text())
+        email = str(stored.get("email") or "").strip().lower()
+        org = str(stored.get("org_uuid") or "").strip().lower()
     except (FileNotFoundError, json.JSONDecodeError, OSError, AttributeError):
-        chosen = None
-    return chosen if isinstance(chosen, str) and chosen in logins else login_email()
+        email, org = "", ""
+    for login in logins:
+        held_email, _, held_org = login.partition("#")
+        if email and held_email == email and (not org or held_org == org):
+            return login
+    return login_id()
+
+
+def email_of(login: str | None) -> str | None:
+    return login.partition("#")[0] if login else None
 
 
 def reader() -> Path | None:
@@ -300,13 +319,17 @@ def main() -> int:
     # a satellite holds is what stops the fleet presuming that account unspent —
     # the one lie this instrument must never tell — and it costs no API call, so
     # it must not be lost along with the numbers.
-    logins = login_emails()
+    logins = login_ids()
+    selected = selected_login(logins)
     payload = {
         "schema": 4,
         "satellite": name,
         "observed_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "login_email": selected_email(logins),
-        "login_emails": logins,
+        # Emails for readers that predate organizations; ids say which account under each.
+        "login_email": email_of(selected),
+        "login_emails": list(dict.fromkeys(filter(None, map(email_of, logins)))),
+        "login_id": selected,
+        "login_ids": logins,
         "snapshot": snapshot,
         "holds": held_logins(),
     }

@@ -303,8 +303,8 @@ class BeaconSeatTests(unittest.TestCase):
             mock.patch.object(beacon, "CONFIG", self.config),
             mock.patch.object(beacon, "BEACON", self.out),
             mock.patch.object(beacon, "gauge", return_value=({}, None, [])),
-            mock.patch.object(beacon, "login_emails", return_value=[]),
-            mock.patch.object(beacon, "selected_email", return_value=None),
+            mock.patch.object(beacon, "login_ids", return_value=[]),
+            mock.patch.object(beacon, "selected_login", return_value=None),
             mock.patch.object(beacon, "held_logins", return_value={}),
         ]
         for patch in self.patches:

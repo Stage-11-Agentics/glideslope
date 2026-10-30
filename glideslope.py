@@ -142,7 +142,8 @@ CLAUDE_JSON = Path.home() / ".claude.json"  # who's logged in — a free local f
 # Extra login homes (claude-account, 2026-09-12): one CLAUDE_CONFIG_DIR per account,
 # each with its own .claude.json, so a machine can hold every account at once.
 CLAUDE_PROFILES_DIR = Path.home() / ".claude-profiles"
-# Which of those logins new sessions start in. A pointer to an email, never a token.
+# Which of those logins new sessions start in. A pointer to an email and an
+# organization, never a token.
 CLAUDE_SELECTION = Path.home() / ".claude" / "accounts" / "selection.json"
 CLAUDE_HISTORY = Path.home() / ".claude" / "history.jsonl"  # includes local slash commands
 # Satellites — the machines that can hold a Claude login. A satellite reads
@@ -455,7 +456,7 @@ def load_claude_snapshot(
 
 
 def snapshot_matches_logins(
-    snapshot: dict[str, Any], local_emails: list[str], selected_email: str | None,
+    snapshot: dict[str, Any], local_logins: list[str], selected_login: str | None,
 ) -> bool:
     """Whether a cached gauge was read under the logins this machine holds now.
 
@@ -464,12 +465,15 @@ def snapshot_matches_logins(
     — the set of logged-in accounts must be the same set.
     """
     accounts = [account for account in snapshot.values() if isinstance(account, dict)]
-    active = {account.get("email") for account in accounts if account.get("active")}
-    if selected_email and selected_email not in active:
+    def login(account: dict[str, Any]) -> str | None:
+        return login_id(account.get("email"), account.get("org_uuid"))
+
+    active = {login(account) for account in accounts if account.get("active")}
+    if selected_login and selected_login not in active:
         return False
     if any("logged_in" in account for account in accounts):
-        held = {account.get("email") for account in accounts if account.get("logged_in")}
-        if held != set(local_emails):
+        held = {login(account) for account in accounts if account.get("logged_in")}
+        if held != set(local_logins):
             return False
     return True
 
@@ -498,8 +502,33 @@ def call_sign_order(display: str) -> int:
     return len(names) + len(NATO_ALPHABET)
 
 
-def current_login_email(path: Path = CLAUDE_JSON) -> str | None:
-    """The email Claude Code is logged in as right now — read straight from config.
+# An account is an email AND an organization: one sign-in can hold several
+# subscriptions, each its own organization with its own meters (2026-10-30). A
+# login id is "email#org"; a bare email is one whose organization is unknown (an
+# old snapshot, beacon or selection) and matches every organization under it.
+# claude_account.py keeps the same three functions.
+
+def login_id(email: Any, org_uuid: Any = None) -> str | None:
+    if not isinstance(email, str) or not email.strip():
+        return None
+    org = org_uuid.strip().lower() if isinstance(org_uuid, str) else ""
+    return f"{email.strip().lower()}#{org}" if org else email.strip().lower()
+
+
+def split_login(login: str | None) -> tuple[str, str]:
+    email, _, org = (login or "").partition("#")
+    return email.strip().lower(), org.strip().lower()
+
+
+def same_login(a: str | None, b: str | None) -> bool:
+    """Whether two login ids can name the same account. An unknown organization matches any."""
+    a_email, a_org = split_login(a)
+    b_email, b_org = split_login(b)
+    return bool(a_email) and a_email == b_email and (not a_org or not b_org or a_org == b_org)
+
+
+def current_login_id(path: Path = CLAUDE_JSON) -> str | None:
+    """The login id Claude Code is logged in as right now — read straight from config.
 
     This is ground truth about *who is active*, independent of the (cached) usage
     gauge, so a fresh `claude-account use` is reflected instantly with no API call
@@ -509,11 +538,12 @@ def current_login_email(path: Path = CLAUDE_JSON) -> str | None:
         cfg = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
-    email = (cfg.get("oauthAccount") or {}).get("emailAddress")
-    return email if isinstance(email, str) and email else None
+    account = cfg.get("oauthAccount") if isinstance(cfg, dict) else None
+    account = account if isinstance(account, dict) else {}
+    return login_id(account.get("emailAddress"), account.get("organizationUuid"))
 
 
-def local_login_emails(
+def local_login_ids(
     default_config: Path = CLAUDE_JSON, profiles_dir: Path = CLAUDE_PROFILES_DIR,
 ) -> list[str]:
     """Every account a login home on this machine holds, the default home first.
@@ -527,15 +557,15 @@ def local_login_emails(
                     if entry.is_dir() and not entry.name.startswith(".")]
     except OSError:
         pass
-    emails: list[str] = []
+    logins: list[str] = []
     for config in configs:
-        email = current_login_email(config)
-        if email and email not in emails:
-            emails.append(email)
-    return emails
+        login = current_login_id(config)
+        if login and login not in logins:
+            logins.append(login)
+    return logins
 
 
-def selected_login_email(
+def selected_login_id(
     selection: Path = CLAUDE_SELECTION, *, logins: list[str] | None = None,
     default_config: Path = CLAUDE_JSON,
 ) -> str | None:
@@ -545,29 +575,30 @@ def selected_login_email(
     back to the default home's account, exactly as the launcher does — so this
     and the account a fresh `claude` actually gets can never disagree.
     """
-    logins = local_login_emails(default_config) if logins is None else logins
+    logins = local_login_ids(default_config) if logins is None else logins
     try:
-        chosen = json.loads(selection.read_text()).get("email")
+        stored = json.loads(selection.read_text())
+        chosen = login_id(stored.get("email"), stored.get("org_uuid"))
     except (FileNotFoundError, json.JSONDecodeError, OSError, AttributeError):
         chosen = None
-    if isinstance(chosen, str) and chosen in logins:
-        return chosen
-    return current_login_email(default_config)
+    held = (next((login for login in logins if login == chosen), None)
+            or next((login for login in logins if same_login(login, chosen)), None))
+    return held or current_login_id(default_config)
 
 
-def reconcile_login(accounts: list[dict[str, Any]], live_email: str | None) -> list[dict[str, Any]]:
-    """Override each Claude account's `active` from the live login email.
+def reconcile_login(accounts: list[dict[str, Any]], live_login: str | None) -> list[dict[str, Any]]:
+    """Override each Claude account's `active` from the live login.
 
     The gauge snapshot's own active flag is only as fresh as the snapshot (up to
-    CLAUDE_CACHE_SECONDS stale). The login email is not — so right after a switch
+    CLAUDE_CACHE_SECONDS stale). The login is not — so right after a switch
     the banner is correct immediately, even on a warm cache. No-op if we can't
     read the config (then the snapshot's flag stands).
     """
-    if not live_email:
+    if not live_login:
         return accounts
     for account in accounts:
         if account.get("provider") == "Claude" and account.get("email"):
-            account["active"] = account["email"] == live_email
+            account["active"] = same_login(account.get("login") or account["email"], live_login)
     return accounts
 
 
@@ -586,6 +617,17 @@ def read_roster(path: Path = CLAUDE_ROSTER) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def roster_entry(account: dict[str, Any], roster: dict[str, Any]) -> dict[str, Any] | None:
+    """An account's roster entry: by its alias (the snapshot is keyed by them), else by its login."""
+    entry = roster.get(account.get("account"))
+    if isinstance(entry, dict):
+        return entry
+    login = account.get("login") or account.get("email")
+    matches = [entry for entry in roster.values() if isinstance(entry, dict)
+               and same_login(login_id(entry.get("email"), entry.get("org_uuid")), login)]
+    return matches[0] if len(matches) == 1 else None
+
+
 def reconcile_plans(accounts: list[dict[str, Any]], roster: dict[str, Any]) -> list[dict[str, Any]]:
     """Label each Claude account with the plan its own tier says it is on.
 
@@ -596,12 +638,10 @@ def reconcile_plans(accounts: list[dict[str, Any]], roster: dict[str, Any]) -> l
     downgrade was invisible — and the missing Fable allowance that came with it
     read as an empty cell rather than a plan that no longer includes Fable.
     """
-    by_email = {entry.get("email"): entry for entry in roster.values()
-                if isinstance(entry, dict) and entry.get("email")}
     for account in accounts:
         if account.get("provider") != "Claude":
             continue
-        tier = (by_email.get(account.get("email")) or {}).get("tier")
+        tier = (roster_entry(account, roster) or {}).get("tier")
         if not isinstance(tier, str) or not tier:
             continue
         account["plan"] = CLAUDE_PLAN_BY_TIER.get(tier, tier)
@@ -623,12 +663,10 @@ def reconcile_dormant(
     explaining why the row still looks alive. This is the seamless path: log
     back in and every surface un-dims itself with no roster edit at all.
     """
-    by_email = {entry.get("email"): entry for entry in roster.values()
-                if isinstance(entry, dict) and entry.get("email")}
     for account in accounts:
         if account.get("provider") != "Claude":
             continue
-        entry = by_email.get(account.get("email"))
+        entry = roster_entry(account, roster)
         dormant = bool(entry and entry.get("dormant"))
         if dormant and account.get("logins"):
             dormant = False
@@ -718,9 +756,11 @@ def read_satellites(
             # The satellite's remote seats, as its own file said them; judged by the
             # file's generated_at, never by this beacon's age (see gather_remote_seats).
             "seats": beacon.get("seats") if isinstance(beacon.get("seats"), dict) else None,
-            "login_email": beacon.get("login_email") or None,
-            "login_emails": [email for email in beacon.get("login_emails") or []
-                             if isinstance(email, str) and email],
+            # Login ids since 2026-10-30 (`login_id`, `login_ids`); an older beacon
+            # names emails only, which match every organization under them.
+            "login_email": beacon.get("login_id") or beacon.get("login_email") or None,
+            "login_emails": [login for login in (beacon.get("login_ids") or beacon.get("login_emails") or [])
+                             if isinstance(login, str) and login],
             "snapshot": beacon.get("snapshot") if isinstance(beacon.get("snapshot"), dict) else {},
             "holds": beacon.get("holds") if isinstance(beacon.get("holds"), dict) else {},
             "observed_at": taken_at,
@@ -737,17 +777,18 @@ def merge_satellite_claude(
 
     Every satellite reads the accounts it holds logins for, and the one holding the
     operator's meter tokens reads every account (PROVIDERS.md, Meter tokens), so
-    between them the fleet sees more of the position than any one machine can. The join is on **email**:
-    store aliases are per-machine bookkeeping (`work` here, `work-laptop`
-    there) and joining on them would silently match nothing.
+    between them the fleet sees more of the position than any one machine can. The join is on the
+    **login id** (email and organization): store aliases are per-machine bookkeeping (`work` here,
+    `work-laptop` there) and joining on them would silently match nothing. A reading that names no
+    organization joins only when its email names exactly one account here.
 
     A remote reading only ever replaces a local one that is older. That single
     rule is what keeps this safe in both directions — a stale beacon can never
     overwrite a fresh local gauge, and a fresh beacon always wins over a floor
     journaled hours ago.
     """
-    by_email = {account.get("email"): alias for alias, account in snapshot.items()
-                if isinstance(account, dict) and account.get("email")}
+    by_login = [(login_id(account.get("email"), account.get("org_uuid")), alias)
+                for alias, account in snapshot.items() if isinstance(account, dict) and account.get("email")]
     for satellite in satellites:
         for raw in (satellite.get("snapshot") or {}).values():
             if (not isinstance(raw, dict) or raw.get("stale")
@@ -756,7 +797,15 @@ def merge_satellite_claude(
                 continue  # a live read is a login's, or a meter token's; the rest is journal
             if not isinstance(raw.get("limits"), list) or not raw["limits"]:
                 continue
-            alias = by_email.get(raw.get("email"))
+            raw_login = login_id(raw.get("email"), raw.get("org_uuid"))
+            exact = [alias for login, alias in by_login if login == raw_login]
+            fuzzy = [alias for login, alias in by_login if same_login(login, raw_login)]
+            alias = (exact or fuzzy)[0] if len(exact) == 1 or (not exact and len(fuzzy) == 1) else None
+            if alias is None and len(fuzzy) > 1:
+                if warnings is not None:
+                    warnings.append(f"{satellite['name']} read an account by email alone, and "
+                                    f"{len(fuzzy)} accounts here share it; that reading is skipped")
+                continue
             if alias is None:
                 if warnings is not None:
                     warnings.append(
@@ -790,8 +839,8 @@ def merge_satellite_claude(
 
 
 def reconcile_satellite_logins(
-    accounts: list[dict[str, Any]], local_emails: str | list[str] | None,
-    satellites: list[dict[str, Any]], live_email: str | None = None,
+    accounts: list[dict[str, Any]], local_logins: str | list[str] | None,
+    satellites: list[dict[str, Any]], live_login: str | None = None,
 ) -> list[dict[str, Any]]:
     """Record, for each Claude account, the satellites logged in to it.
 
@@ -802,29 +851,31 @@ def reconcile_satellite_logins(
     satellite holding a login home for it, whether selected or not, because an
     unselected home can still spend (a one-launch override) and can be picked.
 
-    `live_email` is this machine's selected account; without it, a lone
-    `local_emails` string is taken as the selection (the pre-homes call shape).
-    A beacon's `login_email` is its selection; `login_emails` its homes.
+    `live_login` is this machine's selected account; without it, a lone
+    `local_logins` string is taken as the selection (the pre-homes call shape).
+    A beacon's `login_email` is its selection; `login_emails` its homes. Every
+    one of these is a login id, matched by email and, where both name one,
+    organization.
     """
-    local = {local_emails} if isinstance(local_emails, str) else set(local_emails or ())
-    if live_email is None and isinstance(local_emails, str):
-        live_email = local_emails
+    local = [local_logins] if isinstance(local_logins, str) else list(local_logins or ())
+    if live_login is None and isinstance(local_logins, str):
+        live_login = local_logins
     for account in accounts:
         if account.get("provider") != "Claude":
             continue
-        email = account.get("email")
+        mine = account.get("login") or account.get("email")
         logins: list[str] = []
         held: list[str] = []
-        if email and email == live_email:
+        if same_login(mine, live_login):
             logins.append(LOCAL_SATELLITE)
-        if email in local or (email and email == live_email):
+        if any(same_login(mine, login) for login in local) or same_login(mine, live_login):
             held.append(LOCAL_SATELLITE)
         for satellite in satellites:
             selected = satellite.get("login_email")
             homes = satellite.get("login_emails") or ([selected] if selected else [])
-            if email and email == selected:
+            if same_login(mine, selected):
                 logins.append(satellite["name"])
-            if email in homes:
+            if any(same_login(mine, login) for login in homes):
                 held.append(satellite["name"])
         account["logins"] = logins
         account["held_on"] = held
@@ -902,6 +953,7 @@ def normalize_claude(snapshot: dict[str, Any], observed_at: dt.datetime) -> list
             "provider": "Claude",
             "account": alias,
             "email": raw_account.get("email"),
+            "login": login_id(raw_account.get("email"), raw_account.get("org_uuid")),
             "display": call_sign(alias, raw_account.get("email")),
             "stale": bool(raw_account.get("stale")),
             "active": bool(raw_account.get("active")),
@@ -2908,6 +2960,7 @@ def pick_account(
 
     def answer(account: dict[str, Any] | None, stay: bool, reason: str) -> dict[str, Any]:
         return {"email": account.get("email") if account else None,
+                "login": account.get("login") if account else None,
                 "display": account.get("display") if account else None,
                 "account": account.get("account") if account else None,
                 "stay": stay, "reason": reason}
@@ -3575,7 +3628,7 @@ def _matching_switch_exists(
 
 
 def observe_login_switch(
-    accounts: list[dict[str, Any]], live_email: str, now: dt.datetime, *,
+    accounts: list[dict[str, Any]], live_login: str, now: dt.datetime, *,
     state_path: Path = LOGIN_OBSERVER_STATE, history_path: Path = CLAUDE_HISTORY,
     switch_path: Path = SWITCH_LOG, lock_path: Path = LOGIN_OBSERVER_LOCK,
 ) -> dict[str, Any] | None:
@@ -3592,8 +3645,10 @@ def observe_login_switch(
     Synthetic events intentionally leave usage blank; a gauge fetched later is
     not an honest snapshot of the instant the switch occurred.
     """
-    current = next((account for account in accounts
-                    if account.get("provider") == "Claude" and account.get("email") == live_email), None)
+    claude = [account for account in accounts if account.get("provider") == "Claude"]
+    current = (next((account for account in claude if account.get("login") == live_login), None)
+               or next((account for account in claude
+                        if same_login(account.get("login") or account.get("email"), live_login)), None))
     if current is None or not current.get("account"):
         return None
     current_alias = str(current["account"])
@@ -3613,7 +3668,7 @@ def observe_login_switch(
         switches = load_switches(switch_path)
         event: dict[str, Any] | None = None
 
-        if prior_email and prior_email != live_email and prior_alias and prior_alias != current_alias:
+        if prior_email and prior_email != live_login and prior_alias and prior_alias != current_alias:
             if not _matching_switch_exists(switches, prior_alias, current_alias, prior_observed):
                 # Authentication can outlive a watch tick: /login may be entered,
                 # Glideslope may observe the old email once more, and only then
@@ -3645,7 +3700,7 @@ def observe_login_switch(
                         source="claude-code-login",
                     )
 
-        _write_login_state(state_path, live_email, current_alias, now)
+        _write_login_state(state_path, live_login, current_alias, now)
         return event
 
 
@@ -4046,8 +4101,8 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     satellites = [] if args.skip_satellites else read_satellites(now, warnings)
 
     # Who is logged in here, read before the gauge so a login change expires it.
-    local_emails = local_login_emails()
-    live_email = selected_login_email(logins=local_emails)
+    local_logins = local_login_ids()
+    live_login = selected_login_id(logins=local_logins)
 
     if not args.skip_claude:
         try:
@@ -4058,7 +4113,7 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
                 now=now,
                 # Only the real cache describes this machine's logins; a snapshot
                 # handed in by a test or a debugger never triggers a live re-read.
-                logins=((local_emails, live_email)
+                logins=((local_logins, live_login)
                         if args.claude_snapshot == DEFAULT_CLAUDE_SNAPSHOT else None),
             )
             merge_satellite_claude(claude, satellites, now, warnings=warnings)
@@ -4071,11 +4126,11 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
 
     # Correct who's-active from the live login — instant after a switch, no API.
     # Also journal built-in /login switches, which bypass claude-account's hook.
-    reconcile_login(accounts, live_email)
-    reconcile_satellite_logins(accounts, local_emails, satellites, live_email)
-    if accounts and live_email:
+    reconcile_login(accounts, live_login)
+    reconcile_satellite_logins(accounts, local_logins, satellites, live_login)
+    if accounts and live_login:
         try:
-            observe_login_switch(accounts, live_email, now)
+            observe_login_switch(accounts, live_login, now)
         except (OSError, ValueError) as exc:
             warnings.append(f"Claude login observer failed: {exc}")
 

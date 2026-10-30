@@ -987,15 +987,15 @@ class ReconcileLoginTests(unittest.TestCase):
         glideslope.reconcile_login(accounts, "someone-else@example.com")
         self.assertIsNone(glideslope.active_claude_display(accounts))
 
-    def test_current_login_email_reads_config(self):
+    def test_current_login_id_reads_config(self):
         import json
         tmp = Path(tempfile.mktemp(suffix=".json"))
         tmp.write_text(json.dumps({"oauthAccount": {"emailAddress": "personal@example.com"}, "other": 1}))
-        self.assertEqual(glideslope.current_login_email(tmp), "personal@example.com")
+        self.assertEqual(glideslope.current_login_id(tmp), "personal@example.com")
         tmp.unlink()
 
-    def test_current_login_email_missing_file_is_none(self):
-        self.assertIsNone(glideslope.current_login_email(Path("/no/such/.claude.json")))
+    def test_current_login_id_missing_file_is_none(self):
+        self.assertIsNone(glideslope.current_login_id(Path("/no/such/.claude.json")))
 
 
 class SwitchTests(unittest.TestCase):
