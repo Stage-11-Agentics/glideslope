@@ -49,6 +49,7 @@ call_signs = { work = "Alpha", personal = "Bravo" }
 # Grok's displayed plan is the live subscription tier. This string is only the
 # fallback when that read does not name one.
 [codex]
+# For the $500/month Pro tier, use "Pro $500" (also selects its total-pool weight).
 plan = "20x"
 
 [kimi]

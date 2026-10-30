@@ -3047,6 +3047,8 @@ PLAN_PRICE_USD = {
     ("Claude", "Max 5x"): 100.0,
     ("Claude", "Pro"): 20.0,
     ("Codex", "20x"): 200.0,
+    # Pro $500: https://learn.chatgpt.com/docs/pricing (2026-10-01).
+    ("Codex", "Pro $500"): 500.0,
     # Official card prices, x.ai/pricing. Lite and Heavy are named by the tier
     # map and left out of the pool until that page prints a dollar amount.
     ("Grok", "SuperGrok"): 30.0,

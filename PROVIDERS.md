@@ -408,6 +408,11 @@ ignores keys it does not know still delivers the words and simply shows no pictu
 | Units | `usedPercent`, coarse (an active new window can still round to 0%) |
 | Credential | never read, copied, or refreshed by this project |
 
+The display plan is operator-declared in `[codex] plan`. Set `"Pro $500"` for
+the $500/month Pro tier ([official pricing](https://learn.chatgpt.com/docs/pricing),
+2026-10-01); its total-pool weight is $500. The legacy `"20x"` label keeps its
+$200 weight. Plan labels do not scale usage: percentages come from the live meter.
+
 Two Codex-specific subtleties: `usedPercent: 0` is ambiguous between *not started* and
 *just started*, so the live reader probes the reset clock to decide whether the window is
 anchored; and banked **full-reset credits** (`rateLimitResetCredits`) mean the weekly cap is
