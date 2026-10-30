@@ -210,6 +210,28 @@ class TwoOrganizationsOneEmailTests(ToolCase):
         self.assertFalse(report["old"]["active"])
         self.assertEqual(set(self.tool.roster_read()), {"old", "new"})  # no flip-flop, no stray entry
 
+    def test_an_email_only_journal_is_refused_once_two_accounts_share_the_email(self):
+        self.tool.cache_put("old", "same@example.com", [("session (5h)", 9.0, None)])
+        self.assertIsNone(self.tool.cache_owned("old", self.tool.roster_read()))
+        self.tool.cache_put("old", "same@example.com", [("session (5h)", 9.0, None)], org_uuid="org-old")
+        self.assertIsNotNone(self.tool.cache_owned("old", self.tool.roster_read()))
+        self.tool.cache_put("new", "same@example.com", [("session (5h)", 9.0, None)], org_uuid="org-old")
+        self.assertIsNone(self.tool.cache_owned("new", self.tool.roster_read()))
+
+    def test_a_login_without_an_organization_never_mints_entries(self):
+        for _ in range(3):
+            self.assertIsNone(self.tool.roster_note({"emailAddress": "same@example.com"}))
+        self.assertEqual(set(self.tool.roster_read()), {"old", "new"})
+
+    def test_saving_under_another_organizations_name_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "pick another name"):
+            self.tool.roster_note({"emailAddress": "same@example.com", "organizationUuid": "org-new"}, "old")
+        self.assertEqual(self.tool.roster_read()["old"]["org_uuid"], "org-old")
+
+    def test_an_email_keyed_call_sign_names_no_one_when_two_accounts_share_the_email(self):
+        signs = self.tool.call_signs_by_login(configured={"same@example.com": "Bravo"})
+        self.assertEqual(signs, {})
+
     def test_saving_under_a_name_renames_an_auto_named_account(self):
         self.tool.roster_write({"old": {"email": "same@example.com", "org_uuid": "org-old"}})
         import contextlib, io

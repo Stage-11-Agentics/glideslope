@@ -860,22 +860,32 @@ def reconcile_satellite_logins(
     local = [local_logins] if isinstance(local_logins, str) else list(local_logins or ())
     if live_login is None and isinstance(local_logins, str):
         live_login = local_logins
+    claude = [account.get("login") or account.get("email")
+              for account in accounts if account.get("provider") == "Claude"]
+
+    def names(mine: str | None, login: str | None) -> bool:
+        # A login with no organization (an older beacon) names an account only when it
+        # can name no other: crediting several would put one machine in two logins.
+        if not same_login(mine, login):
+            return False
+        return bool(split_login(login)[1]) or sum(same_login(other, login) for other in claude) == 1
+
     for account in accounts:
         if account.get("provider") != "Claude":
             continue
         mine = account.get("login") or account.get("email")
         logins: list[str] = []
         held: list[str] = []
-        if same_login(mine, live_login):
+        if names(mine, live_login):
             logins.append(LOCAL_SATELLITE)
-        if any(same_login(mine, login) for login in local) or same_login(mine, live_login):
+        if any(names(mine, login) for login in local) or names(mine, live_login):
             held.append(LOCAL_SATELLITE)
         for satellite in satellites:
             selected = satellite.get("login_email")
             homes = satellite.get("login_emails") or ([selected] if selected else [])
-            if same_login(mine, selected):
+            if names(mine, selected):
                 logins.append(satellite["name"])
-            if any(same_login(mine, login) for login in homes):
+            if any(names(mine, login) for login in homes):
                 held.append(satellite["name"])
         account["logins"] = logins
         account["held_on"] = held
@@ -3668,7 +3678,10 @@ def observe_login_switch(
         switches = load_switches(switch_path)
         event: dict[str, Any] | None = None
 
-        if prior_email and prior_email != live_login and prior_alias and prior_alias != current_alias:
+        # A state written before organizations were recorded names an email only; the same
+        # email in a now-known organization is not, by itself, evidence of a switch.
+        if (prior_email and not same_login(prior_email, live_login)
+                and prior_alias and prior_alias != current_alias):
             if not _matching_switch_exists(switches, prior_alias, current_alias, prior_observed):
                 # Authentication can outlive a watch tick: /login may be entered,
                 # Glideslope may observe the old email once more, and only then

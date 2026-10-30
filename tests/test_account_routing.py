@@ -314,3 +314,22 @@ class TwoOrganizationsOneEmailTests(unittest.TestCase):
         glideslope.reconcile_dormant(accounts, roster)
         self.assertEqual({a["account"]: (a["plan"], a["dormant"]) for a in accounts},
                          {"old": ("Max 5x", True), "new": ("Max 20x", False)})
+
+    def test_an_old_beacon_naming_only_the_shared_email_credits_neither(self):
+        accounts = self.accounts()
+        glideslope.reconcile_satellite_logins(
+            accounts, [], [{"name": "studio", "login_email": "same@example.com",
+                            "login_emails": ["same@example.com"]}], live_login=None)
+        self.assertEqual({a["account"]: a["held_on"] for a in accounts}, {"old": [], "new": []})
+
+    def test_an_email_only_observer_state_is_not_a_switch(self):
+        root = Path(self._tmp.name)
+        state, switches = root / "state.json", root / "switches.jsonl"
+        state.write_text(json.dumps({"schema": 1, "email": "same@example.com", "alias": "old",
+                                     "observed_at": "2026-10-30T10:00:00Z"}))
+        event = glideslope.observe_login_switch(
+            self.accounts(), "same@example.com#org-new", NOW, state_path=state,
+            history_path=root / "history.jsonl", switch_path=switches, lock_path=root / "lock")
+        self.assertIsNone(event)
+        self.assertFalse(switches.exists())
+        self.assertEqual(json.loads(state.read_text())["alias"], "new")

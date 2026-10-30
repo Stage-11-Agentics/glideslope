@@ -198,7 +198,13 @@ def call_signs_by_login(roster: dict | None = None,
     by_login: dict[str, str] = {}
     roster = roster_read() if roster is None else roster
     for key, name in configured.items():
-        login = login_id(key) if "@" in key else entry_login(roster.get(key))
+        if "@" in key:
+            under = [entry_login(e) for e in roster.values()
+                     if str(e.get("email") or "").lower() == key.strip().lower()]
+            # An email names one account only while it holds one; with several, alias keys must.
+            login = under[0] if len(under) == 1 else (login_id(key) if not under else None)
+        else:
+            login = entry_login(roster.get(key))
         if login:
             by_login[login] = name
     return by_login
@@ -514,6 +520,13 @@ def roster_note(account: dict, alias: str | None = None) -> str | None:
     roster = roster_read()
     org_uuid = (account.get("organizationUuid") or "").strip().lower() or None
     found = alias_for(login_id(email, org_uuid), roster)
+    under = [a for a, e in roster.items() if str(e.get("email") or "").lower() == email.lower()]
+    if org_uuid is None and found is None and under:
+        return None  # no organization to tell the accounts under this email apart: note nothing
+    held_org = str((roster.get(alias) or {}).get("org_uuid") or "").lower() if alias else ""
+    if alias and org_uuid and held_org and held_org != org_uuid:
+        raise ValueError(f"'{alias}' is organization {held_org[:8]}…, but this login is {org_uuid[:8]}…; "
+                         "pick another name (claude-account list shows them)")
     if alias and found and found != alias and alias not in roster:
         roster[alias] = roster.pop(found)
         rename_cache(found, alias)
@@ -684,7 +697,7 @@ def resolve_launch_home(requested: str | None) -> Home:
 # still has last-known numbers. No secrets — percentages and reset times only.
 
 def cache_put(alias: str, email: str, rows: list[tuple[str, float, str]],
-              extra_usage: dict | None = None) -> None:
+              extra_usage: dict | None = None, org_uuid: str | None = None) -> None:
     try:
         USAGE_CACHE.mkdir(parents=True, exist_ok=True)
         os.chmod(USAGE_CACHE, 0o700)
@@ -692,6 +705,7 @@ def cache_put(alias: str, email: str, rows: list[tuple[str, float, str]],
         tmp = p.with_suffix(".tmp")
         payload = {
             "email": email,
+            "org_uuid": org_uuid,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "limits": [{"label": l, "percent": pc, "resets_at": r} for l, pc, r in rows],
         }
@@ -721,6 +735,25 @@ def cache_get(alias: str) -> dict | None:
         return json.loads(p.read_text())
     except Exception:
         return None
+
+
+def cache_owned(alias: str, roster: dict) -> dict | None:
+    """ALIAS's last-known usage, if it is provably ALIAS's.
+
+    A journal written before organizations were recorded names an email only. While one
+    account holds that email it is that account's; once several do, it may be any of
+    them (2026-10-30: Bravo's journal held the new organization's reads), so it is refused.
+    """
+    cached = cache_get(alias)
+    if not cached:
+        return None
+    mine = str((roster.get(alias) or {}).get("org_uuid") or "").lower()
+    theirs = str(cached.get("org_uuid") or "").lower()
+    if theirs:
+        return cached if not mine or theirs == mine else None
+    email = str((roster.get(alias) or {}).get("email") or "").lower()
+    sharing = [a for a, e in roster.items() if str(e.get("email") or "").lower() == email]
+    return cached if len(sharing) <= 1 else None
 
 
 def age_str(iso: str | None) -> str:
@@ -1292,7 +1325,10 @@ def cmd_save(args: list[str]) -> None:
     for home in homes():
         account = home.account()
         if account.get("emailAddress"):
-            alias = roster_note(account, args[0] if args and home.is_default else None)
+            try:
+                alias = roster_note(account, args[0] if args and home.is_default else None)
+            except ValueError as exc:
+                die(str(exc))
             saved.append(f"{account['emailAddress']} as '{alias}' ({home.name})")
     if not saved:
         die("no home holds a login -- log in first")
@@ -1473,7 +1509,7 @@ def cmd_status(args: list[str]) -> None:
             usage = fetch_usage(live_token(home))
             rows = limit_rows(usage)
             extra = parse_extra_usage(usage)
-            cache_put(alias, email, rows, extra)
+            cache_put(alias, email, rows, extra, org_uuid=base["org_uuid"])
             limits = [{"label": l, "percent": p, "resets_at": r} for l, p, r in rows]
             report[alias] = {**base, "limits": limits, "fetched_at": now_iso()}
             if extra is not None:
@@ -1505,7 +1541,8 @@ def cmd_status(args: list[str]) -> None:
         if meter is not None:
             # As fresh as a home read, and it needs no login: `logged_in` keeps saying
             # whether a home here holds the account, `source` says how it was read.
-            cache_put(alias, email, [(r["label"], r["percent"], r["resets_at"]) for r in meter["rows"]])
+            cache_put(alias, email, [(r["label"], r["percent"], r["resets_at"]) for r in meter["rows"]],
+                      org_uuid=meter["org_uuid"])
             report[alias] = {**base, "limits": meter["rows"], "fetched_at": meter["fetched_at"],
                              "source": "meter-token", "read_via": meter["read_via"],
                              "org_uuid": meter["org_uuid"]}
@@ -1513,7 +1550,7 @@ def cmd_status(args: list[str]) -> None:
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {C['cyan']}{email}{C['off']}  {tag}  "
                              f"{C['dim']}{meter['read_via']}{C['off']}"] + lines(meter["rows"])
             continue
-        cached = cache_get(alias)
+        cached = cache_owned(alias, roster)
         if cached and cached.get("limits"):
             report[alias] = {
                 **base, "stale": True,
