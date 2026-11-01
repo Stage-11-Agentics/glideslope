@@ -288,6 +288,28 @@ class TeamSeatTests(ToolCase):
         self.assertFalse(report["alice"].get("stale") or report["bob"].get("stale"))
 
 
+class LegacyEntryTests(ToolCase):
+    """An entry recorded before organizations were, beside a sibling under the same email."""
+
+    def test_a_home_found_by_email_alone_does_not_lend_its_organization(self):
+        write_login(self.home / ".claude.json", "same@example.com", "org-new")
+        self.tool.roster_write({"old": {"email": "same@example.com"},
+                                "new": {"email": "same@example.com", "org_uuid": "org-new"}})
+        import contextlib, io
+        out = io.StringIO()
+        with mock.patch.object(self.tool, "live_token", return_value="token"), \
+             mock.patch.object(self.tool, "fetch_usage",
+                               return_value=({"limits": [{"kind": "session", "percent": 42}]}, "org-new")), \
+             mock.patch.object(self.tool, "meter_reads", return_value=({}, [])), \
+             mock.patch.object(self.tool.time, "sleep"), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.tool.cmd_status(["--json"])
+        report = json.loads(out.getvalue())
+        self.assertEqual(report["new"]["limits"][0]["percent"], 42.0)
+        self.assertTrue(report["old"].get("stale"))
+        self.assertIsNone(self.tool.cache_get("old"))
+
+
 class MidSwitchTests(ToolCase):
     """A home's login record and its credential disagree mid-/login (2026-11-01).
 
