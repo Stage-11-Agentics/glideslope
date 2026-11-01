@@ -55,6 +55,7 @@ SRC = Path(__file__).resolve().parent
 VIEWS = SRC.parent
 sys.path.insert(0, str(VIEWS.parent))
 import glideslope  # noqa: E402  — the config (store path) only; this build reads no provider
+from quarantine import hide_quarantined  # noqa: E402
 
 DB_PATH = glideslope.STORE_DIR / "samples.db"
 # Written by deck-src/build.py beside the store it already reads: which
@@ -325,7 +326,7 @@ def clip_dormant(grouped: dict[tuple, list[dict]], dormant: dict[str, int]) -> d
 def build_snapshot(db_path: Path = DB_PATH, dormant_path: Path = DORMANT_PATH) -> dict:
     if not db_path.exists():
         raise SystemExit(f"no sample store at {db_path}")
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=15)
+    con = hide_quarantined(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=15))
     try:
         grouped = read_rows(con)
     finally:

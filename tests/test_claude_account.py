@@ -194,8 +194,8 @@ class TwoOrganizationsOneEmailTests(ToolCase):
     def test_status_reads_each_organization_once_and_never_mixes_them(self):
         import contextlib, io
         out = io.StringIO()
-        reads = {"default": {"limits": [{"kind": "session", "percent": 1}]},
-                 "bravo": {"limits": [{"kind": "session", "percent": 60}]}}
+        reads = {"default": ({"limits": [{"kind": "session", "percent": 1}]}, "org-new"),
+                 "bravo": ({"limits": [{"kind": "session", "percent": 60}]}, "org-old")}
         with mock.patch.object(self.tool, "live_token", side_effect=lambda home: home.name), \
              mock.patch.object(self.tool, "fetch_usage", side_effect=lambda token: reads[token]), \
              mock.patch.object(self.tool, "meter_reads", return_value=({}, [])), \
@@ -243,7 +243,7 @@ class TwoOrganizationsOneEmailTests(ToolCase):
             return home.name
 
         with mock.patch.object(self.tool, "live_token", side_effect=live), \
-             mock.patch.object(self.tool, "fetch_usage", return_value={"limits": []}), \
+             mock.patch.object(self.tool, "fetch_usage", return_value=({"limits": []}, "org-new")), \
              mock.patch.object(self.tool, "meter_reads", return_value=({}, [])), \
              mock.patch.object(self.tool.time, "sleep"), contextlib.redirect_stdout(out):
             self.tool.cmd_status(["--json"])
@@ -262,6 +262,110 @@ class TwoOrganizationsOneEmailTests(ToolCase):
         self.assertNotIn(auto, roster)
         self.assertEqual((renamed, roster["delta"]["org_uuid"]), ("delta", "org-new"))
         self.assertEqual(roster["old"]["org_uuid"], "org-old")
+
+
+class MidSwitchTests(ToolCase):
+    """A home's login record and its credential disagree mid-/login (2026-11-01).
+
+    The default home's record names Delta (org-new) while its keychain token is Bravo's
+    (org-old), as when a session still running there writes its old record back over a
+    fresh /login. The usage endpoint answers for the token, and names its organization in
+    `anthropic-organization-id`. Only the HTTP layer is faked: fetch_usage runs for real.
+    """
+
+    BRAVO_METERS = {"limits": [
+        {"kind": "weekly_all", "percent": 83, "resets_at": "2026-11-05T09:00:00+00:00"},
+        {"kind": "weekly_scoped", "percent": 76, "resets_at": "2026-11-05T09:00:00+00:00",
+         "scope": {"model": {"display_name": "Fable"}}},
+    ]}
+    DELTA_LAST = [("weekly (all models)", 99.0, "2026-11-03T08:00:00+00:00"),
+                  ("weekly (Fable)", 95.0, "2026-11-03T08:00:00+00:00")]
+
+    def setUp(self):
+        super().setUp()
+        write_login(self.home / ".claude.json", "same@example.com", "org-new")  # the stale record
+        self.profile = self.tool.ensure_profile("bravo")
+        write_login(self.profile / ".claude.json", "same@example.com", "org-old")
+        self.tool.roster_write({
+            "old": {"email": "same@example.com", "org_uuid": "org-old"},
+            "new": {"email": "same@example.com", "org_uuid": "org-new"},
+        })
+        self.tool.CALL_SIGNS = self.tool.call_signs_by_login(configured={"old": "Bravo", "new": "Delta"})
+        self.tool.cache_put("new", "same@example.com", self.DELTA_LAST, org_uuid="org-new")
+
+    def status(self, response_org):
+        import contextlib, http.client, io
+
+        class Response:
+            def __init__(self, body, org):
+                self.body, self.headers = body, http.client.HTTPMessage()
+                if org:
+                    self.headers["anthropic-organization-id"] = org
+
+            def read(self):
+                return json.dumps(self.body).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def server(request, timeout=None):
+            # The token decides whose meters come back, whatever the home's record says.
+            self.assertEqual(request.get_header("Authorization"), "Bearer default-home-token")
+            return Response(self.BRAVO_METERS, response_org)
+
+        def token(home):
+            if home.is_default:
+                return "default-home-token"
+            raise RuntimeError("the bravo home's access token has expired")
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(self.tool, "live_token", side_effect=token), \
+             mock.patch.object(self.tool.urllib.request, "urlopen", side_effect=server), \
+             mock.patch.object(self.tool, "meter_reads", return_value=({}, [])), \
+             mock.patch.object(self.tool.time, "sleep"), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.tool.cmd_status(["--json"])
+        return json.loads(out.getvalue()), err.getvalue()
+
+    def percents(self, rows):
+        return [(row["label"], row["percent"]) for row in rows]
+
+    def test_a_read_is_credited_to_the_organization_the_response_names(self):
+        report, err = self.status("org-old")
+        # Delta keeps its own last reading, marked stale; Bravo's meters never land on it.
+        self.assertTrue(report["new"].get("stale"))
+        self.assertEqual(self.percents(report["new"]["limits"]),
+                         [("weekly (all models)", 99.0), ("weekly (Fable)", 95.0)])
+        self.assertEqual(self.percents(self.tool.cache_get("new")["limits"]),
+                         [("weekly (all models)", 99.0), ("weekly (Fable)", 95.0)])
+        self.assertIn("Bravo's credential", report["new"]["error"])
+        self.assertIn("Bravo's credential", err)
+        # Bravo gets them, through the home that actually holds its token.
+        self.assertFalse(report["old"].get("stale"))
+        self.assertEqual(self.percents(report["old"]["limits"]),
+                         [("weekly (all models)", 83.0), ("weekly (Fable)", 76.0)])
+        self.assertEqual((report["old"]["read_org_uuid"], report["old"]["read_via"]),
+                         ("org-old", "home default"))
+        self.assertEqual(self.tool.cache_get("old")["org_uuid"], "org-old")
+
+    def test_a_read_naming_no_organization_is_credited_to_neither_account_under_the_email(self):
+        report, err = self.status(None)
+        self.assertTrue(report["new"].get("stale"))
+        self.assertEqual(self.percents(self.tool.cache_get("new")["limits"]),
+                         [("weekly (all models)", 99.0), ("weekly (Fable)", 95.0)])
+        self.assertTrue(report["old"].get("stale"))
+        self.assertIsNone(self.tool.cache_get("old"))
+        self.assertIn("named no organization", err)
+
+    def test_a_read_from_an_organization_the_roster_lacks_is_credited_to_none(self):
+        report, err = self.status("org-elsewhere")
+        self.assertTrue(report["new"].get("stale"))
+        self.assertTrue(report["old"].get("stale"))
+        self.assertIsNone(self.tool.cache_get("old"))
+        self.assertIn("no roster entry holds", err)
 
 
 if __name__ == "__main__":
@@ -341,7 +445,8 @@ class UsageBackoffTests(ToolCase):
         import contextlib, io
         out = io.StringIO()
         with mock.patch.object(self.tool, "live_token", return_value="token"), \
-             mock.patch.object(self.tool, "fetch_usage", side_effect=fetch) as fetched, \
+             mock.patch.object(self.tool, "fetch_usage",
+                               side_effect=lambda token: (fetch(token), None)) as fetched, \
              mock.patch.object(self.tool.time, "sleep") as slept, \
              contextlib.redirect_stdout(out):
             self.tool.cmd_status(["--json"])
@@ -630,7 +735,7 @@ class MeterRobustnessTests(MeterCase):
         import contextlib, io
         out = io.StringIO()
         with mock.patch.object(self.tool, "live_token", return_value="login"), \
-             mock.patch.object(self.tool, "fetch_usage", return_value={"limits": []}), \
+             mock.patch.object(self.tool, "fetch_usage", return_value=({"limits": []}, None)), \
              mock.patch.object(self.tool, "probe_token") as probed, \
              mock.patch.object(self.tool.time, "sleep"), contextlib.redirect_stdout(out):
             self.tool.cmd_status(["--json"])

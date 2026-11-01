@@ -36,6 +36,7 @@ VIEWS = SRC.parent
 ROOT = VIEWS.parent
 sys.path.insert(0, str(ROOT))
 import glideslope  # noqa: E402  — the config (store path); the position itself is read via the CLI below
+from quarantine import hide_quarantined  # noqa: E402
 
 DB_PATH = glideslope.STORE_DIR / "samples.db"
 # A small sidecar, written beside the sample store this build already reads,
@@ -122,7 +123,7 @@ def trails_from_store(accounts: list[dict]) -> tuple[dict[str, list[list[float]]
     trail. Returns (trails, hours_of_history)."""
     if not DB_PATH.exists():
         return {}, 0.0
-    con = sqlite3.connect(DB_PATH, timeout=15)
+    con = hide_quarantined(sqlite3.connect(DB_PATH, timeout=15))
     trails: dict[str, list[list[float]]] = {}
     span_hours = 0.0
     try:
