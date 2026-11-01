@@ -264,6 +264,30 @@ class TwoOrganizationsOneEmailTests(ToolCase):
         self.assertEqual(roster["old"]["org_uuid"], "org-old")
 
 
+class TeamSeatTests(ToolCase):
+    """Two seats of one Team organization, each in its own home: the org cannot tell them apart."""
+
+    def test_each_seat_keeps_its_own_read(self):
+        write_login(self.home / ".claude.json", "alice@example.com", "org-team")
+        profile = self.tool.ensure_profile("bob")
+        write_login(profile / ".claude.json", "bob@example.com", "org-team")
+        reads = {"default": ({"limits": [{"kind": "session", "percent": 11}]}, "org-team"),
+                 "bob": ({"limits": [{"kind": "session", "percent": 77}]}, "org-team")}
+        import contextlib, io
+        out = io.StringIO()
+        with mock.patch.object(self.tool, "live_token", side_effect=lambda home: home.name), \
+             mock.patch.object(self.tool, "fetch_usage", side_effect=lambda token: reads[token]), \
+             mock.patch.object(self.tool, "meter_reads", return_value=({}, [])), \
+             mock.patch.object(self.tool.time, "sleep"), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.tool.cmd_status(["--json"])
+        report = json.loads(out.getvalue())
+        # The roster keeps a shared org on one entry only; the other seat's home record still names it.
+        self.assertEqual(report["alice"]["limits"][0]["percent"], 11.0)
+        self.assertEqual(report["bob"]["limits"][0]["percent"], 77.0)
+        self.assertFalse(report["alice"].get("stale") or report["bob"].get("stale"))
+
+
 class MidSwitchTests(ToolCase):
     """A home's login record and its credential disagree mid-/login (2026-11-01).
 
@@ -359,6 +383,27 @@ class MidSwitchTests(ToolCase):
         self.assertTrue(report["old"].get("stale"))
         self.assertIsNone(self.tool.cache_get("old"))
         self.assertIn("named no organization", err)
+
+    def test_an_owner_already_read_through_its_own_home_keeps_that_read(self):
+        self.tool.roster_write({  # Bravo sorts first, so its own home is read before Delta's
+            "bravo": {"email": "same@example.com", "org_uuid": "org-old"},
+            "delta": {"email": "same@example.com", "org_uuid": "org-new"},
+        })
+        self.tool.CALL_SIGNS = self.tool.call_signs_by_login(configured={"bravo": "Bravo", "delta": "Delta"})
+        own = {"limits": [{"kind": "weekly_all", "percent": 80, "resets_at": "2026-11-05T09:00:00+00:00"}]}
+        reads = {"bravo": (own, "org-old"), "default": (self.BRAVO_METERS, "org-old")}
+        import contextlib, io
+        out = io.StringIO()
+        with mock.patch.object(self.tool, "live_token", side_effect=lambda home: home.name), \
+             mock.patch.object(self.tool, "fetch_usage", side_effect=lambda token: reads[token]), \
+             mock.patch.object(self.tool, "meter_reads", return_value=({}, [])), \
+             mock.patch.object(self.tool.time, "sleep"), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.tool.cmd_status(["--json"])
+        report = json.loads(out.getvalue())
+        self.assertEqual(self.percents(report["bravo"]["limits"]), [("weekly (all models)", 80.0)])
+        self.assertNotIn("read_via", report["bravo"])
+        self.assertTrue(report["delta"].get("stale"))
 
     def test_a_read_from_an_organization_the_roster_lacks_is_credited_to_none(self):
         report, err = self.status("org-elsewhere")

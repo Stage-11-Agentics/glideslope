@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         rows = add(db, args.provider, args.account, args.observed_at, args.reason)
-    except ValueError as exc:
+    except (ValueError, sqlite3.Error) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     print(json.dumps({"quarantined": {"provider": args.provider, "account": args.account,
