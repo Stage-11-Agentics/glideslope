@@ -1586,7 +1586,10 @@ def cmd_status(args: list[str]) -> None:
                 time.sleep(READ_SPACING_S)
             reads += 1
             usage, read_org = fetch_usage(live_token(home))
-            owner, why = read_owner(alias, read_org, roster, split_login(home.login())[1] or None)
+            # The home's own org stands in only for an account its record names: a home
+            # found by email alone may hold a sibling organization under that email.
+            home_org = split_login(home.login())[1] if alias_for(home.login(), roster) == alias else None
+            owner, why = read_owner(alias, read_org, roster, home_org or None)
             if owner is not None and not live(owner):
                 credit(owner, usage, read_org, home)
             if owner != alias:
