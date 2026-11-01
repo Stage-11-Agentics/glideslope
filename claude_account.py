@@ -32,6 +32,10 @@ with a single login. Switching is choosing which home a NEW session starts in.
 This tool only reads a home's access token, and only while it is still valid. It
 never performs an OAuth refresh, never writes the keychain, and stores no token.
 
+A home's login record says which home to read, not whose meters come back: the record
+and the token are written separately and can disagree mid-/login. Each usage read is
+credited to the organization its response names (`read_owner`, added 2026-11-01).
+
     Why (retired 2026-08-06). The old design kept every account's refresh token so
     it could read or swap accounts on demand. Refresh tokens rotate and are
     single-use, so that store had to be written back on every read, which made a
@@ -590,6 +594,46 @@ def aliases_for_org(org_uuid: str | None, roster: dict) -> list[str]:
                   if e.get("email") and str(e.get("org_uuid") or "").lower() == wanted)
 
 
+def read_owner(alias: str, read_org: str | None, roster: dict) -> tuple[str | None, str | None]:
+    """Whose meters a usage read through ALIAS's login home holds: (owner, why it is not ALIAS).
+
+    A home's login record (`oauthAccount` in its .claude.json) and its credential (its
+    keychain item) are written separately, and a session still running in the home can
+    write its old record back over a fresh /login. While they disagree, the record names
+    one account and the token reads another (2026-11-01: Delta's record over Bravo's token
+    for 36 seconds, and Bravo's meters were journaled as Delta's). So the record only says
+    which home to read; the organization the response names says whose meters came back.
+
+    - The response names ALIAS's organization: ALIAS's.
+    - It names another organization, which exactly one roster entry holds: that entry's.
+    - It names an organization no entry or several entries hold: no one's (a legacy entry
+      with no organization recorded keeps the read while its email holds no other account).
+    - It names none: ALIAS's while its email holds no other account, else no one's.
+    """
+    entry = roster.get(alias) or {}
+    mine = str(entry.get("org_uuid") or "").lower()
+    email = str(entry.get("email") or "").lower()
+    alone = sum(1 for e in roster.values() if str(e.get("email") or "").lower() == email) <= 1
+    name = label_for(entry_login(entry), roster)
+    if not read_org:
+        if alone:
+            return alias, None
+        return None, (f"the usage read through {name}'s login home named no organization, and its email "
+                      "holds several accounts; read credited to none")
+    if read_org == mine:
+        return alias, None
+    owners = aliases_for_org(read_org, roster)
+    if len(owners) == 1:
+        other = label_for(entry_login(roster[owners[0]]), roster)
+        return owners[0], (f"{name}'s login home holds {other}'s credential (its login record and token "
+                           f"disagree, as during a /login); the read is credited to {other}, not {name}")
+    if not mine and not owners and alone:
+        return alias, None
+    held = "no roster entry holds" if not owners else "several roster entries hold"
+    return None, (f"the usage read through {name}'s login home is organization {read_org[:8]}…, which "
+                  f"{held}; read credited to none")
+
+
 # ---------------------------------------------------------------- selection
 # Which account a new session starts in. A pointer, not a login: it names an
 # email and an organization, which are looked up among the homes at launch.
@@ -781,7 +825,13 @@ class Throttled(Exception):
         self.retry_after = retry_after
 
 
-def fetch_usage(token: str) -> dict:
+def fetch_usage(token: str) -> tuple[dict, str | None]:
+    """The usage payload, and the organization the response says it describes.
+
+    The organization comes from the response's `anthropic-organization-id` header:
+    the server's word on whose meters these are, which a home's login record is not
+    (see `credit_read`). None when the response names no organization.
+    """
     req = urllib.request.Request(USAGE_URL, headers={
         "Authorization": f"Bearer {token}",
         "anthropic-beta": "oauth-2025-04-20",
@@ -789,7 +839,8 @@ def fetch_usage(token: str) -> dict:
     })
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read())
+            org = (r.headers.get("anthropic-organization-id") or "").strip().lower() or None
+            return json.loads(r.read()), org
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
             raise Throttled(_retry_after_seconds(exc.headers.get("Retry-After"))) from exc
@@ -1489,14 +1540,38 @@ def cmd_status(args: list[str]) -> None:
                 f"{C['dim']}resets {local_time(r['resets_at'])}{C['off']}" for r in rows]
 
     bases: dict[str, dict] = {}
+    held: dict[str, Home] = {}
     for alias, entry in sorted(roster.items()):
         email, login = entry.get("email", "?"), entry_login(entry)
         home = home_for(login, all_homes)
-        is_active = same_login(login, chosen)
-        base = bases[alias] = {"email": email, "org_uuid": entry.get("org_uuid"), "active": is_active,
-                               "logged_in": home is not None, "home": home.name if home else None}
-        if home is None:
-            continue
+        bases[alias] = {"email": email, "org_uuid": entry.get("org_uuid"), "active": same_login(login, chosen),
+                        "logged_in": home is not None, "home": home.name if home else None}
+        if home is not None:
+            held[alias] = home
+
+    def live(alias: str) -> bool:
+        return alias in report and not report[alias].get("stale")
+
+    def credit(owner: str, usage: dict, read_org: str | None, home: Home) -> None:
+        """Record a usage read as OWNER's: its journal, its report row, its text block."""
+        base, email = bases[owner], bases[owner]["email"]
+        rows = limit_rows(usage)
+        extra = parse_extra_usage(usage)
+        cache_put(owner, email, rows, extra, org_uuid=read_org or base["org_uuid"])
+        limits = [{"label": l, "percent": p, "resets_at": r} for l, p, r in rows]
+        report[owner] = {**base, "limits": limits, "fetched_at": now_iso(), "read_org_uuid": read_org}
+        if held.get(owner) is not home:
+            report[owner]["read_via"] = f"home {home.name}"
+        if extra is not None:
+            report[owner]["extra_usage"] = extra
+        tag = f"{C['green']}▶ new sessions{C['off']}" if base["active"] else f"{C['green']}● live{C['off']}"
+        blocks[owner] = [f"\n{C['bold']}{owner}{C['off']}  {C['cyan']}{email}{C['off']}  {tag}  "
+                         f"{C['dim']}home {home.name}{C['off']}"] + lines(limits)
+
+    for alias, home in held.items():
+        base, email = bases[alias], bases[alias]["email"]
+        if live(alias):
+            continue  # already read this run, through another home's credential
         if paused_until is not None:
             report[alias] = {**base, "stale": True, "error": _throttled_note(paused_until)}
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {email}  {C['dim']}home {home.name}{C['off']}",
@@ -1506,17 +1581,15 @@ def cmd_status(args: list[str]) -> None:
             if reads:
                 time.sleep(READ_SPACING_S)
             reads += 1
-            usage = fetch_usage(live_token(home))
-            rows = limit_rows(usage)
-            extra = parse_extra_usage(usage)
-            cache_put(alias, email, rows, extra, org_uuid=base["org_uuid"])
-            limits = [{"label": l, "percent": p, "resets_at": r} for l, p, r in rows]
-            report[alias] = {**base, "limits": limits, "fetched_at": now_iso()}
-            if extra is not None:
-                report[alias]["extra_usage"] = extra
-            tag = f"{C['green']}▶ new sessions{C['off']}" if is_active else f"{C['green']}● live{C['off']}"
-            blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {C['cyan']}{email}{C['off']}  {tag}  "
-                             f"{C['dim']}home {home.name}{C['off']}"] + lines(limits)
+            usage, read_org = fetch_usage(live_token(home))
+            owner, why = read_owner(alias, read_org, roster)
+            if owner is not None and not live(owner):
+                credit(owner, usage, read_org, home)
+            if owner != alias:
+                warn(why)
+                report[alias] = {**base, "stale": True, "error": why}
+                blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {email}  {C['dim']}home {home.name}{C['off']}",
+                                 f"  {C['red']}unavailable:{C['off']} {why}"]
         except Throttled as ex:
             paused_until = start_backoff(ex.retry_after)
             report[alias] = {**base, "stale": True, "error": _throttled_note(paused_until)}

@@ -23,6 +23,7 @@ import claude_account
 import glideslope
 import pricing
 import spend_collect
+from quarantine import hide_quarantined
 
 
 HORIZONS = ("d1", "d7", "d30", "d90", "all")
@@ -142,7 +143,7 @@ def _read_sample_state(
     if db.exists():
         try:
             uri = db.resolve().as_uri() + "?mode=ro"
-            con = sqlite3.connect(uri, uri=True, timeout=5)
+            con = hide_quarantined(sqlite3.connect(uri, uri=True, timeout=5))
             try:
                 columns = {row[1] for row in con.execute("PRAGMA table_info(samples)")}
                 if columns:

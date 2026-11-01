@@ -44,6 +44,7 @@ from glideslope import (
     LOCAL_TZ, NOTIFY_PERCENT, NOTIFY_SINK, NOTIFY_URL, STORE_DIR, best_alternative, format_countdown,
     format_percent, iso_utc, notifiable_windows, parse_timestamp,
 )
+from quarantine import hide_quarantined
 
 STATE_PATH = STORE_DIR / "notified.json"
 IMAGE_DIR = STORE_DIR / "alerts"
@@ -298,7 +299,7 @@ def approach_track(alert: dict[str, Any], db: Path = SAMPLES_DB) -> list[tuple[f
         return []
     start = reset - dt.timedelta(minutes=duration)
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        con = hide_quarantined(sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5))
     except sqlite3.Error:
         return []
     try:

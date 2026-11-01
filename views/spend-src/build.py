@@ -29,6 +29,7 @@ VIEWS = SRC.parent
 ROOT = VIEWS.parent
 sys.path.insert(0, str(ROOT))
 import glideslope  # noqa: E402 — config supplies only the store path and display settings
+from quarantine import hide_quarantined  # noqa: E402
 
 STORE = glideslope.STORE_DIR
 SPEND_JSON = STORE / "spend.json"
@@ -342,7 +343,7 @@ def read_meters(db: Path, spend: dict[str, Any], now: dt.datetime) -> tuple[dict
     names = tuple(accounts)
     if not db.exists() or not names:
         return {}, []
-    connection = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+    connection = hide_quarantined(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5))
     try:
         rows = connection.execute(
             "SELECT provider, account, display, meter, used_percent, resets_at, observed_at, active, window_minutes "
