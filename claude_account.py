@@ -594,7 +594,8 @@ def aliases_for_org(org_uuid: str | None, roster: dict) -> list[str]:
                   if e.get("email") and str(e.get("org_uuid") or "").lower() == wanted)
 
 
-def read_owner(alias: str, read_org: str | None, roster: dict) -> tuple[str | None, str | None]:
+def read_owner(alias: str, read_org: str | None, roster: dict,
+               home_org: str | None = None) -> tuple[str | None, str | None]:
     """Whose meters a usage read through ALIAS's login home holds: (owner, why it is not ALIAS).
 
     A home's login record (`oauthAccount` in its .claude.json) and its credential (its
@@ -604,6 +605,9 @@ def read_owner(alias: str, read_org: str | None, roster: dict) -> tuple[str | No
     for 36 seconds, and Bravo's meters were journaled as Delta's). So the record only says
     which home to read; the organization the response names says whose meters came back.
 
+    ALIAS's organization is the roster's, else the one its home's record names (HOME_ORG):
+    seats on one Team plan share an organization, and the roster keeps it on one entry only.
+
     - The response names ALIAS's organization: ALIAS's.
     - It names another organization, which exactly one roster entry holds: that entry's.
     - It names an organization no entry or several entries hold: no one's (a legacy entry
@@ -611,7 +615,7 @@ def read_owner(alias: str, read_org: str | None, roster: dict) -> tuple[str | No
     - It names none: ALIAS's while its email holds no other account, else no one's.
     """
     entry = roster.get(alias) or {}
-    mine = str(entry.get("org_uuid") or "").lower()
+    mine = str(entry.get("org_uuid") or home_org or "").lower()
     email = str(entry.get("email") or "").lower()
     alone = sum(1 for e in roster.values() if str(e.get("email") or "").lower() == email) <= 1
     name = label_for(entry_login(entry), roster)
@@ -830,7 +834,7 @@ def fetch_usage(token: str) -> tuple[dict, str | None]:
 
     The organization comes from the response's `anthropic-organization-id` header:
     the server's word on whose meters these are, which a home's login record is not
-    (see `credit_read`). None when the response names no organization.
+    (see `read_owner`). None when the response names no organization.
     """
     req = urllib.request.Request(USAGE_URL, headers={
         "Authorization": f"Bearer {token}",
@@ -1582,7 +1586,7 @@ def cmd_status(args: list[str]) -> None:
                 time.sleep(READ_SPACING_S)
             reads += 1
             usage, read_org = fetch_usage(live_token(home))
-            owner, why = read_owner(alias, read_org, roster)
+            owner, why = read_owner(alias, read_org, roster, split_login(home.login())[1] or None)
             if owner is not None and not live(owner):
                 credit(owner, usage, read_org, home)
             if owner != alias:

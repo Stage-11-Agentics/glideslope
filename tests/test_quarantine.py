@@ -115,6 +115,18 @@ class QuarantineTests(unittest.TestCase):
             con.close()
         self.assertNotIn("quarantine", tables)
 
+    def test_every_store_reader_reads_around_the_quarantine(self):
+        # The sampler only writes; glideslope.py's two reads (early resets, credit burn) are
+        # wired in a follow-up, once in-flight edits to that file land.
+        exempt = {"sampler.py", "quarantine.py", "glideslope.py"}
+        readers = [path for path in sorted(ROOT.glob("*.py")) + sorted(ROOT.glob("views/*/build.py"))
+                   if path.name not in exempt and "FROM samples" in path.read_text()]
+        self.assertGreaterEqual(len(readers), 5)
+        for path in readers:
+            source = path.read_text()
+            self.assertEqual(source.count("hide_quarantined(sqlite3.connect("),
+                             source.count("sqlite3.connect("), f"{path.relative_to(ROOT)} reads samples raw")
+
     def test_a_store_without_a_quarantine_reads_as_it_always_did(self):
         con = quarantine.hide_quarantined(sqlite3.connect(f"file:{self.db}?mode=ro", uri=True))
         try:
