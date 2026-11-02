@@ -92,7 +92,7 @@ ln -s "$PWD/skills/glideslope" ~/.claude/skills/glideslope
 
 > where am I on usage?
 
-developing Glideslope with an agent: [`CLAUDE.md`](CLAUDE.md).
+developing Glideslope with an agent: [`AGENTS.md`](AGENTS.md).
 
 ## providers.
 
