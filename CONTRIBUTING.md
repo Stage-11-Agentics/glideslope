@@ -4,7 +4,7 @@ Contributions from humans, from humans with agents, and from agents with humans 
 
 ## Before you start
 
-- **Read [`CLAUDE.md`](CLAUDE.md).** It is written for agents but it is the shortest accurate account of the rules: hermetic tests, credential discipline, the shared account shape.
+- **Read [`AGENTS.md`](AGENTS.md).** It is written for agents but it is the shortest accurate account of the rules: hermetic tests, credential discipline, the shared account shape.
 - **Read the provider's section in [`PROVIDERS.md`](PROVIDERS.md)** before changing how a provider is read.
 - **Open an issue first for anything non-trivial.** A two-line sketch is cheaper than a rejected PR. New providers especially: say which endpoint, which credential, and what the units mean.
 
