@@ -33,8 +33,18 @@ plus `"truncated": true` when either list hit the row cap. Rows that ended in th
 the reader can settle duplicates before it drops them (see seat_document). An absent or
 unreadable file omits the key and warns; it never stops the beacon.
 
-Numbers, reset clocks, login emails and seat rows only. No credential is read, written, or
-stored by this program — `claude-account` borrows the access token Claude Code
+`env_tokens`, present when a running Claude session was launched with
+CLAUDE_CODE_OAUTH_TOKEN, counts those sessions per token fingerprint. Such a session bills the
+token's account, not this machine's login, and its transcript records no organization, so the
+beacon also keeps `~/.glideslope/session-tokens.json`, the spend ledger's evidence of which
+session ran under which token (see record_token_sessions). A token is read from a process's
+environment only to be hashed. It is never sent anywhere, stored, logged or compared in the
+clear. The account behind a fingerprint comes from claude-account's own map, which
+`claude-account whose <file>` fills from a token file the operator names; a fingerprint nothing
+has named is reported as a warning and credits nothing.
+
+Numbers, reset clocks, login emails, seat rows and token fingerprints only. No credential is
+written or stored by this program — `claude-account` borrows the access token Claude Code
 already keeps, the Codex login is one decoded claim from a file never held past
 that read, and the file below is 0600 and contains no token, refresh token, or key.
 
@@ -45,8 +55,11 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import glob
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -59,6 +72,11 @@ SELECTION = Path.home() / ".claude" / "accounts" / "selection.json"
 CODEX_AUTH = Path.home() / ".codex" / "auth.json"  # login identity only, never the tokens
 GROK_AUTH = Path.home() / ".grok" / "auth.json"    # login identity only, never the tokens
 CANDIDATES = (Path.home() / ".local" / "bin" / "claude-account", Path("/usr/local/bin/claude-account"))
+SESSION_DIRS = (Path.home() / ".claude" / "sessions",)  # one <pid>.json per live Claude session
+METER_ORGS = Path.home() / ".claude" / "accounts" / ".meter-orgs.json"  # fingerprint -> org
+TOKEN_EVIDENCE = Path.home() / ".glideslope" / "session-tokens.json"
+TOKEN_VARIABLE = "CLAUDE_CODE_OAUTH_TOKEN"
+TOKEN_READ_TIMEOUT = 10
 TIMEOUT = 45
 CONFIG = Path(os.environ.get("GLIDESLOPE_CONFIG") or (Path.home() / ".glideslope" / "config.toml"))
 # What a seat row keeps. The sandbox id stays with the launcher: noise here.
@@ -170,6 +188,141 @@ def seat_document(path: Path, now: dt.datetime) -> tuple[dict | None, str | None
     if len(live) > SEATS_MAX_ROWS or len(ended) > SEATS_MAX_ROWS:
         carried["truncated"] = True
     return carried, None
+
+
+def session_files() -> list[Path]:
+    """Every live-session file: the default home, then each profile home."""
+    paths: list[Path] = []
+    for directory in SESSION_DIRS:
+        paths += sorted(directory.glob("*.json")) if directory.is_dir() else []
+    paths += [Path(path) for path in sorted(glob.glob(str(PROFILES_DIR / "*" / "sessions" / "*.json")))]
+    return paths
+
+
+def process_token_fingerprint(pid: int) -> str | None:
+    """The fingerprint of the token in one process's environment, or None. The value is dropped here.
+
+    Matches claude_account.token_fingerprint. `ps -E` prints argv and then the environment, so
+    the environment is what follows the plain argv: a prompt that quotes the variable is argv,
+    and an empty value is no token.
+    """
+    def read(*flags: str) -> str:
+        return subprocess.run(["ps", *flags, "-o", "command=", "-p", str(pid)], capture_output=True,
+                              text=True, timeout=TOKEN_READ_TIMEOUT, check=False).stdout.rstrip("\n")
+    try:
+        command, text = read("-ww"), read("-Eww")
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
+        return None
+    environment = text[len(command):] if command and text.startswith(command) else None
+    if environment is None:
+        return None  # argv and environment cannot be told apart: no sighting beats a wrong one
+    marker = TOKEN_VARIABLE + "="
+    index = environment.rfind(marker)
+    if index < 0 or (index and not environment[index - 1].isspace()):
+        return None
+    value = re.match(r"\S*", environment[index + len(marker):]).group(0)
+    return hashlib.sha256(value.encode()).hexdigest()[:10] if value else None
+
+
+def _millis_iso(value: object) -> str | None:
+    """A session file's epoch-milliseconds start as ISO-8601 UTC."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    moment = dt.datetime.fromtimestamp(value / 1000, dt.timezone.utc)
+    return moment.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def token_sightings() -> list[dict]:
+    """Each live session running under an env token: {session, fp, start}."""
+    sightings = []
+    for path in session_files():
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        session, pid = record.get("sessionId"), record.get("pid")
+        if not isinstance(session, str) or isinstance(pid, bool) or not isinstance(pid, int):
+            continue
+        fingerprint = process_token_fingerprint(pid)
+        if fingerprint:
+            sightings.append({"session": session, "fp": fingerprint, "pid": pid,
+                              "start": _millis_iso(record.get("startedAt"))})
+    return sightings
+
+
+def _process_key(sighting: dict) -> str:
+    """Which process a sighting is: its start time, else its pid when the session file has none."""
+    return sighting.get("start") or "pid:%s" % sighting.get("pid")
+
+
+def _span_process(span: dict) -> str | None:
+    # Spans written before `process` existed are keyed by their start.
+    return span.get("process") or span.get("start")
+
+
+def _coalesce(spans: list) -> list:
+    """Merge runs of spans that one process left because its start was unknown.
+
+    Such a span's start is its first sighting. Before spans were keyed by process, each tick of
+    that process opened a new one, so a run of them with one token and no process key is one
+    span. Other spans are left as they are.
+    """
+    merged: list = []
+    for span in spans:
+        last = merged[-1] if merged else None
+        if (last is not None and isinstance(span, dict) and not span.get("process")
+                and not last.get("process") and last.get("fp") == span.get("fp")
+                and last.get("start") == last.get("first_seen")
+                and span.get("start") == span.get("first_seen")):
+            last["last_seen"] = span.get("last_seen", last.get("last_seen"))
+        else:
+            merged.append(span)
+    return merged
+
+
+def record_token_sessions(sightings: list[dict], now: str, path: Path | None = None,
+                          orgs_path: Path | None = None) -> tuple[dict[str, int], list[str]]:
+    """Fold sightings into the evidence file. Returns (sessions per fingerprint, unnamed fingerprints).
+
+    {"schema": 1, "tokens": {fp: org},
+     "sessions": {id: [{fp, process, start, first_seen, last_seen}]}}.
+    A session gets a new span when its token or its process changes. `process` is the process
+    start, or its pid when the session file gives no start. Spans are only ever extended or
+    merged, never dropped, so the file is the whole history of what this machine saw. A file
+    that cannot be read raises rather than being replaced: history is not rebuilt from one tick.
+    """
+    path = path or TOKEN_EVIDENCE
+    try:
+        document = json.loads(path.read_text())
+        sessions, tokens = document["sessions"], dict(document.get("tokens") or {})
+    except FileNotFoundError:
+        sessions, tokens = {}, {}
+    try:
+        known = json.loads((orgs_path or METER_ORGS).read_text())
+        known = known if isinstance(known, dict) else {}
+    except (OSError, ValueError):
+        known = {}
+    counts: dict[str, int] = {}
+    for session in list(sessions):
+        if isinstance(sessions[session], list):
+            sessions[session] = _coalesce(sessions[session])
+    for sighting in sightings:
+        spans = sessions.setdefault(sighting["session"], [])
+        counts[sighting["fp"]] = counts.get(sighting["fp"], 0) + 1
+        process = _process_key(sighting)
+        if spans and spans[-1].get("fp") == sighting["fp"] and _span_process(spans[-1]) == process:
+            spans[-1]["last_seen"] = now
+        else:
+            spans.append({"fp": sighting["fp"], "process": process, "start": sighting["start"] or now,
+                          "first_seen": now, "last_seen": now})
+    # A name, once learned, is kept: a run whose map has lost a fingerprint must not un-credit
+    # sessions it already named.
+    seen = {span.get("fp") for spans in sessions.values() for span in spans}
+    tokens.update({fp: known[fp] for fp in seen if isinstance(known.get(fp), str)})
+    write_private({"schema": 1, "tokens": tokens, "sessions": sessions}, path)
+    return counts, sorted(fp for fp in counts if fp not in tokens)
 
 
 def held_logins() -> dict[str, str]:
@@ -292,12 +445,16 @@ def tally(snapshot: dict) -> str:
 
 
 def publish(payload: dict) -> None:
+    write_private(payload, BEACON)
+
+
+def write_private(payload: dict, target: Path) -> None:
     """Atomic, 0600. A half-written beacon must never be readable as a position."""
-    BEACON.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(BEACON.parent, 0o700)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(target.parent, 0o700)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile("w", dir=BEACON.parent, prefix=f".{BEACON.name}.",
+        with tempfile.NamedTemporaryFile("w", dir=target.parent, prefix=f".{target.name}.",
                                          delete=False) as handle:
             json.dump(payload, handle, separators=(",", ":"))
             handle.write("\n")
@@ -305,7 +462,7 @@ def publish(payload: dict) -> None:
             os.fsync(handle.fileno())
             temporary = Path(handle.name)
         os.chmod(temporary, 0o600)
-        os.replace(temporary, BEACON)
+        os.replace(temporary, target)
         temporary = None
     finally:
         if temporary is not None:
@@ -345,6 +502,17 @@ def main() -> int:
         payload["seats"] = seats
     if seat_error:
         notes = notes + [seat_error]
+    # Token evidence is optional in the same way: it can never stop the beacon, and an exception's
+    # text stays out of the note, so nothing read from a process can reach a log.
+    try:
+        token_counts, unnamed = record_token_sessions(token_sightings(), payload["observed_at"])
+    except Exception as exc:  # noqa: BLE001
+        token_counts, unnamed = {}, []
+        notes = notes + [f"session token evidence not recorded: {type(exc).__name__}"]
+    if token_counts:
+        payload["env_tokens"] = token_counts
+    notes = notes + [f"{token_counts[fp]} running session(s) use token {fp}, which no token file has "
+                     "named; run claude-account whose <file>" for fp in unnamed]
     if error:
         payload["error"] = error
     if notes:

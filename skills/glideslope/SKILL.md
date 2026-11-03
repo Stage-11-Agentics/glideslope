@@ -56,10 +56,33 @@ Claude and Codex dollars use API list rates. Grok Build dollars use the
 `costUsdTicks` supplied by its local CLI, not the LiteLLM rate table. The totals are estimates,
 not subscription charges or an invoice. It covers local Claude Code, Codex and Grok Build only.
 
-Claude account totals use active-login samples and switch-log events, with aliases resolved
-through `glideslope.call_sign`. Attribution starts at the earliest login evidence from either
-source. Requests without earlier evidence or with evidence more than 24 hours old remain
-`unattributed`. `--no-collect` rebuilds spend from cached per-file records, writes
+Where the config sets `[spend] producer = false`, another program owns `<store>/spend.json`, and
+this command would overwrite that ledger with this machine's records. Read the existing file
+instead, or point `GLIDESLOPE_HOME` at a scratch store.
+
+Claude account totals use the strongest evidence each request has, and `--print` shows how much
+spend used each basis:
+
+- `transcript`: the latest `credential_org` in the request's own transcript, joined to the
+  roster. A subagent inherits its parent's.
+- `unowned org`: the transcript names an organization no single roster seat owns. It stays
+  `unattributed`; the record proves the machine's login did not pay.
+- `token`: the satellite beacon saw the session running under `CLAUDE_CODE_OAUTH_TOKEN` and the
+  token's account is known. The beacon stores a fingerprint, never the token. A warning naming a
+  fingerprint means `claude-account whose <token-file>` needs to run once where the token is.
+- `unseen token`: no organization from Claude Code 2.1.281 or later, which always records one for
+  a login. A token nothing identified paid, so it stays `unattributed`.
+- `timeline`: active-login samples and switch-log events, resolved through
+  `glideslope.call_sign`, for older versions only. It is the only basis that can name the wrong
+  account.
+- `none`: no earlier evidence, or evidence more than 24 hours old. It stays `unattributed`.
+
+`--print` also shows what woke the agent over 7 days: dollars, share, turns and requests per
+trigger, with the top session. `spend.json` `triggers` has every horizon and the top five
+sessions. A `c11 send` older than about 14 days reads `typed prompt`, because c11 keeps its
+events that long.
+
+`--no-collect` rebuilds spend from cached per-file records, writes
 `<store>/spend.json`, and does not reread transcripts; add `--print` to also display totals.
 It can miss transcript changes since the last normal collection and may still refresh the price
 table.
