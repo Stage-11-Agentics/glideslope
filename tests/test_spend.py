@@ -48,6 +48,11 @@ def _request(tool, model, when, *, key, inp=0, out=0, speed=None, prompt=None):
         "prompt": inp if prompt is None else prompt,
         "key": key,
         "machine": "laptop",
+        "sid": None,
+        "org": None,
+        "trigger": None,
+        "turn": None,
+        "digest": None,
     }
 
 
@@ -138,8 +143,8 @@ def test_build_attribution_buckets_pricing_and_grok_model_calls(tmp_path, monkey
     accounts = {account["name"]: account for account in data["accounts"]}
 
     assert set(data) == {
-        "generated_at", "collected_at", "first_request_at", "attribution", "totals",
-        "machines", "accounts", "leverage", "providers", "meters", "daily",
+        "generated_at", "collected_at", "first_request_at", "attribution", "attribution_basis",
+        "triggers", "totals", "machines", "accounts", "leverage", "providers", "meters", "daily",
         "model_tokens", "pricing",
     }
     assert accounts["unattributed"]["all"]["requests"] == 1

@@ -1,0 +1,403 @@
+"""Who paid for a Claude request: the transcript, then the token, then the login."""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import importlib.util
+import json
+import subprocess
+from pathlib import Path
+from unittest import mock
+
+import pytest
+
+import claude_account
+import glideslope
+import pricing
+import spend
+import spend_collect as collector
+import turn_trigger
+from pricing import SpeedLedger
+
+BEACON_PATH = Path(__file__).parents[1] / "tools" / "satellite_beacon.py"
+SPEC = importlib.util.spec_from_file_location("glideslope_beacon_tokens", BEACON_PATH)
+beacon = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(beacon)
+
+ORG_WORK = "11111111-1111-4111-8111-111111111111"
+ORG_PERSONAL = "22222222-2222-4222-8222-222222222222"
+FAKE_TOKEN = "not-a-real-token-value"
+
+
+def _assistant(message_id: str, when: str, out: int = 10) -> dict:
+    return {"type": "assistant", "timestamp": when, "requestId": "req-" + message_id,
+            "message": {"id": message_id, "model": "claude-opus-5-5",
+                        "usage": {"input_tokens": 100, "output_tokens": out}}}
+
+
+def _org(org: str, when: str) -> dict:
+    return {"type": "attachment", "timestamp": when,
+            "attachment": {"type": "credential_org", "organizationUuid": org}}
+
+
+def _user(text: str, when: str, **extra) -> dict:
+    return {"type": "user", "timestamp": when, "message": {"role": "user", "content": text}, **extra}
+
+
+def _write(path: Path, rows: list[dict]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    return path
+
+
+def _collect(tmp_path: Path, home: Path) -> dict:
+    result = collector.collect(home=home, machine="laptop", cache_dir=tmp_path / "cache",
+                               speed_ledger=SpeedLedger(tmp_path / "ledger.json"))
+    return {record["key"].split("|")[0]: record for record in result.records}
+
+
+# ------------------------------------------------------------------ transcript evidence
+
+def test_each_request_takes_the_latest_org_at_or_before_it(tmp_path):
+    home = tmp_path / "home"
+    _write(home / ".claude" / "projects" / "p" / "sess-1.jsonl", [
+        _assistant("before", "2026-10-01T09:00:00Z"),
+        _org(ORG_WORK.upper(), "2026-10-01T10:00:00Z"),
+        _assistant("first", "2026-10-01T10:01:00Z"),
+        _org(ORG_PERSONAL, "2026-10-01T11:00:00Z"),
+        _assistant("second", "2026-10-01T11:01:00Z"),
+    ])
+    records = _collect(tmp_path, home)
+    assert records["before"]["org"] is None
+    assert records["first"]["org"] == ORG_WORK
+    assert records["second"]["org"] == ORG_PERSONAL
+    assert {record["sid"] for record in records.values()} == {"sess-1"}
+
+
+def test_a_subagent_inherits_its_parent_at_the_request_time(tmp_path):
+    home = tmp_path / "home"
+    projects = home / ".claude" / "projects" / "p"
+    _write(projects / "sess-1.jsonl", [
+        _org(ORG_WORK, "2026-10-01T10:00:00Z"),
+        _assistant("parent", "2026-10-01T10:01:00Z"),
+        _org(ORG_PERSONAL, "2026-10-01T12:00:00Z"),
+    ])
+    _write(projects / "sess-1" / "subagents" / "agent-a1.jsonl", [
+        _assistant("early", "2026-10-01T11:00:00Z"),
+        _assistant("late", "2026-10-01T13:00:00Z"),
+    ])
+    records = _collect(tmp_path, home)
+    assert records["early"]["org"] == ORG_WORK
+    assert records["late"]["org"] == ORG_PERSONAL
+    assert records["early"]["sid"] == "sess-1"
+    assert records["early"]["trigger"] == turn_trigger.SUBAGENT
+
+
+def test_a_resumed_copy_keeps_the_original_org_and_trigger(tmp_path):
+    home = tmp_path / "home"
+    projects = home / ".claude" / "projects" / "p"
+    _write(projects / "new.jsonl", [_assistant("shared", "2026-10-01T10:00:05Z", out=20)])
+    _write(projects / "old.jsonl", [
+        _org(ORG_WORK, "2026-10-01T09:00:00Z"),
+        _user("hello", "2026-10-01T09:59:00Z"),
+        _assistant("shared", "2026-10-01T10:00:00Z"),
+    ])
+    records = _collect(tmp_path, home)
+    assert records["shared"]["org"] == ORG_WORK
+    assert records["shared"]["sid"] == "old"
+    assert records["shared"]["trigger"] == turn_trigger.TYPED
+    assert records["shared"]["out"] == 20
+
+
+# ------------------------------------------------------------------ crediting
+
+def _roster(tmp_path: Path, monkeypatch, entries: dict | None = None) -> None:
+    roster = tmp_path / "roster.json"
+    roster.write_text(json.dumps(entries or {
+        "work": {"email": "work@example.test", "org_uuid": ORG_WORK},
+        "personal": {"email": "personal@example.test", "org_uuid": ORG_PERSONAL},
+    }), encoding="utf-8")
+    monkeypatch.setattr(glideslope, "CLAUDE_ROSTER", roster)
+
+
+MS = int(dt.datetime(2026, 10, 1, 12, tzinfo=dt.timezone.utc).timestamp() * 1000)
+TIMELINE = ([MS - 1000], ["Timeline"])
+
+
+def test_the_transcript_beats_the_token_and_the_token_beats_the_login(tmp_path, monkeypatch):
+    _roster(tmp_path, monkeypatch)
+    orgs = spend._org_names()
+    evidence = {"sess": [(MS - 60_000, MS + 60_000, ORG_WORK)]}
+    work, personal = orgs[ORG_WORK], orgs[ORG_PERSONAL]
+    assert spend._credit({"org": ORG_PERSONAL, "sid": "sess"}, MS, orgs, evidence, TIMELINE) == (personal, "transcript")
+    assert spend._credit({"org": None, "sid": "sess"}, MS, orgs, evidence, TIMELINE) == (work, "token")
+    assert spend._credit({"org": None, "sid": "other"}, MS, orgs, evidence, TIMELINE) == ("Timeline", "timeline")
+    assert spend._credit({"org": None, "sid": "other"}, MS, orgs, {}, None) == ("unattributed", "none")
+
+
+def test_token_evidence_binds_only_inside_its_span(tmp_path, monkeypatch):
+    _roster(tmp_path, monkeypatch)
+    orgs = spend._org_names()
+    evidence = {"sess": [(MS + 1, MS + 60_000, ORG_WORK)]}
+    assert spend._credit({"org": None, "sid": "sess"}, MS, orgs, evidence, TIMELINE) == ("Timeline", "timeline")
+
+
+def test_an_org_two_seats_share_names_no_account(tmp_path, monkeypatch):
+    _roster(tmp_path, monkeypatch, {
+        "one": {"email": "one@example.test", "org_uuid": ORG_WORK},
+        "two": {"email": "two@example.test", "org_uuid": ORG_WORK},
+    })
+    assert spend._org_names() == {}
+    assert spend._credit({"org": ORG_WORK, "sid": "s"}, MS, {}, {}, TIMELINE) == ("Timeline", "timeline")
+
+
+def test_a_late_named_token_credits_sessions_seen_before_it_was_named(tmp_path):
+    path = tmp_path / "session-tokens.json"
+    path.write_text(json.dumps({
+        "schema": 1, "tokens": {"abc": ORG_WORK.upper(), "zzz": ORG_PERSONAL},
+        "sessions": {"sess": [{"fp": "abc", "start": "2026-10-01T10:00:00Z",
+                               "first_seen": "2026-10-01T11:00:00Z", "last_seen": "2026-10-01T12:00:00Z"}],
+                     "unnamed": [{"fp": "nobody", "start": "2026-10-01T10:00:00Z",
+                                  "first_seen": "2026-10-01T11:00:00Z", "last_seen": "2026-10-01T12:00:00Z"}]},
+    }), encoding="utf-8")
+    evidence = spend._token_evidence(path)
+    assert list(evidence) == ["sess"]
+    assert evidence["sess"][0][2] == ORG_WORK
+    assert evidence["sess"][0][0] == spend._iso_ms("2026-10-01T10:00:00Z")
+    assert evidence["sess"][0][1] == spend._iso_ms("2026-10-01T12:00:00Z") + spend.TOKEN_END_GRACE_MS
+
+
+@pytest.mark.parametrize("body", ["", "{", "[]", '{"tokens": 1, "sessions": 2}', '{"sessions": {}}'])
+def test_unusable_token_evidence_is_no_evidence(tmp_path, body):
+    path = tmp_path / "session-tokens.json"
+    path.write_text(body, encoding="utf-8")
+    assert spend._token_evidence(path) == {}
+
+
+def test_build_counts_each_basis_and_each_trigger(tmp_path, monkeypatch):
+    _roster(tmp_path, monkeypatch)
+    now = dt.datetime(2026, 10, 2, tzinfo=dt.timezone.utc)
+    stamp = int((now - dt.timedelta(hours=2)).timestamp() * 1000)
+    def request(key, org, sid, trigger, turn):
+        return {**{field: None for field in collector.RECORD_FIELDS},
+                "tool": "claude", "model": "claude-opus-5-5", "ts": stamp, "in": 1000, "out": 100,
+                "cr": 0, "cw5": 0, "cw1": 0, "think": 0, "prompt": 1000, "key": key, "machine": "laptop",
+                "org": org, "sid": sid, "trigger": trigger, "turn": turn}
+    db = tmp_path / "samples.db"
+    (tmp_path / spend.TOKEN_EVIDENCE_NAME).write_text(json.dumps({
+        "tokens": {"abc": ORG_PERSONAL},
+        "sessions": {"seat": [{"fp": "abc", "start": "2026-10-01T00:00:00Z",
+                               "last_seen": "2026-10-02T00:00:00Z"}]},
+    }), encoding="utf-8")
+    monkeypatch.setattr(spend, "_fast_mode_armed", lambda: {})
+    monkeypatch.setattr(pricing, "prices_age_h", lambda: 1.5)
+    lite = {"claude-opus-5-5": {"input_cost_per_token": 5e-6, "output_cost_per_token": 25e-6}}
+    collection = {"records": [
+        request("a", ORG_WORK, "login", turn_trigger.TYPED, 1),
+        request("b", ORG_WORK, "login", turn_trigger.TYPED, 0),
+        request("c", None, "seat", turn_trigger.SHELL, 1),
+        request("d", None, "elsewhere", turn_trigger.SHELL, 1),
+    ], "collected_at": {}}
+    data = spend.build(collection, now=now, db=db, pricer=pricing.Pricer(lite=lite))
+    basis = data["attribution_basis"]["d1"]
+    assert basis["transcript"]["requests"] == 2
+    assert basis["token"]["requests"] == 1
+    assert basis["none"]["requests"] == 1
+    accounts = {account["name"]: account for account in data["accounts"]}
+    work, personal = spend._org_names()[ORG_WORK], spend._org_names()[ORG_PERSONAL]
+    assert accounts[work]["d1"]["requests"] == 2
+    assert accounts[personal]["d1"]["requests"] == 1
+    rows = {row["trigger"]: row for row in data["triggers"]["d1"]}
+    assert rows[turn_trigger.TYPED]["turns"] == 1
+    assert rows[turn_trigger.TYPED]["requests"] == 2
+    assert rows[turn_trigger.SHELL]["turns"] == 2
+    assert [row["session"] for row in rows[turn_trigger.SHELL]["top_sessions"]] != []
+    assert "What woke the agent" in spend.summary(data)
+
+
+# ------------------------------------------------------------------ the beacon
+
+def _ps(stdout: str):
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+
+def test_the_fingerprint_matches_claude_accounts_and_the_value_goes_nowhere(tmp_path, capsys):
+    text = f"/bin/claude --model opus TERM=xterm CLAUDE_CODE_OAUTH_TOKEN={FAKE_TOKEN} HOME=/x\n"
+    with mock.patch.object(beacon.subprocess, "run", return_value=_ps(text)):
+        fingerprint = beacon.process_token_fingerprint(42)
+    assert fingerprint == claude_account.token_fingerprint(FAKE_TOKEN)
+
+    orgs = tmp_path / "orgs.json"
+    orgs.write_text(json.dumps({fingerprint: ORG_WORK}), encoding="utf-8")
+    evidence = tmp_path / "session-tokens.json"
+    counts, unnamed = beacon.record_token_sessions(
+        [{"session": "sess", "fp": fingerprint, "start": "2026-10-01T10:00:00Z"}],
+        "2026-10-01T10:05:00Z", path=evidence, orgs_path=orgs)
+    assert counts == {fingerprint: 1} and unnamed == []
+    assert FAKE_TOKEN not in evidence.read_text()
+    assert FAKE_TOKEN not in capsys.readouterr().out
+    assert evidence.stat().st_mode & 0o777 == 0o600
+
+
+def test_only_the_environment_counts_not_a_prompt_that_quotes_the_variable():
+    text = "/bin/claude say CLAUDE_CODE_OAUTH_TOKEN=quoted-in-a-prompt\nsecond line TERM=xterm\n"
+    with mock.patch.object(beacon.subprocess, "run", return_value=_ps("/bin/claude TERM=xterm HOME=/x\n")):
+        assert beacon.process_token_fingerprint(42) is None
+    multi = text + f"HOME=/x CLAUDE_CODE_OAUTH_TOKEN={FAKE_TOKEN}\n"
+    with mock.patch.object(beacon.subprocess, "run", return_value=_ps(multi)):
+        assert beacon.process_token_fingerprint(42) == claude_account.token_fingerprint(FAKE_TOKEN)
+
+
+def test_a_ps_failure_is_no_sighting():
+    with mock.patch.object(beacon.subprocess, "run", side_effect=OSError("no ps")):
+        assert beacon.process_token_fingerprint(42) is None
+
+
+def test_spans_extend_and_a_new_process_opens_a_new_one(tmp_path):
+    evidence = tmp_path / "session-tokens.json"
+    orgs = tmp_path / "orgs.json"
+    sighting = {"session": "sess", "fp": "abc", "start": "2026-10-01T10:00:00Z"}
+    beacon.record_token_sessions([sighting], "2026-10-01T10:05:00Z", path=evidence, orgs_path=orgs)
+    beacon.record_token_sessions([sighting], "2026-10-01T10:10:00Z", path=evidence, orgs_path=orgs)
+    beacon.record_token_sessions([{**sighting, "start": "2026-10-01T11:00:00Z"}],
+                                 "2026-10-01T11:05:00Z", path=evidence, orgs_path=orgs)
+    beacon.record_token_sessions([], "2026-10-01T12:00:00Z", path=evidence, orgs_path=orgs)
+    spans = json.loads(evidence.read_text())["sessions"]["sess"]
+    assert [(span["start"], span["last_seen"]) for span in spans] == [
+        ("2026-10-01T10:00:00Z", "2026-10-01T10:10:00Z"),
+        ("2026-10-01T11:00:00Z", "2026-10-01T11:05:00Z"),
+    ]
+
+
+def test_an_unnamed_fingerprint_is_reported_and_credits_nothing(tmp_path):
+    evidence = tmp_path / "session-tokens.json"
+    counts, unnamed = beacon.record_token_sessions(
+        [{"session": "sess", "fp": "abc", "start": None}], "2026-10-01T10:05:00Z",
+        path=evidence, orgs_path=tmp_path / "missing.json")
+    assert counts == {"abc": 1} and unnamed == ["abc"]
+    assert json.loads(evidence.read_text())["tokens"] == {}
+    assert spend._token_evidence(evidence) == {}
+
+
+def test_a_damaged_evidence_file_is_kept_and_the_tick_is_lost(tmp_path):
+    evidence = tmp_path / "session-tokens.json"
+    evidence.write_text("{damaged", encoding="utf-8")
+    with pytest.raises(ValueError):
+        beacon.record_token_sessions([], "2026-10-01T10:05:00Z", path=evidence,
+                                     orgs_path=tmp_path / "missing.json")
+    assert evidence.read_text() == "{damaged"
+
+
+def test_a_subagent_inherits_from_a_parent_that_made_no_request(tmp_path):
+    home = tmp_path / "home"
+    projects = home / ".claude" / "projects" / "p"
+    _write(projects / "sess-1.jsonl", [_org(ORG_WORK, "2026-10-01T10:00:00Z")])
+    _write(projects / "sess-1" / "subagents" / "agent-a1.jsonl", [_assistant("child", "2026-10-01T11:00:00Z")])
+    assert _collect(tmp_path, home)["child"]["org"] == ORG_WORK
+
+
+def test_sightings_read_the_session_files(tmp_path, monkeypatch):
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "7.json").write_text(json.dumps(
+        {"pid": 7, "sessionId": "sess", "startedAt": 1790000000000}), encoding="utf-8")
+    (sessions / "8.json").write_text("not json", encoding="utf-8")
+    (sessions / "9.json").write_text(json.dumps({"pid": 9, "sessionId": "login"}), encoding="utf-8")
+    monkeypatch.setattr(beacon, "SESSION_DIRS", (sessions,))
+    monkeypatch.setattr(beacon, "PROFILES_DIR", tmp_path / "profiles")
+    monkeypatch.setattr(beacon, "process_token_fingerprint", lambda pid: "abc" if pid == 7 else None)
+    assert beacon.token_sightings() == [
+        {"session": "sess", "fp": "abc", "start": "2026-09-21T14:13:20Z"}]
+
+
+def test_whose_remembers_the_fingerprint(tmp_path, monkeypatch):
+    orgs = tmp_path / ".meter-orgs.json"
+    monkeypatch.setattr(claude_account, "METER_ORGS", orgs)
+    claude_account.remember_token_org("abc", ORG_WORK)
+    claude_account.remember_token_org("def", ORG_PERSONAL)
+    assert json.loads(orgs.read_text()) == {"abc": ORG_WORK, "def": ORG_PERSONAL}
+
+
+# ------------------------------------------------------------------ what woke the agent
+
+def _queued(prompt: str, kind: str) -> dict:
+    return {"type": "attachment", "attachment": {
+        "type": "queued_command", "prompt": prompt, "origin": {"kind": kind}}}
+
+
+NOTE = "<task-notification>\n<task-id>x</task-id>\n<status>completed</status>\n<summary>{}</summary>"
+
+
+@pytest.mark.parametrize(("row", "label"), [
+    (_user("please look at this", "t", origin={"kind": "human"}), turn_trigger.TYPED),
+    (_user(NOTE.format('Background command "tests" finished'), "t"), turn_trigger.SHELL),
+    (_user(NOTE.format('Agent "review" finished'), "t"), turn_trigger.AGENT),
+    (_user(NOTE.format('Background agent "review" stopped'), "t"), turn_trigger.AGENT),
+    (_user(NOTE.format('Monitor event: "logs"') + "<event>x</event>", "t"), turn_trigger.MONITOR),
+    (_queued(NOTE.format('Background command "x" failed'), "task-notification"), turn_trigger.SHELL),
+    (_queued("c11 mail waiting: run c11 mailbox recv --ack", "peer"), turn_trigger.DOORBELL),
+    (_user("You have mail: run c11 mailbox recv --ack", "t"), turn_trigger.DOORBELL),
+    (_user("Another Claude session sent: c11 mail waiting: run c11 mailbox recv", "t"), turn_trigger.DOORBELL),
+    (_user("Another Claude session sent a note", "t"), turn_trigger.PEER),
+    (_queued("hello from a peer", "peer"), turn_trigger.PEER),
+    (_user("summary of before", "t", isCompactSummary=True), turn_trigger.COMPACTION),
+    (_user("This session is being continued from a previous one", "t"), turn_trigger.COMPACTION),
+    (_user("<command-name>/model</command-name>", "t"), turn_trigger.SLASH),
+    (_user("Stop hook feedback: keep going", "t"), turn_trigger.STOP_HOOK),
+    (_user("<<autonomous-loop-dynamic>>", "t"), turn_trigger.SCHEDULED),
+    (_user("run", "t", origin={"kind": "scheduled"}), turn_trigger.SCHEDULED),
+    (_user("watch this machine", "t", turnOrigin="sdk", promptSource="sdk"), turn_trigger.SCRIPTED),
+    (_user("Read the file at /tmp/runtime/launch-prompts/a/b.txt and follow it.", "t"), turn_trigger.C11_LAUNCH),
+])
+def test_row_labels(row, label):
+    assert turn_trigger.row_trigger(row)[0] == label
+
+
+@pytest.mark.parametrize("row", [
+    {"type": "assistant", "message": {}},
+    {"type": "attachment", "attachment": {"type": "hook_success"}},
+    _user("meta", "t", isMeta=True),
+    _user("side", "t", isSidechain=True),
+    _user("[Request interrupted by user]", "t"),
+    {"type": "user", "message": {"content": [{"type": "tool_result", "content": "x"}]}},
+])
+def test_rows_that_open_no_turn(row):
+    assert turn_trigger.row_trigger(row) is None
+
+
+def test_requests_carry_their_turn_and_only_the_first_counts_it(tmp_path):
+    home = tmp_path / "home"
+    _write(home / ".claude" / "projects" / "p" / "sess.jsonl", [
+        _assistant("opening", "2026-10-01T09:00:00Z"),
+        _user("hello", "2026-10-01T10:00:00Z"),
+        _assistant("one", "2026-10-01T10:00:01Z"),
+        _assistant("two", "2026-10-01T10:00:02Z"),
+        _user(NOTE.format('Background command "x" finished'), "2026-10-01T10:01:00Z"),
+        _assistant("three", "2026-10-01T10:01:01Z"),
+    ])
+    records = _collect(tmp_path, home)
+    assert records["opening"]["trigger"] == turn_trigger.SESSION_START
+    assert (records["one"]["trigger"], records["one"]["turn"]) == (turn_trigger.TYPED, 1)
+    assert (records["two"]["trigger"], records["two"]["turn"]) == (turn_trigger.TYPED, 0)
+    assert (records["three"]["trigger"], records["three"]["turn"]) == (turn_trigger.SHELL, 1)
+
+
+def test_a_typed_prompt_c11_sent_is_labelled_a_c11_send(tmp_path):
+    home = tmp_path / "home"
+    _write(home / ".claude" / "projects" / "p" / "sess.jsonl", [
+        _user('<pasted_content id="a">\nmulti\nline\n</pasted_content>', "2026-10-01T10:00:00Z"),
+        _assistant("sent", "2026-10-01T10:00:01Z"),
+        _assistant("sent-too", "2026-10-01T10:00:02Z"),
+        _user("typed by a person", "2026-10-01T10:01:00Z"),
+        _assistant("typed", "2026-10-01T10:01:01Z"),
+    ])
+    events = home / collector.C11_EVENTS
+    events.mkdir(parents=True)
+    (events / "events-a.ndjson").write_text(json.dumps(
+        {"type": "panel.input_sent", "payload": {"kind": "text", "text": "multi\nline\n"}}) + "\n",
+        encoding="utf-8")
+    records = _collect(tmp_path, home)
+    assert records["sent"]["trigger"] == turn_trigger.C11_SEND
+    assert (records["sent-too"]["trigger"], records["sent-too"]["turn"]) == (turn_trigger.C11_SEND, 0)
+    assert records["typed"]["trigger"] == turn_trigger.TYPED

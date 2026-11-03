@@ -629,6 +629,61 @@ the sample.
 The Detail view and popup read `<store>/spend.json`. If it is absent or malformed, they draw an
 empty spend panel and continue the rebuild.
 
+### Who paid for a Claude request
+
+Each Claude request is credited by the strongest evidence it has. `attribution_basis` in
+`spend.json` counts dollars and requests per basis, and `--print` shows the 7-day line.
+
+| Basis | Evidence | Reach |
+|---|---|---|
+| `transcript` | The latest `credential_org` attachment at or before the request in its own transcript, joined to the roster's `org_uuid`. A subagent inherits its parent session's organization at the request's time. | Sessions on a login, across any `/login` switch. |
+| `token` | The beacon saw the session running under `CLAUDE_CODE_OAUTH_TOKEN`, and that token's account is known. | Sessions launched with an env token. They write no `credential_org`. |
+| `timeline` | The account most recently seen logged in on the machine, from the switch log and samples. | Everything else. |
+| `none` | No evidence, or evidence older than 24 hours. The request stays `unattributed`. | |
+
+An organization that several roster entries share (Team seats) names no single account and
+falls through to the next basis.
+
+`timeline` is the only basis that can be wrong. A token session the beacon never saw, because it
+ended before a tick or before the beacon was installed, lands there and bills the machine's
+login on paper. Read that row as the ledger's remaining doubt. Claude Code does not write
+`credential_org` on every machine (one satellite's transcripts have none at all), so `token` can
+be the only exact basis a machine has.
+
+**The token join.** `tools/satellite_beacon.py` reads each live session from
+`~/.claude/sessions/<pid>.json`, takes the fingerprint of `CLAUDE_CODE_OAUTH_TOKEN` in that
+process's environment (`ps -E`), and drops the value. It writes `<store>/session-tokens.json`,
+mode `0600`: one span per session and process, `{fp, start, first_seen, last_seen}`, plus a
+`tokens` map of fingerprint to organization. A request binds to a span between its process start
+and 15 minutes past its last sighting. Spans are only ever extended, and a token named late still
+credits sessions seen earlier.
+
+**Never a token, never a third credential path.** The beacon hashes the value in memory. It
+never stores, logs or sends it, and it makes no request with it, so the account behind a
+fingerprint cannot come from the process. It comes from `.meter-orgs.json`, the fingerprint map
+`claude-account` already keeps, which `claude-account whose <file>` now also fills from a token
+file the operator names. A fingerprint nothing has named credits nothing, and the beacon warns
+with the fingerprint and the command to run. The `env_tokens` key in `satellite.json` counts
+running sessions per fingerprint.
+
+### What woke the agent
+
+`turn_trigger.py` names the transcript row that opened each turn, and every request in the turn
+carries that label. `spend.json` `triggers` lists dollars, turns and requests per label for
+`d1`, `d7`, `d30` and `all`, heaviest first, with each label's five costliest sessions.
+
+| Label | Row |
+|---|---|
+| `typed prompt` | A prompt typed at the terminal. |
+| `c11 send` | A typed prompt whose text matches a `panel.input_sent` event. c11 keeps those events about 14 days, so an older send reads `typed prompt`. |
+| `c11 launch` | A launch prompt file. |
+| `background shell`, `agent finished`, `monitor event` | A task notification, by its summary. |
+| `mailbox doorbell`, `peer message` | A c11 mail doorbell, or another session's message. |
+| `scripted prompt` | A `claude -p` or SDK prompt. |
+| `compaction`, `slash command`, `stop hook`, `scheduled wakeup` | The row of that kind. |
+| `inside subagent` | Any request in a subagent transcript. Its cost is not rolled up to the wake that spawned it. |
+| `session start` | A request with no earlier wake in its transcript. |
+
 ### Sources and request records
 
 | Source | Local files and evidence |
@@ -712,6 +767,8 @@ transcript history and machine. The collector uses two workers by default;
 |---|---|
 | `generated_at`, `collected_at`, `first_request_at` | Build time, per-machine collection time and earliest request time. |
 | `attribution`, `accounts[]`, `machines` | Claude account attribution and spend, plus machine totals. |
+| `attribution_basis` | Claude dollars and requests per basis (`transcript`, `token`, `timeline`, `none`) for `d1`, `d7`, `d30` and `all`. |
+| `triggers` | What woke the agent, per label, for the same horizons. |
 | `totals`, `providers`, `meters`, `leverage` | Combined, provider, anchored meter-window and subscription comparison buckets. |
 | `daily` | 60-day date list and daily spend series. |
 | `model_tokens[]` | Per-provider and per-model token rows for `d1`, `d7`, `d30` and `all`. These rows retain token counts even when a model is unpriced. |
@@ -804,7 +861,9 @@ Static keys come from the environment first, then from the configured `keys_file
 `KIMI_API_KEY`. The file fallback is what lets the launchd sampler work at all — it carries
 no shell environment. **Only static keys are ever read this way.** Claude's OAuth blob is
 read by `claude-account` alone, and only ever read; so are meter tokens (see **Meter
-tokens** above), which are files the operator placed. Grok is the other exception: its consumer
+tokens** above), which are files the operator placed. The beacon hashes the env token of a
+running session in memory and never uses it (see **Who paid for a Claude request**). Grok is the
+other exception: its consumer
 meter has no static key, so the sampler refreshes the Grok Build session in
 `~/.grok/auth.json` in place — see **Grok** above.
 

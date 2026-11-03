@@ -113,7 +113,9 @@ def test_per_file_cache_skips_unchanged_reparses_changes_and_drops_deleted_files
 
 
 def test_cache_version_tracks_collector_source():
-    assert collector.FILE_CACHE_VERSION == hashlib.sha256(Path(collector.__file__).read_bytes()).hexdigest()
+    assert collector.FILE_CACHE_VERSION == hashlib.sha256(
+        Path(collector.__file__).read_bytes() + Path(collector.turn_trigger.__file__).read_bytes()
+    ).hexdigest()
 
 
 def test_per_file_cache_reparses_a_stale_version(tmp_path, monkeypatch):

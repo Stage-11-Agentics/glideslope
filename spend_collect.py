@@ -20,19 +20,28 @@ from pathlib import Path
 from typing import Iterable, Iterator
 from urllib.parse import quote
 
+import turn_trigger
 from pricing import CODEX_SPEED, SpeedLedger
 
 
+# Evidence about who paid and what woke the agent. Claude Code transcripts only; every other
+# record leaves these None.
+EVIDENCE_FIELDS = ("sid", "org", "trigger", "turn", "digest")
 RECORD_FIELDS = (
     "tool", "model", "ts", "in", "out", "cr", "cw5", "cw1", "think",
     "speed", "speed_src", "tier", "prompt", "key", "machine",
-)
+) + EVIDENCE_FIELDS
+C11_EVENTS = Path("Library") / "Application Support" / "c11" / "events"
 WORKERS_ENV = "GLIDESLOPE_SPEND_WORKERS"
 DEFAULT_WORKERS = 2
-FILE_CACHE_VERSION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+FILE_CACHE_VERSION = hashlib.sha256(
+    Path(__file__).read_bytes() + Path(turn_trigger.__file__).read_bytes()
+).hexdigest()
 _TIER_RE = re.compile(r'"service_tier"\s*:\s*"([a-z_]+)"')
+_EVIDENCE_MARKERS = ('"credential_org"', '"queued_command"', '"type":"user"', '"type": "user"')
 _RECORD_ATTRIBUTES = {field: ("input_tokens" if field == "in" else field) for field in RECORD_FIELDS}
-_INTERN_FIELDS = frozenset(("tool", "model", "speed", "speed_src", "tier", "machine"))
+_INTERN_FIELDS = frozenset(("tool", "model", "speed", "speed_src", "tier", "machine",
+                            "sid", "org", "trigger"))
 
 
 class RequestRecord:
@@ -137,6 +146,8 @@ def _timestamp_ms(value) -> int | None:
 
 
 def _record(values: dict) -> dict:
+    for field in EVIDENCE_FIELDS:
+        values.setdefault(field, None)
     if set(values) != set(RECORD_FIELDS):
         raise ValueError("request record fields do not match the public contract")
     return values
@@ -165,20 +176,68 @@ def claude_project_roots(home: Path | None = None) -> list[Path]:
     return roots
 
 
-def _claude_file(path: Path) -> list[dict]:
+def _session_of(path: Path) -> tuple[str | None, bool]:
+    """(session id, is a subagent) from a transcript's place under the projects root."""
+    if path.parent.name == "subagents":
+        return path.parent.parent.name, True
+    if path.stem.startswith("agent-"):
+        return None, True  # legacy layout: the session id is on the rows
+    return path.stem, False
+
+
+def _keep_earliest(previous: dict, current: dict) -> None:
+    """Merge a second sighting of one request: resumed sessions copy messages into new files."""
+    if current["out"] > previous["out"]:
+        previous["out"] = current["out"]
+        previous["think"] = max(previous["think"], current["think"])
+    if current["ts"] is not None and (previous["ts"] is None or current["ts"] < previous["ts"]):
+        previous["ts"] = current["ts"]
+        for field in EVIDENCE_FIELDS:
+            if current[field] is not None:
+                previous[field] = current[field]
+    elif previous["org"] is None:
+        previous["org"] = current["org"]
+
+
+def _claude_file(path: Path) -> dict:
+    """Requests plus the transcript's organization records, which subagent files inherit."""
     requests: dict[str, dict] = {}
+    orgs: list[list] = []
+    sid, is_agent = _session_of(path)
+    org = None
+    trigger = turn_trigger.SUBAGENT if is_agent else turn_trigger.SESSION_START
+    digest = None
+    fresh = not is_agent
     try:
         handle = path.open("r", encoding="utf-8", errors="ignore")
     except OSError:
-        return []
+        return {"records": [], "orgs": []}
     with handle:
         for line in handle:
-            if '"usage"' not in line:
+            if '"usage"' not in line and not any(marker in line for marker in _EVIDENCE_MARKERS):
                 continue
+            if '"tool_use_id"' in line and '"usage"' not in line:
+                continue  # a tool result: the bulk of the bytes, and it opens no turn
             try:
                 row = json.loads(line)
             except ValueError:
                 continue
+            if sid is None and isinstance(row.get("sessionId"), str):
+                sid = row["sessionId"]
+            attachment = row.get("attachment")
+            if isinstance(attachment, dict) and attachment.get("type") == "credential_org":
+                value = attachment.get("organizationUuid")
+                if isinstance(value, str) and value.strip():
+                    org = value.strip().lower()
+                    if not orgs or orgs[-1][1] != org:
+                        orgs.append([_timestamp_ms(row.get("timestamp")), org])
+                continue
+            if not is_agent:
+                opened = turn_trigger.row_trigger(row)
+                if opened is not None:
+                    trigger, digest = opened
+                    fresh = True
+                    continue
             if row.get("type") != "assistant":
                 continue
             message = row.get("message") or {}
@@ -212,17 +271,18 @@ def _claude_file(path: Path) -> list[dict]:
                 "cw5": cw5, "cw1": cw1, "think": _integer(details.get("thinking_tokens")),
                 "speed": speed, "speed_src": "api" if speed else None, "tier": usage.get("service_tier"),
                 "prompt": prompt, "key": key, "machine": "",
+                "sid": sid, "org": org, "trigger": trigger, "turn": 1 if fresh else 0,
+                "digest": digest,
             })
             previous = requests.get(key)
             if previous is None:
                 requests[key] = current
+                fresh = False
             else:
-                if current["out"] > previous["out"]:
-                    previous["out"] = current["out"]
-                    previous["think"] = max(previous["think"], current["think"])
-                if current["ts"] is not None and (previous["ts"] is None or current["ts"] < previous["ts"]):
-                    previous["ts"] = current["ts"]
-    return list(requests.values())
+                _keep_earliest(previous, current)
+    for request in requests.values():
+        request["sid"] = request["sid"] or sid
+    return {"records": list(requests.values()), "orgs": orgs, "session": None if is_agent else sid}
 
 
 def _codex_file(path: Path) -> tuple[str, list[dict]]:
@@ -496,7 +556,7 @@ def _cache_payload_valid(kind: str, payload) -> bool:
     if kind == "grok":
         return (isinstance(payload.get("grok_cost_ticks"), dict)
                 and isinstance(payload.get("grok_model_calls"), dict))
-    return kind == "claude"
+    return kind == "claude" and isinstance(payload.get("orgs", []), list)
 
 
 def _cached_file(path: Path, kind: str, cache_dir: Path, parser):
@@ -564,6 +624,56 @@ def _prune_file_cache(cache_dir: Path, active: set[str]) -> None:
         pass
 
 
+def _inherit_session_orgs(requests: Iterable, session_orgs: dict[str, list[tuple[int, str]]]) -> None:
+    """A subagent bills whoever its parent session billed when the request was made."""
+    for points in session_orgs.values():
+        points.sort()
+    for request in requests:
+        if request["org"] is not None or request["trigger"] != turn_trigger.SUBAGENT:
+            continue
+        points = session_orgs.get(request["sid"])
+        if not points:
+            continue
+        index = bisect.bisect_right([ts for ts, _org in points], request["ts"] or 0) - 1
+        if index >= 0:
+            request["org"] = points[index][1]
+
+
+def c11_sent_digests(event_dir: Path) -> set[str]:
+    """Digests of the text c11 typed into panels, from its local event logs. Absent: none."""
+    digests: set[str] = set()
+    try:
+        paths = sorted(event_dir.glob("*.ndjson"))
+    except OSError:
+        return digests
+    for path in paths:
+        try:
+            handle = path.open("r", encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                if '"panel.input_sent"' not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
+                text = payload.get("text") if isinstance(payload, dict) else None
+                if isinstance(text, str) and text.strip():
+                    digests.add(turn_trigger.prompt_digest(text))
+    return digests
+
+
+def _mark_c11_sends(requests: Iterable, event_dir: Path) -> None:
+    """Relabel a typed prompt whose text c11 itself sent."""
+    sent = c11_sent_digests(event_dir)
+    for request in requests:
+        if request["digest"] is not None and request["digest"] in sent:
+            request["trigger"] = turn_trigger.C11_SEND
+
+
 def _assemble_collection(
     machine: str,
     codex_home: Path,
@@ -574,21 +684,27 @@ def _assemble_collection(
     read_codex_log: bool = True,
     cache_dir: Path | None = None,
     active_cache: set[str] | None = None,
+    c11_events: Path | None = None,
 ) -> Collection:
     """Apply cross-file deduplication and enrichment to cached file payloads."""
     claude_requests: dict[str, dict] = {}
+    session_orgs: dict[str, list[tuple[int, str]]] = {}
     for _cache_key, payload in claude_payloads:
-        for request in (payload or {}).get("records", []):
+        records = (payload or {}).get("records", [])
+        for request in records:
             request["machine"] = machine
             previous = claude_requests.get(request["key"])
             if previous is None:
                 claude_requests[request["key"]] = request
             else:
-                if request["out"] > previous["out"]:
-                    previous["out"] = request["out"]
-                    previous["think"] = max(previous["think"], request["think"])
-                if request["ts"] is not None and (previous["ts"] is None or request["ts"] < previous["ts"]):
-                    previous["ts"] = request["ts"]
+                _keep_earliest(previous, request)
+        session = (payload or {}).get("session")
+        if session:
+            points = session_orgs.setdefault(session, [])
+            points.extend((ts or 0, org) for ts, org in payload.get("orgs", []))
+    _inherit_session_orgs(claude_requests.values(), session_orgs)
+    if c11_events is not None:
+        _mark_c11_sends(claude_requests.values(), c11_events)
 
     best: dict[str, tuple[int, str, list[dict]]] = {}
     for cache_key, payload in codex_payloads:
@@ -674,7 +790,7 @@ def collect(
             _map_files(
                 lambda item: _cached_file(
                     item, "claude", cache_dir,
-                    lambda transcript: {"records": _claude_file(transcript)},
+                    _claude_file,
                 ),
                 claude_paths,
                 worker_cap,
@@ -736,6 +852,7 @@ def collect(
         speed_ledger=speed_ledger,
         cache_dir=cache_dir,
         active_cache=active_cache,
+        c11_events=home / C11_EVENTS,
     )
 
 
@@ -775,6 +892,7 @@ def load_cached_collection(
         *(entries[kind] for kind in ("claude", "codex", "grok")),
         speed_ledger=speed_ledger,
         read_codex_log=False,
+        c11_events=home / C11_EVENTS,
     )
 
 

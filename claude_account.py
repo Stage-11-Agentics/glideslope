@@ -1162,6 +1162,18 @@ def _meter_orgs() -> dict:
         return {}
 
 
+def remember_token_org(fingerprint: str, org: str) -> None:
+    """Add a hash to the map. The beacon joins env tokens to it; failing to save costs only that."""
+    known = _meter_orgs()
+    if known.get(fingerprint) == org:
+        return
+    known[fingerprint] = org
+    try:
+        write_json_atomic(METER_ORGS, known)
+    except OSError:
+        pass
+
+
 def meter_reads(roster: dict, want: set | None = None) -> tuple[dict[str, dict], list[str]]:
     """Probe meter tokens → ({alias: reading}, notes). Unknown and ambiguous orgs are noted, never credited.
 
@@ -1451,6 +1463,7 @@ def cmd_whose(args: list[str]) -> None:
             token = read_token_file(path)
             row["fingerprint"] = token_fingerprint(token)
             org, rows, fallback = probe_token(token, identity_only=True)
+            remember_token_org(row["fingerprint"], org)
         except Exception as exc:
             row["error"] = safe_error(exc)
             worst = max(worst, 2)

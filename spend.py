@@ -23,11 +23,17 @@ import claude_account
 import glideslope
 import pricing
 import spend_collect
+import turn_trigger
 from quarantine import hide_quarantined
 
 
 HORIZONS = ("d1", "d7", "d30", "d90", "all")
 MODEL_HORIZONS = ("d1", "d7", "d30", "all")
+# How a Claude request found its account, strongest evidence first. "none" stayed unattributed.
+BASES = ("transcript", "token", "timeline", "none")
+TOKEN_EVIDENCE_NAME = "session-tokens.json"
+TOKEN_END_GRACE_MS = 15 * 60 * 1000  # a beacon tick and a bit: requests after the last sighting
+TOP_TRIGGER_SESSIONS = 5
 TOKEN_KINDS = ("input", "output", "cache_read", "cache_write")
 SPEEDS = ("standard", "flex", "fast", "ultrafast", "unknown")
 PREMIUM_SPEEDS = ("fast", "ultrafast")
@@ -258,6 +264,91 @@ def _family(model: str | None) -> str:
     return "other"
 
 
+def _org_names() -> dict[str, str]:
+    """Organization ID to call sign. Seats sharing one organization name no single account."""
+    owners: dict[str, list[str]] = collections.defaultdict(list)
+    roster = glideslope.read_roster(glideslope.CLAUDE_ROSTER)
+    for alias, entry in roster.items():
+        if not isinstance(alias, str) or not isinstance(entry, dict):
+            continue
+        org = entry.get("org_uuid")
+        if isinstance(org, str) and org:
+            email = entry.get("email")
+            owners[org.strip().lower()].append(
+                glideslope.call_sign(alias, email if isinstance(email, str) else None))
+    return {org: names[0] for org, names in owners.items() if len(names) == 1}
+
+
+def _token_evidence(path: Path) -> dict[str, list[tuple[int, int, str]]]:
+    """Session id to (start, end, org) spans from the beacon's token sightings. Unusable: none.
+
+    The fingerprint-to-org map is read here, not stamped per span, so a token named after its
+    sessions ran still credits them.
+    """
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        tokens, sessions = document["tokens"], document["sessions"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    evidence: dict[str, list[tuple[int, int, str]]] = {}
+    if not isinstance(tokens, dict) or not isinstance(sessions, dict):
+        return {}
+    for session, spans in sessions.items():
+        for span in spans if isinstance(spans, list) else ():
+            if not isinstance(span, dict):
+                continue
+            org = tokens.get(span.get("fp"))
+            start, end = _iso_ms(span.get("start")), _iso_ms(span.get("last_seen"))
+            if isinstance(org, str) and start is not None and end is not None:
+                evidence.setdefault(session, []).append((start, end + TOKEN_END_GRACE_MS, org.lower()))
+    return evidence
+
+
+def _credit(record: Any, ms: int | None, orgs: dict[str, str], evidence: dict,
+            timeline: tuple[list[int], list[str]] | None) -> tuple[str, str]:
+    """(payer, basis) for a Claude request: its transcript, then its token, then the login."""
+    name = orgs.get(record.get("org"))
+    if name:
+        return name, "transcript"
+    if ms is not None:
+        for start, end, org in evidence.get(record.get("sid"), ()):
+            if start <= ms <= end and org in orgs:
+                return orgs[org], "token"
+    payer = _account_at(timeline, ms)
+    return payer, "none" if payer == "unattributed" else "timeline"
+
+
+class TriggerTally:
+    """Dollars, turns and requests per wake, with each wake's costliest sessions."""
+
+    def __init__(self) -> None:
+        self.cells: dict[tuple[str, str], list] = collections.defaultdict(lambda: [0.0, 0, 0])
+        self.sessions: dict[tuple[str, str, str], list] = collections.defaultdict(lambda: [0.0, 0, 0])
+
+    def add(self, horizon: str, trigger: str, session: str, usd: float, turn: int) -> None:
+        for cell in (self.cells[(horizon, trigger)], self.sessions[(horizon, trigger, session)]):
+            cell[0] += usd
+            cell[1] += turn
+            cell[2] += 1
+
+    def dump(self, horizon: str) -> list[dict[str, Any]]:
+        rows = []
+        for (span, trigger), (usd, turns, requests) in self.cells.items():
+            if span != horizon:
+                continue
+            top = sorted(((values, session) for (h, label, session), values in self.sessions.items()
+                          if h == horizon and label == trigger), key=lambda item: -item[0][0])
+            rows.append({
+                "trigger": trigger, "usd": round(usd, 2), "turns": turns, "requests": requests,
+                "top_sessions": [
+                    {"session": session[:8], "usd": round(values[0], 2), "turns": values[1],
+                     "requests": values[2]}
+                    for values, session in top[:TOP_TRIGGER_SESSIONS]
+                ],
+            })
+        return sorted(rows, key=lambda row: -row["usd"])
+
+
 class Bucket:
     """A spend and token bucket with a complete speed breakdown."""
 
@@ -388,6 +479,10 @@ def build(collection: dict, now: dt.datetime | None = None, db: Path | None = No
     db = Path(db) if db is not None else Path(glideslope.STORE_DIR) / "samples.db"
     pricer = pricer or pricing.Pricer()
     timelines, attribution, plans, windows, meter_windows = _read_sample_state(db, now_ms)
+    org_names = _org_names()
+    token_evidence = _token_evidence(db.parent / TOKEN_EVIDENCE_NAME)
+    basis_totals: dict[tuple[str, str], list] = collections.defaultdict(lambda: [0.0, 0])
+    trigger_tally = TriggerTally()
     cutoffs = {
         "d1": now_ms - 24 * 60 * 60 * 1000,
         "d7": now_ms - 7 * 24 * 60 * 60 * 1000,
@@ -478,8 +573,9 @@ def build(collection: dict, now: dt.datetime | None = None, db: Path | None = No
         args = (usd, token_split, family, max(0, int(record.get("think") or 0)), calls,
                 speed, standard_usd)
 
+        basis = None
         if provider == "Claude":
-            payer = _account_at(timelines.get("local"), ms)
+            payer, basis = _credit(record, ms, org_names, token_evidence, timelines.get("local"))
         else:
             payer = provider
         machine = str(record.get("machine") or glideslope.LOCAL_SATELLITE)
@@ -501,6 +597,12 @@ def build(collection: dict, now: dt.datetime | None = None, db: Path | None = No
             by_machine[(machine, horizon)].add(*args)
             if horizon in MODEL_HORIZONS:
                 by_model_id[(model_provider, model, horizon)].add(*args)
+            if basis is not None:
+                cell = basis_totals[(horizon, basis)]
+                cell[0] += usd
+                cell[1] += 1
+                trigger_tally.add(horizon, record.get("trigger") or turn_trigger.SESSION_START,
+                                  record.get("sid") or "unknown", usd, int(record.get("turn") or 0))
 
         if ms is not None:
             window = windows.get(payer)
@@ -613,6 +715,12 @@ def build(collection: dict, now: dt.datetime | None = None, db: Path | None = No
         "collected_at": collection.get("collected_at") or {},
         "first_request_at": _iso(first_ms),
         "attribution": attribution,
+        "attribution_basis": {
+            horizon: {basis: {"usd": round(basis_totals[(horizon, basis)][0], 2),
+                              "requests": basis_totals[(horizon, basis)][1]} for basis in BASES}
+            for horizon in MODEL_HORIZONS
+        },
+        "triggers": {horizon: trigger_tally.dump(horizon) for horizon in MODEL_HORIZONS},
         "totals": {horizon: totals[horizon].dump() for horizon in HORIZONS},
         "machines": {
             machine: {horizon: by_machine[(machine, horizon)].dump() for horizon in ("d7", "d30", "all")}
@@ -690,6 +798,25 @@ def summary(data: dict) -> str:
         lines.append("  {:<16} 7d ${:,.2f} · 30d ${:,.2f} · all ${:,.2f}".format(
             account["name"], account["d7"]["usd"], account["d30"]["usd"], account["all"]["usd"]
         ))
+    basis = data.get("attribution_basis", {}).get("d7")
+    if basis:
+        lines.append("Claude attribution, 7d: " + " · ".join(
+            "{} ${:,.2f} ({:,} req)".format(name, basis[name]["usd"], basis[name]["requests"])
+            for name in BASES if basis[name]["requests"]
+        ))
+    triggers = data.get("triggers", {}).get("d7")
+    if triggers:
+        total = sum(row["usd"] for row in triggers) or 1.0
+        lines.append("What woke the agent, 7d:")
+        lines.append("  {:<18} {:>11} {:>6} {:>7} {:>8}  top session".format(
+            "trigger", "usd", "share", "turns", "requests"))
+        for row in triggers:
+            top = row["top_sessions"][0] if row["top_sessions"] else None
+            lines.append("  {:<18} {:>11} {:>5.1f}% {:>7,} {:>8,}  {}".format(
+                row["trigger"], "${:,.2f}".format(row["usd"]), 100 * row["usd"] / total,
+                row["turns"], row["requests"],
+                "{} ${:,.2f}".format(top["session"], top["usd"]) if top else "-",
+            ))
     return "\n".join(lines)
 
 
