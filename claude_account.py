@@ -394,6 +394,11 @@ def resolve_exact_login(name: str, roster: dict | None = None) -> str:
     email, org = split_login(login)
     if org:
         return login
+    if "@" not in name:
+        # A call-sign or alias whose entry names no organization: a sibling under the same
+        # email is a different plan, never a stand-in for this one.
+        raise RuntimeError(f"{name}'s organization is not known here: sign it in once "
+                           "(claude-account login), or claude-account note <email> --org <id>")
     found = sorted({entry_login(e) for e in roster.values()
                     if str(e.get("email") or "").lower() == email and e.get("org_uuid")})
     if len(found) == 1:

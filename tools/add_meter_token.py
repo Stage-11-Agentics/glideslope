@@ -220,8 +220,8 @@ def verify_here(token: bytes, login: str, scratch: Path) -> dict:
         for wait in (0, 5, 15):
             time.sleep(wait)
             row = whose_row(run_reader("local", ["whose", str(path), "--expect", login, "--json"]))
-            if row["exit"] != 2:
-                break
+            if row["exit"] != 2 or "rejected" in str(row.get("error") or ""):
+                break  # an answer, or a token the API refused: asking again cannot change it
     finally:
         path.unlink(missing_ok=True)
     return row

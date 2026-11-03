@@ -630,6 +630,12 @@ class MeterTokenTests(MeterCase):
         self.assertEqual(self.tool.resolve_exact_login("lab-two"), "lab@example.com#org-lab-two")
         with self.assertRaises(RuntimeError):
             self.tool.resolve_exact_login("nobody")
+        roster = self.tool.roster_read()
+        del roster["lab-two"]
+        roster["sibling"] = {"email": "lab@example.com"}  # same email, organization never learned
+        self.tool.roster_write(roster)
+        with self.assertRaises(RuntimeError):  # never the other plan under that email
+            self.tool.resolve_exact_login("sibling")
 
     def test_status_says_which_accounts_a_meter_token_covers(self):
         out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"], lambda token, **_: None)

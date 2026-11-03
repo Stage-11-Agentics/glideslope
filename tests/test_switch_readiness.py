@@ -79,6 +79,8 @@ class SwitchReadinessTests(unittest.TestCase):
         plain = {"name": "studio", "snapshot": {"a": {"email": "a@example.com", "org_uuid": "org-a"}}}
         self.assertEqual(glideslope.mark_meter_tokens([account], None, [plain], {"studio"}), set())
         self.assertIsNone(account["meter_token"])
+        glideslope.mark_meter_tokens([account], None, [], {"laptop"}, local_read=False)
+        self.assertEqual(account["meter_token"], "unknown")  # this machine keeps them, its read failed
         [ready] = glideslope.mark_switch_readiness([dict(claude("A", ["laptop"]), meter_token="unknown")], None)
         self.assertTrue(ready["switch"]["complete"])
 
