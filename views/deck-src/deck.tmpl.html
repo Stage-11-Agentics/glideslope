@@ -3227,11 +3227,20 @@ function render() {
     let poolTag = null;
     if (poolPlot) {
       const px = x(poolPlot.pace_percent), py = y(poolPlot.used_percent);
+      /* The pooled history is rebuilt from the pool's OWN members (operator, 2026-11-03:
+         the 24h line once averaged an account outside the pool in where a member had no
+         reads, and read the swap as burn). A member whose week rolled with nothing read
+         since sits at its presumed zero from the start of that week. */
+      const members = new Set(poolPlot.accounts || []);
       const series = marks
-        .filter(m => m.p.provider === "Claude" && m.w.id === "weekly_all")
-        .map(m => ({ w: m.w, pts: (SNAP.trails[`${m.p.display}/${m.w.id}`] || [])
-          .filter(pt => pt.length >= 3)
-          .map(pt => ({ at: Number(pt[0]), u: Number(pt[2]) })) }))
+        .filter(m => m.p.provider === "Claude" && m.w.id === "weekly_all" && members.has(m.p.display))
+        .map(m => {
+          const pts = (SNAP.trails[`${m.p.display}/${m.w.id}`] || [])
+            .filter(pt => pt.length >= 3)
+            .map(pt => ({ at: Number(pt[0]), u: Number(pt[2]) }));
+          if (!pts.length && m.w.presumed && startOf(m.w) != null) pts.push({ at: startOf(m.w), u: 0 });
+          return { w: m.w, pts };
+        })
         .filter(s => s.pts.length && startOf(s.w) != null && endOf(s.w) != null);
       const trail = [];
       const poolSamples = [];

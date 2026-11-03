@@ -1322,6 +1322,14 @@ function projectionFor(horizon, entry) {
    and mean start = mean reset − span. Identical construction to the Detail view's
    POOL_WINDOW — the panel and the deck must never disagree about the position. */
 const POOL_MARK = "Pool/pool";
+/* A pool member's timed reads this week; a week that rolled with nothing read
+   since starts at its presumed zero, so the pool's history keeps every member. */
+function memberPoints(display, window) {
+  const pts = (SNAP.trails[`${display}/${window.meter_id}`] || [])
+    .filter(pt => pt.length >= 3).map(pt => ({ at: Number(pt[0]), u: Number(pt[2]) }));
+  if (!pts.length && window.presumed && startOf(window) != null) pts.push({ at: startOf(window), u: 0 });
+  return pts;
+}
 function buildPoolWindow(entries) {
   const pool = SNAP.pool;
   if (!pool) return null;
@@ -2072,11 +2080,15 @@ function renderPlot() {
   const pool = SNAP.pool;
   if (pool) {
     const px2 = x(pool.pace_percent), py2 = y(pool.used_percent);
+    /* The pooled history is rebuilt from the pool's OWN members (operator, 2026-11-03:
+       the 24h line once averaged an account outside the pool in where a member had no
+       reads, and read the swap as burn). A member whose week rolled with nothing read
+       since sits at its presumed zero from the start of that week. */
+    const members = new Set(pool.accounts || []);
     const series = entries
-      .filter(entry => entry.account.provider === "Claude" && entry.window.meter_id === "weekly_all")
-      .map(entry => ({ w: entry.window,
-        pts: (SNAP.trails[`${entry.account.display}/${entry.window.meter_id}`] || [])
-          .filter(pt => pt.length >= 3).map(pt => ({ at: Number(pt[0]), u: Number(pt[2]) })) }))
+      .filter(entry => entry.account.provider === "Claude" && entry.window.meter_id === pool.meter_id
+        && members.has(entry.account.display))
+      .map(entry => ({ w: entry.window, pts: memberPoints(entry.account.display, entry.window) }))
       .filter(entry => entry.pts.length && startOf(entry.w) != null && endOf(entry.w) != null);
     const trail = [];
     const poolSamples = [];
@@ -2149,8 +2161,7 @@ function renderPlot() {
     const series = entries
       .filter(entry => weights.has(entry.account.display) && !entry.session && !entry.fable)
       .map(entry => ({ w: entry.window, weight: weights.get(entry.account.display),
-        pts: (SNAP.trails[`${entry.account.display}/${entry.window.meter_id}`] || [])
-          .filter(pt => pt.length >= 3).map(pt => ({ at: Number(pt[0]), u: Number(pt[2]) })) }))
+        pts: memberPoints(entry.account.display, entry.window) }))
       .filter(entry => entry.pts.length && startOf(entry.w) != null && endOf(entry.w) != null);
     const trail = [], totalSamples = [];
     if (series.length === total.count) {
