@@ -410,11 +410,11 @@ def draw_approach(alert: dict[str, Any], now: dt.datetime, size: int = 512) -> P
             draw.ellipse([end[0] - radius, end[1] - radius, end[0] + radius, end[1] + radius],
                          fill=CAPPED, outline=VOID, width=3)
 
-    # the mark: a solid disc for a 7 DAY budget, a hollow triangle for a 5 HOUR
+    # the mark: a solid disc for a 7 DAY budget, a hollow diamond for a 5 HOUR
     # throttle, inside the ink ring the plot puts on the logged-in account
     mx, my, r = px(elapsed), py(used), size * 0.032
     if alert["meter_id"] == "session":
-        draw.polygon([(mx, my - r), (mx - r, my + r * 0.82), (mx + r, my + r * 0.82)],
+        draw.polygon([(mx, my - r * 1.2), (mx + r * 1.2, my), (mx, my + r * 1.2), (mx - r * 1.2, my)],
                      outline=hue, width=max(3, int(size * 0.008)))
     else:
         draw.ellipse([mx - r, my - r, mx + r, my + r], fill=hue)

@@ -771,11 +771,11 @@ class RenderTests(unittest.TestCase):
 
     def test_meter_badge_encloses_the_account_letter_in_its_window_shape(self):
         badge = glideslope.meter_badge
-        self.assertEqual(badge({"display": "Alpha"}, {"meter_id": "session", "window_minutes": 300}), "A⃤")
+        self.assertEqual(badge({"display": "Alpha"}, {"meter_id": "session", "window_minutes": 300}), "A⃟")
         self.assertEqual(badge({"display": "Bravo"}, {"meter_id": "weekly_all", "window_minutes": 10_080}), "B⃝")
-        self.assertEqual(badge({"display": "Charlie"}, {"meter_id": "weekly_fable", "window_minutes": 10_080}), "C⃟")
+        self.assertEqual(badge({"display": "Charlie"}, {"meter_id": "weekly_fable", "window_minutes": 10_080}), "C⃤")
         self.assertEqual(badge({"display": "Delta"}, {"meter_id": "weekly_all"}), "D⃝")
-        self.assertEqual(badge({"display": "Codex"}, {"meter_id": "5h-spark", "window_minutes": 300}), "X⃤")
+        self.assertEqual(badge({"display": "Codex"}, {"meter_id": "5h-spark", "window_minutes": 300}), "X⃟")
 
     def test_countdown_uses_two_largest_units(self):
         self.assertEqual(glideslope.format_countdown(dt.timedelta(hours=149, minutes=42)), "6d 5h")
@@ -795,7 +795,7 @@ class RenderTests(unittest.TestCase):
         rendered = glideslope.render_markdown(self._accounts(), NOW, [])
         self.assertIn("| All windows |||||", rendered)  # centered banner spanning 5 columns
         self.assertIn("| **Provider** | **Account** | **Window** | **Used** | **Next reset at** |", rendered)
-        self.assertIn("| Claude | Alpha · Ultra | 5h session | A⃤ 100% (◆ ", rendered)
+        self.assertIn("| Claude | Alpha · Ultra | 5h session | A⃟ 100% (◆ ", rendered)
         self.assertIn("| Claude | Bravo · active · Ultra | Weekly · all models | B⃝ 56% (◆ ", rendered)
         # "· active" is the Claude login badge and belongs to Claude alone — a
         # single-account subscription never wears it.
@@ -921,7 +921,7 @@ class WeeklySummaryTests(unittest.TestCase):
     def test_kimi_windows_render_in_the_full_table(self):
         accounts = glideslope.kimi_accounts(glideslope.normalize_kimi(kimi_payload(), NOW))
         rendered = glideslope.render_markdown(accounts, NOW, [])
-        self.assertIn("| Kimi | Kimi · Coding 15x | 5h session | K⃤ 12% (◆ ", rendered)
+        self.assertIn("| Kimi | Kimi · Coding 15x | 5h session | K⃟ 12% (◆ ", rendered)
         self.assertIn("| Kimi | Kimi · Coding 15x | Weekly · all models | K⃝ 7% (◆ ", rendered)
         self.assertNotIn("Kimi · active", rendered)
 
