@@ -3089,7 +3089,8 @@ def best_alternative(
     return best
 
 
-NEXT_UP_PERCENT = 85.0  # a weekly at or above this is too spent to be the next account
+NEXT_UP_PERCENT = 85.0          # a weekly at or above this is too spent to be the next account
+NEXT_UP_SESSION_PERCENT = 50.0  # a 5h session above this would throttle the move at once
 
 
 def mark_next_up(
@@ -3098,7 +3099,9 @@ def mark_next_up(
     """Mark the one Claude account to move to next: the fresh capacity closest to expiring.
 
     Eligible: a live Claude account this machine is not using, both weeklies under
-    THRESHOLD, a weekly reset still ahead. Ranked by weekly remaining ÷ hours to that
+    THRESHOLD, a weekly reset still ahead, and its 5h session no more than half spent
+    (a running session above NEXT_UP_SESSION_PERCENT would throttle the move at once;
+    one whose reset has passed is fresh). Ranked by weekly remaining ÷ hours to that
     reset: the capacity a reset will throw away soonest, per hour left to spend it,
     which is what a move should spend first. Echo with 51% left and 68 hours to go
     (0.75 %/h) outranks Delta with 100% left and 158 hours (0.63 %/h). `next_up` is
@@ -3123,6 +3126,11 @@ def mark_next_up(
         if fable is not None and fable.get("used_percent") is not None and float(fable["used_percent"]) >= threshold:
             continue
         session = next((limit for limit in account.get("limits", []) if limit.get("meter_id") == "session"), None)
+        session_resets = parse_timestamp(session.get("resets_at")) if session else None
+        if (session is not None and session.get("used_percent") is not None
+                and float(session["used_percent"]) > NEXT_UP_SESSION_PERCENT
+                and (session_resets is None or session_resets > now)):
+            continue
         score = (100.0 - used) / hours
         if best is None or score > best[0]:
             best = (score, account, {
@@ -4348,7 +4356,6 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     if not args.skip_satellites:
         save_meter_keepers(keepers)
     mark_switch_readiness(accounts, manifest_action_labels(CLAUDE_SWITCH_MANIFEST))
-    mark_next_up(accounts, now)
     if accounts and live_login:
         try:
             observe_login_switch(accounts, live_login, now)
@@ -4401,6 +4408,8 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     # popup all read the position after this, so a rolled window is advanced
     # exactly once, in one place, with one set of rules.
     roll_forward_windows(accounts, now)
+    # After the roll: an account whose week already reset reads as the fresh week it is.
+    mark_next_up(accounts, now)
     mark_early_resets(accounts, now)
     mark_credit_burn(accounts, now)
 
