@@ -1341,6 +1341,9 @@ function projectionFor(horizon, entry) {
    and mean start = mean reset − span. Identical construction to the Detail view's
    POOL_WINDOW — the panel and the deck must never disagree about the position. */
 const POOL_MARK = "Pool/pool";
+/* A member's weight in the pool: its plan's price against the largest
+   (glideslope.claude_pool), so a $100 Max counts half a $200 Ultra. */
+const poolWeight = (pool, display) => Number((pool.weights || {})[display]) || 1;
 /* A pool member's timed reads this week; a week that rolled with nothing read
    since starts at its presumed zero, so the pool's history keeps every member. */
 function memberPoints(display, window) {
@@ -1357,11 +1360,12 @@ function buildPoolWindow(entries) {
       && entry.window.meter_id === pool.meter_id
       && (pool.accounts || []).includes(entry.account.display)
       && entry.window.window_minutes && Number.isFinite(Date.parse(entry.window.resets_at || "")))
-    .map(entry => entry.window);
+    .map(entry => ({ w: entry.window, k: poolWeight(pool, entry.account.display) }));
   /* a mean missing a term is a different, smaller number wearing the same axis */
   if (parts.length !== pool.count) return null;
-  const minutes = parts.reduce((sum, w) => sum + w.window_minutes, 0) / parts.length;
-  const resets = parts.reduce((sum, w) => sum + Date.parse(w.resets_at), 0) / parts.length;
+  const sum = parts.reduce((total, p) => total + p.k, 0);
+  const minutes = parts.reduce((total, p) => total + p.k * p.w.window_minutes, 0) / sum;
+  const resets = parts.reduce((total, p) => total + p.k * Date.parse(p.w.resets_at), 0) / sum;
   return {
     meter_id: "pool", label: "Weekly · pooled", used_percent: pool.used_percent,
     window_minutes: minutes, resets_at: new Date(resets).toISOString(),
@@ -2107,7 +2111,8 @@ function renderPlot() {
     const series = entries
       .filter(entry => entry.account.provider === "Claude" && entry.window.meter_id === pool.meter_id
         && members.has(entry.account.display))
-      .map(entry => ({ w: entry.window, pts: memberPoints(entry.account.display, entry.window) }))
+      .map(entry => ({ w: entry.window, k: poolWeight(pool, entry.account.display),
+        pts: memberPoints(entry.account.display, entry.window) }))
       .filter(entry => entry.pts.length && startOf(entry.w) != null && endOf(entry.w) != null);
     const trail = [];
     const poolSamples = [];
@@ -2115,16 +2120,17 @@ function renderPlot() {
       const times = [...new Set(series.flatMap(entry => entry.pts.map(pt => pt.at)))].sort((a, b) => a - b);
       const cursor = series.map(() => -1);
       for (const t of times) {
-        let used = 0, elapsed = 0, ready = true;
+        let used = 0, elapsed = 0, weight = 0, ready = true;
         series.forEach((entry, i) => {
           while (cursor[i] + 1 < entry.pts.length && entry.pts[cursor[i] + 1].at <= t) cursor[i]++;
           if (cursor[i] < 0) { ready = false; return; }
           const st = startOf(entry.w), en = endOf(entry.w);
-          used += entry.pts[cursor[i]].u;              // carried forward: unread is not moved
-          elapsed += clamp((t - st) / (en - st) * 100, 0, 100);
+          used += entry.k * entry.pts[cursor[i]].u;    // carried forward: unread is not moved
+          elapsed += entry.k * clamp((t - st) / (en - st) * 100, 0, 100);
+          weight += entry.k;
         });
         if (ready) {
-          const e = elapsed / series.length, u = used / series.length;
+          const e = elapsed / weight, u = used / weight;
           trail.push([e, u]);
           poolSamples.push({ at: t, e, u });
         }

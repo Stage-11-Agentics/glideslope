@@ -1605,12 +1605,14 @@ function buildPoolWindow(pool, meterId) {
   if (!pool) return null;
   const parts = activeProviders
     .filter(p => p.provider === "Claude" && (pool.accounts || []).includes(p.display))
-    .map(p => p.windows.find(w => w.id === meterId))
-    .filter(w => w && w.minutes && w.resets && Number.isFinite(Date.parse(w.resets)));
+    .map(p => ({ w: p.windows.find(w => w.id === meterId), k: Number((pool.weights || {})[p.display]) || 1 }))
+    .filter(({ w }) => w && w.minutes && w.resets && Number.isFinite(Date.parse(w.resets)));
   /* a mean missing a term is a different, smaller number wearing the same axis */
   if (parts.length !== pool.count) return null;
-  const minutes = parts.reduce((sum, w) => sum + w.minutes, 0) / parts.length;
-  const resets = parts.reduce((sum, w) => sum + Date.parse(w.resets), 0) / parts.length;
+  // weighted like the pool itself (glideslope.claude_pool): a $100 Max counts half a $200 Ultra
+  const sum = parts.reduce((total, p) => total + p.k, 0);
+  const minutes = parts.reduce((total, p) => total + p.k * p.w.minutes, 0) / sum;
+  const resets = parts.reduce((total, p) => total + p.k * Date.parse(p.w.resets), 0) / sum;
   /* the Fable pool keeps meterId "weekly_fable" as its own id (rather than a
      synthetic "pool" id like the all-models pool) so every piece of code that
      already knows how to mark a named meter — the F code, the Fable facet
@@ -3239,7 +3241,7 @@ function render() {
             .filter(pt => pt.length >= 3)
             .map(pt => ({ at: Number(pt[0]), u: Number(pt[2]) }));
           if (!pts.length && m.w.presumed && startOf(m.w) != null) pts.push({ at: startOf(m.w), u: 0 });
-          return { w: m.w, pts };
+          return { w: m.w, pts, k: Number((poolPlot.weights || {})[m.p.display]) || 1 };
         })
         .filter(s => s.pts.length && startOf(s.w) != null && endOf(s.w) != null);
       const trail = [];
@@ -3250,16 +3252,17 @@ function render() {
         const times = [...new Set(series.flatMap(s => s.pts.map(p => p.at)))].sort((a, b) => a - b);
         const cursor = series.map(() => -1);
         for (const t of times) {
-          let used = 0, elapsed = 0, ready = true;
+          let used = 0, elapsed = 0, weight = 0, ready = true;
           series.forEach((s, i) => {
             while (cursor[i] + 1 < s.pts.length && s.pts[cursor[i] + 1].at <= t) cursor[i]++;
             if (cursor[i] < 0) { ready = false; return; }  // no reading yet for this account
             const st = startOf(s.w), en = endOf(s.w);
-            used += s.pts[cursor[i]].u;                     // carried forward: unread ≠ moved
-            elapsed += clamp((t - st) / (en - st) * 100, 0, 100);
+            used += s.k * s.pts[cursor[i]].u;               // carried forward: unread ≠ moved
+            elapsed += s.k * clamp((t - st) / (en - st) * 100, 0, 100);
+            weight += s.k;                                  // a $100 Max counts half a $200 Ultra
           });
           if (ready) {
-            const e = elapsed / series.length, u = used / series.length;
+            const e = elapsed / weight, u = used / weight;
             trail.push([e, u]);
             poolSamples.push({ at: t, e, u });
           }

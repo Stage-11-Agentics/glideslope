@@ -57,13 +57,16 @@ nobody noticed Fable had stopped being included: a Pro account has no Fable allo
 payload carries no `weekly_scoped` Fable limit at all, and Fable requests fail with *"out of
 usage credits"*. `reconcile_plans()` reads `tier` from `~/.claude/accounts/roster.json`
 (claude-account rewrites it on every status read) and maps it — `default_claude_max_20x` →
-Max 20x, `default_claude_ai` → Pro; an unknown tier keeps its raw string. A Claude account
+Ultra ($200), `default_claude_max_5x` → Max ($100), `default_claude_ai` → Pro; an unknown
+tier keeps its raw string. The pre-2026 names (`Max 20x`, `Max 5x`) still in the store read
+as today's (`PLAN_RENAMES`), so the rename is never taken for a plan change. A Claude account
 with no Fable meter now renders **`none`**, never a bare dash: the plan does not include it.
 
-**The pool only averages equal plans.** Both halves of the pooled read are unweighted means,
-which say something true only when the caps behind them match. So the pool is the largest
-group of accounts sharing one plan, and the row names it — `Claude · pooled (2 · Max 20x)`.
-A Pro account sits out rather than diluting two Max 20x budgets.
+**The pool weights each plan by its price.** Both halves of the pooled read are means
+weighted by what each plan costs (`PLAN_PRICE_USD`), which for Claude is also its usage: a
+$100 Max counts half a $200 Ultra (operator, 2026-11-03). Every priced Claude account is a
+member, the row names the plans — `Claude · pooled (6 · Ultra + Max)` — and `weights` carries
+each member's share so the views draw the same trail and clock. An unpriced plan sits out.
 
 **Usage credits are a suffix, not a meter.** The same usage GET carries
 `extra_usage` or `spend`: one month-to-date counter in minor units. Glideslope

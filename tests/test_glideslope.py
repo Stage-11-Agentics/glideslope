@@ -671,9 +671,9 @@ class ClaudeTests(unittest.TestCase):
         self.assertEqual([item["display"] for item in accounts], ["Alpha", "Bravo", "Charlie"])
         self.assertEqual([item["account"] for item in accounts], ["work", "personal", "lab"])
 
-    def test_all_anthropic_accounts_are_max_20x(self):
+    def test_all_anthropic_accounts_are_ultra(self):
         for account in glideslope.normalize_claude(claude_snapshot_with_charlie(), NOW):
-            self.assertEqual(account["plan"], "Max 20x")
+            self.assertEqual(account["plan"], "Ultra")
 
     def test_unknown_alias_takes_the_next_free_nato_name(self):
         saved = dict(glideslope.CLAUDE_CALL_SIGNS)
@@ -795,8 +795,8 @@ class RenderTests(unittest.TestCase):
         rendered = glideslope.render_markdown(self._accounts(), NOW, [])
         self.assertIn("| All windows |||||", rendered)  # centered banner spanning 5 columns
         self.assertIn("| **Provider** | **Account** | **Window** | **Used** | **Next reset at** |", rendered)
-        self.assertIn("| Claude | Alpha · Max 20x | 5h session | A⃤ 100% (◆ ", rendered)
-        self.assertIn("| Claude | Bravo · active · Max 20x | Weekly · all models | B⃝ 56% (◆ ", rendered)
+        self.assertIn("| Claude | Alpha · Ultra | 5h session | A⃤ 100% (◆ ", rendered)
+        self.assertIn("| Claude | Bravo · active · Ultra | Weekly · all models | B⃝ 56% (◆ ", rendered)
         # "· active" is the Claude login badge and belongs to Claude alone — a
         # single-account subscription never wears it.
         self.assertIn("| Codex | Codex · 20x | Weekly · all models | X⃝ 2% (◆ ", rendered)
@@ -1564,6 +1564,15 @@ class PoolTests(unittest.TestCase):
                             "resets_at": NOW + dt.timedelta(hours=left), "anchored": True}],
             })
         return out
+
+    def test_a_max_counts_half_an_ultra(self):
+        accounts = self.accounts(used=(60.0, 0.0), hours_left=(84, 84))
+        accounts[0]["plan"], accounts[1]["plan"] = "Ultra", "Max 5x"  # the old name still prices
+        pool = glideslope.claude_pool(accounts, NOW)
+        self.assertEqual(pool["count"], 2)
+        self.assertAlmostEqual(pool["used_percent"], 40.0)  # (1·60 + ½·0) / 1½
+        self.assertEqual(pool["weights"], {"A0": 1.0, "A1": 0.5})
+        self.assertEqual(pool["plan"], "Ultra + Max")
 
     def test_used_and_the_mark_are_both_means(self):
         # half-elapsed (84h left of 168) and just-started (168h left) → ◆ 25%
