@@ -938,7 +938,7 @@
     <button class="lens" type="button" data-filter="session" aria-pressed="false"
             title="Hover to show only the 5 HOUR throttles · click to hold">5 Hour</button>
     <button class="lens" type="button" data-filter="specialty" aria-pressed="false"
-            title="Hover to show the Fable weeklies, which the plot hides otherwise · click to hold">Fable</button>
+            title="Hover to plot the Fable weeklies · click to hold, which also lists them below">Fable</button>
     <button class="lens" type="button" data-filter="anthropic" aria-pressed="false"
             title="Hover to show only Claude · click to hold">Anthropic only</button>
   </nav>
@@ -1012,9 +1012,10 @@ const horizonsFor = mark => PROJECTION_HORIZONS[mark.session ? "session" : "week
    or pool-total — and data-provider, and one predicate decides what survives:
      7 DAY      the weekly budgets and both pools
      5 HOUR     the throttles
-     FABLE      the Fable weeklies, and the only lens that plots them: with seven
-                accounts their diamonds crowd the frame, so the default view and the
-                Anthropic lens leave them to the register (operator, 2026-11-03)
+     FABLE      the Fable weeklies, and the only lens that plots them; held, it also
+                lists them in the register. With seven accounts their diamonds and rows
+                crowd the face, so every other view leaves them to the switch dialog
+                (operator, 2026-11-03)
      ANTHROPIC  anything Claude, the Claude pool included, the total pool not */
 const FILTERS = {
   weekly: node => ["weekly", "pool", "pool-total"].includes(node.dataset.class),
@@ -2212,6 +2213,9 @@ function fillRegister(register, entries) {
   }
   const groups = new Map();
   for (const entry of entries) {
+    // Fable rows are listed only while the Fable lens is held: seven accounts' worth
+    // crowd the register, and the switch dialog still shows every Fable weekly.
+    if (entry.fable && pinnedFilter !== "specialty") continue;
     const family = familyFor(entry.account.provider);
     if (!groups.has(family)) groups.set(family, []);
     groups.get(family).push(entry);
@@ -2441,11 +2445,18 @@ for (const button of filterButtons) {
   button.addEventListener("focus", () => setPreview(button.dataset.filter));
   button.addEventListener("blur", () => setPreview(null));
   button.addEventListener("click", () => {
+    const listedFable = pinnedFilter === "specialty";
     pinnedFilter = pinnedFilter === button.dataset.filter ? null : button.dataset.filter;
     const next = new URL(location.href);
     if (pinnedFilter) next.searchParams.set("filter", pinnedFilter);
     else next.searchParams.delete("filter");
     history.replaceState(null, "", next);
+    // Holding or letting go of the Fable lens adds or drops its register rows, so the
+    // frame re-fits once, on the click; a hover preview never changes the rows.
+    if (listedFable !== (pinnedFilter === "specialty")) {
+      renderView();
+      return;
+    }
     paintFilterBar();
     applySelection(selectedMark);
   });
