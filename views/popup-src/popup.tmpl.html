@@ -449,6 +449,7 @@
      all nine Anthropic used values 11px past the box's right edge (2026-10-03).
      Now a long row clips its own name and the number columns hold their x. */
   .family-rows { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 24px; }
+  .reg-spacer { height: 24px; }  /* a held-back Fable row's room: blank, never hit */
   .reg-row {
     display: flex;
     align-items: center;
@@ -2236,10 +2237,17 @@ function fillRegister(register, entries) {
     return;
   }
   const groups = new Map();
+  const reserved = new Map();  // family -> Fable rows held back, whose room is kept
   for (const entry of entries) {
     // Fable rows are listed only while the Fable lens is held: seven accounts' worth
-    // crowd the register, and the switch dialog still shows every Fable weekly.
-    if (entry.fable && pinnedFilter !== "specialty") continue;
+    // crowd the register, and the switch dialog still shows every Fable weekly. Their
+    // room is kept as blank rows, so the frame is sized for the fullest register and
+    // holding the lens never resizes it (operator, 2026-11-03).
+    if (entry.fable && pinnedFilter !== "specialty") {
+      const family = familyFor(entry.account.provider);
+      reserved.set(family, (reserved.get(family) || 0) + 1);
+      continue;
+    }
     const family = familyFor(entry.account.provider);
     if (!groups.has(family)) groups.set(family, []);
     groups.get(family).push(entry);
@@ -2356,6 +2364,12 @@ function fillRegister(register, entries) {
         row.addEventListener("pointerleave", () => hoverAccount(null));
       }
       rows.appendChild(row);
+    }
+    for (let i = 0; i < (reserved.get(family) || 0); i += 1) {
+      const spacer = document.createElement("div");
+      spacer.className = "reg-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      rows.appendChild(spacer);
     }
     box.appendChild(rows);
     (family === "Anthropic" ? anthropicColumn : providerColumn).appendChild(box);
