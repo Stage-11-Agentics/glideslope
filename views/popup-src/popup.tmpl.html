@@ -162,17 +162,21 @@
     text-transform: uppercase;
     cursor: pointer;
   }
-  .lens:hover { color: var(--ink-2); }
-  .lens[aria-pressed="true"] {
-    border-color: var(--bezel-bright);
-    background: var(--panel-2);
-    color: var(--ink);
-  }
   /* The filters are previews, not tabs: resting on one shows only its set,
      leaving shows everything again, and a click holds it (operator, 2026-09-14).
-     Previewing lights the button; holding also gives it the pressed frame. */
-  .lens[data-previewing="true"] { color: var(--ink); background: color-mix(in oklab, var(--panel-2) 60%, transparent); }
-  .lens[aria-pressed="true"] { box-shadow: inset 0 -2px 0 var(--goldhi); }
+     No box and no fill (operator, 2026-11-03): the state is the label's ink and a
+     rule under the label itself. Previewing lifts the ink and draws a faint rule;
+     holding draws it in gold; a lens another one includes (7 DAY, while FABLE is
+     held) wears the gold dimmed. A text decoration takes no layout, so no state
+     moves a pixel. */
+  .lens {
+    text-decoration: underline 2px transparent;
+    text-underline-offset: 6px;
+  }
+  .lens:hover { color: var(--ink-2); }
+  .lens[data-previewing="true"] { color: var(--ink); text-decoration-color: var(--muted-2); }
+  .lens[data-included="true"] { color: var(--ink-2); text-decoration-color: var(--golddim); }
+  .lens[aria-pressed="true"] { color: var(--ink); text-decoration-color: var(--goldhi); }
   /* Filtered out: gone from the frame, faded in the register — a register row
      never leaves, so nothing under the pointer moves. */
   #ils .filter-off { display: none; }
@@ -938,7 +942,7 @@
     <button class="lens" type="button" data-filter="session" aria-pressed="false"
             title="Hover to show only the 5 HOUR throttles · click to hold">5 Hour</button>
     <button class="lens" type="button" data-filter="specialty" aria-pressed="false"
-            title="Hover to plot the Fable weeklies · click to hold, which also lists them below">Fable</button>
+            title="Hover to plot the Fable weeklies beside the 7 DAY budgets · click to hold, which also lists them below">Fable</button>
     <button class="lens" type="button" data-filter="anthropic" aria-pressed="false"
             title="Hover to show only Claude · click to hold">Anthropic only</button>
   </nav>
@@ -1012,15 +1016,16 @@ const horizonsFor = mark => PROJECTION_HORIZONS[mark.session ? "session" : "week
    or pool-total — and data-provider, and one predicate decides what survives:
      7 DAY      the weekly budgets and both pools
      5 HOUR     the throttles
-     FABLE      the Fable weeklies, and the only lens that plots them; held, it also
-                lists them in the register. With seven accounts their diamonds and rows
+     FABLE      the 7 DAY set plus the Fable weeklies (the two weeklies read together),
+                and the only lens that plots Fable; held, it also lists Fable in the
+                register. With seven accounts their diamonds and rows
                 crowd the face, so every other view leaves them to the switch dialog
                 (operator, 2026-11-03)
      ANTHROPIC  anything Claude, the Claude pool included, the total pool not */
 const FILTERS = {
   weekly: node => ["weekly", "pool", "pool-total"].includes(node.dataset.class),
   session: node => node.dataset.class === "session",
-  specialty: node => node.dataset.class === "specialty",
+  specialty: node => ["weekly", "pool", "pool-total", "specialty"].includes(node.dataset.class),
   anthropic: node => node.dataset.provider === "Claude",
 };
 /* A held filter survives this page's own minute-ly reload — which carries it in
@@ -2430,6 +2435,7 @@ function paintFilterBar() {
   for (const button of filterButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.filter === pinnedFilter));
     button.dataset.previewing = String(button.dataset.filter === active);
+    button.dataset.included = String(active === "specialty" && button.dataset.filter === "weekly");
   }
 }
 function setPreview(filter) {
