@@ -491,8 +491,26 @@
      to keep its numbers live. A quiet ⓘ where the countdown ends; the name keeps its
      colour, the header hint says what is missing on hover, and a click lists it. Drawn
      by CSS so the row's text, which the honesty gate reads, is unchanged. */
-  .reg-row.setup-gap .reg-name::after { content: " ⓘ"; color: var(--muted); font-weight: 600; }
-  .reg-row.setup-gap.account-hover .reg-name::after { color: var(--ink); }
+  /* An element, so it can be pointed at and clicked: hovering it opens the setup
+     card (what the account has, what it lacks, what would fix it), and clicking it
+     opens the switch dialog (operator, 2026-11-03). The glyph is generated content,
+     so the row's text, which the honesty gate reads, is unchanged. */
+  .setup-mark { padding: 0 3px; margin-left: 2px; color: var(--muted); font-weight: 600; cursor: pointer; }
+  .setup-mark::before { content: "ⓘ"; }
+  .reg-row.account-hover .setup-mark { color: var(--ink-2); }
+  .setup-mark:hover, .setup-mark:focus-visible { color: var(--ink); outline: none; }
+  .setup-card {
+    position: fixed; z-index: 40; width: 300px; box-sizing: border-box;
+    display: none; padding: 10px 11px; gap: 7px; flex-direction: column;
+    border: 1px solid var(--bezel-bright); border-radius: 8px;
+    background: var(--panel); box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+    pointer-events: none;
+  }
+  .setup-card[data-open="true"] { display: flex; }
+  .setup-card .setup-card-title { color: var(--ink); font: 700 12px/1.2 var(--sans); }
+  .setup-card .acct-setup { padding: 0; border: 0; background: none; }
+  .setup-card .setup-card-foot { color: var(--muted); font: 650 9px/1.2 var(--mono);
+    letter-spacing: .1em; text-transform: uppercase; }
   /* Hovering any window of an account outlines all of that account's rows: the
      thing a click switches is the account, not the window. An outline, not a
      border, so nothing moves by a pixel. */
@@ -950,6 +968,7 @@
   </section>
   <div id="warnings"></div>
 
+  <div class="setup-card" id="setup-card" role="tooltip"></div>
   <div class="acct-dialog" id="account-dialog" data-open="false" role="dialog" aria-modal="true" aria-labelledby="acct-title">
     <div class="acct-card">
       <div class="acct-kicker" id="acct-kicker">Claude account</div>
@@ -2347,7 +2366,9 @@ function fillRegister(register, entries) {
         ? `${Math.round(entry.window.used_percent)}%` : "—";
       row.innerHTML = `
         <span class="reg-key">${badgeSVG(entry.account, entry.window, entry.session)}</span>
-        <span class="reg-name">${name}</span>
+        <span class="reg-name">${name}${entry.account.provider === "Claude" && setupGaps(entry.account).length
+          ? `<span class="setup-mark" role="button" tabindex="0" aria-label="${escapeHTML(
+            `${entry.account.display}: ${setupGaps(entry.account).join(", ")}. Open setup`)}"></span>` : ""}</span>
         ${spendCell(`${entry.account.display}/${entry.window.meter_id}`)}
         <span class="reg-dev num ${state.tone}">${deviation == null ? "—"
           : signedPoints(deviation) + "%"}</span>
@@ -2363,6 +2384,20 @@ function fillRegister(register, entries) {
           + (entry.account.next_up ? `\n→ ${nextUpPhrase(entry.account)}` : "")
           + (gaps.length ? `\nⓘ Not fully set up: ${gaps.join(", ")}` : "");
         row.addEventListener("click", () => openAccountDialog(entry.account));
+        const mark = row.querySelector(".setup-mark");
+        if (mark) {
+          mark.addEventListener("pointerenter", () => showSetupCard(entry.account, mark));
+          mark.addEventListener("pointerleave", hideSetupCard);
+          mark.addEventListener("focus", () => showSetupCard(entry.account, mark));
+          mark.addEventListener("blur", hideSetupCard);
+          mark.addEventListener("keydown", event => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            hideSetupCard();
+            openAccountDialog(entry.account);
+          });
+          mark.addEventListener("click", hideSetupCard);  // the row's click opens the dialog
+        }
         row.addEventListener("pointerenter", () => hoverAccount(entry.account));
         row.addEventListener("pointerleave", () => hoverAccount(null));
       }
@@ -2648,6 +2683,27 @@ function meterCells(account) {
 }
 /* Two lines, always: can this machine switch to the account in one click, and does a
    meter token keep its numbers live while nobody is logged in to it. */
+/* The setup card: the account's two setup lines, what a click does, and the
+   next-up reason when it is the one to move to. Placed beside the mark it
+   answers, kept on the glass. */
+const setupCard = document.getElementById("setup-card");
+function showSetupCard(account, mark) {
+  const held = heldHere(account) || isHere(account);
+  setupCard.innerHTML = `<div class="setup-card-title">${escapeHTML(account.display)}`
+    + ` · ${isHere(account) ? "in use here" : held ? "ready to switch" : "not ready to switch"}</div>`
+    + `<div class="acct-setup">${setupHTML(account)}</div>`
+    + (account.next_up ? `<div class="setup-card-foot">→ ${escapeHTML(nextUpPhrase(account))}</div>` : "")
+    + `<div class="setup-card-foot">${held ? "Click for the switch dialog" : "Click to sign in"}</div>`;
+  setupCard.dataset.open = "true";
+  const at = mark.getBoundingClientRect(), card = setupCard.getBoundingClientRect();
+  const left = clamp(at.left - 12, 8, innerWidth - card.width - 8);
+  const below = at.bottom + 6 + card.height <= innerHeight - 8;
+  setupCard.style.left = `${left}px`;
+  setupCard.style.top = `${below ? at.bottom + 6 : Math.max(8, at.top - card.height - 6)}px`;
+}
+function hideSetupCard() {
+  setupCard.dataset.open = "false";
+}
 function setupLine(ok, text, detail) {
   const mark = ok === true ? "✓" : ok === false ? "ⓘ" : "–";
   return `<div data-ok="${ok == null ? "none" : ok}"><i>${mark}</i>`
@@ -2660,7 +2716,7 @@ function setupHTML(account) {
   const runs = sw.ready !== false || isHere(account);
   const login = !held
     ? setupLine(false, `No login on ${hereName}`,
-      "Sign in once below; after that, switching here is one click.")
+      "Sign in once; after that, switching here is one click.")
     : !runs
     ? setupLine(false, `Login on ${hereName}, but this panel can't run the switch`,
       "The panel's manifest does not declare this account's Use, Log in and Move all actions.")
