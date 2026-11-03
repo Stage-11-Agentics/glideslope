@@ -1087,8 +1087,7 @@ const nextUpPhrase = account => {
   const up = account.next_up;
   return `Suggested next: ${Math.round(up.remaining_percent)}% of its week left, resets in `
     + hoursPhrase(up.hours_left)
-    + (up.session_percent != null && up.session_percent >= 85
-      ? ` (its 5 hour window is at ${Math.round(up.session_percent)}%)` : "");
+    + (up.session_percent != null ? `, 5 hour window at ${Math.round(up.session_percent)}%` : "");
 };
 const nextUpAccount = () => (SNAP.accounts || []).find(a => a.provider === "Claude" && a.next_up);
 const idleHint = () => nextUpAccount() ? `⇄ click to switch · next: ${nextUpAccount().display}` : SWITCH_HINT;

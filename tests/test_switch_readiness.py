@@ -96,9 +96,12 @@ class SwitchReadinessTests(unittest.TestCase):
         import datetime as dt
         now = dt.datetime(2026, 11, 3, 18, 0, tzinfo=dt.timezone.utc)
 
-        def acct(name, used, hours, fable=None, here=False):
+        def acct(name, used, hours, fable=None, here=False, session=None, session_hours=2):
             limits = [{"meter_id": "weekly_all", "label": "Weekly · all models", "used_percent": used,
                        "resets_at": now + dt.timedelta(hours=hours)}]
+            if session is not None:
+                limits.append({"meter_id": "session", "label": "5h session", "used_percent": session,
+                               "resets_at": now + dt.timedelta(hours=session_hours)})
             if fable is not None:
                 limits.append({"meter_id": "weekly_fable", "label": "Weekly · Fable", "used_percent": fable,
                                "resets_at": now + dt.timedelta(hours=hours)})
@@ -111,6 +114,12 @@ class SwitchReadinessTests(unittest.TestCase):
         self.assertEqual(accounts[0]["next_up"]["remaining_percent"], 51.0)
         glideslope.mark_next_up(accounts[2:4], now)  # only the spent and the current: nobody
         self.assertFalse(any(a["next_up"] for a in accounts[2:4]))
+        hot = [acct("Echo", 49, 68, session=94), acct("Delta", 0, 158, session=0),
+               acct("Hotel", 40, 60, session=94, session_hours=-1)]  # a session that already reset is fresh
+        glideslope.mark_next_up(hot, now)
+        self.assertEqual([a["display"] for a in hot if a["next_up"]], ["Hotel"])
+        glideslope.mark_next_up(hot[:2], now)
+        self.assertEqual([a["display"] for a in hot[:2] if a["next_up"]], ["Delta"])
 
     def test_manifest_labels(self):
         with tempfile.TemporaryDirectory() as tmp:
