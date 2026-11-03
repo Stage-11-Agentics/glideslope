@@ -313,6 +313,19 @@ faster cadence.
 **Team plans.** Seats on one Team plan share an organization, so an org ID cannot tell them
 apart. Two roster entries with the same org are ambiguous and are never credited.
 
+**Adding one.** `tools/add-meter-token <account>` runs `claude setup-token` with the account's
+email filled in on claude.ai (`login_hint`, as `claude auth login --email` sends it), captures the
+token from its output without echoing it, verifies it bills that account, places it on the first
+configured satellite (`--to <host>` or `local` for another), teaches that satellite's roster the
+account (`note`), and copies it to Bitwarden when the vault is unlocked (`--backup` does that later).
+A token that bills another account is dropped, not placed.
+
+**Who has one.** A machine that keeps meter tokens adds `meter_token: true|false` to every row of
+`claude-account status --json` (by the hash map above; no request); a machine with none omits the
+field. The reader joins that by login id into `meter_on` and `meter_token` per account: false when
+some satellite keeps tokens and none reads this account, None when no satellite keeps any. The
+popup marks an account that lacks one with its setup ⓘ.
+
 **Verifying a token before trusting it with work.** `claude-account whose <file> --expect
 <account> --json` reports the org, email, call-sign and meters for a token and exits `0` when
 it bills the expected account, `3` when it bills another, `4` when its org is unknown, `2`

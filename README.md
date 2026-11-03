@@ -118,6 +118,11 @@ claude-account use auto           # let the glide slope pick the account with ro
 
 running sessions never move, and nothing here stores a token. `claude-account --help` has the rest.
 
+in the popup, a click on a Claude row switches to it. an account that is not fully set up wears a quiet ⓘ after its countdown, and the dialog lists what it lacks:
+
+- **a login on this machine**, so a switch is one click. **Sign in** opens claude.ai in your browser with the account's email filled in (`claude auth login --email`); approve it there and a banner confirms which account landed. from a terminal: `tools/claude-login-pane <account>`, or `--default` to move every session in the shared home.
+- **a meter token**, so its numbers stay live while nobody is logged in to it. without one, an idle account's meters go stale and you cannot judge it before switching. `tools/add-meter-token <account>` mints one through the same browser approval, verifies it bills that account, and places it on your always-on satellite without ever showing it (details: [`PROVIDERS.md`](PROVIDERS.md), Meter tokens).
+
 one honest gap: we only jump between Claude accounts, so `claude-account` only knows Claude. multi-account switching for Codex is not built. it is the same shape, one login home per account, and it should be a short job for your agent. we would welcome that pull request.
 
 ---

@@ -21,7 +21,8 @@ class SwitchReadinessTests(unittest.TestCase):
         [account] = glideslope.mark_switch_readiness([claude("Echo", ["laptop"])], labels)
         self.assertEqual(account["switch"], {
             "ready": True, "here": True,
-            "declared": {"Use": True, "Log in": True, "Move all": True}, "problems": []})
+            "declared": {"Use": True, "Log in": True, "Move all": True}, "problems": [],
+            "meter": None, "complete": True, "setup": []})
 
     def test_no_login_here_blocks(self):
         [account] = glideslope.mark_switch_readiness([claude("Echo", ["studio"])], None)
@@ -37,13 +38,38 @@ class SwitchReadinessTests(unittest.TestCase):
                          {"Use": False, "Log in": False, "Move all": False})
         self.assertIn('"Use Echo"', account["switch"]["problems"][0])
 
-    def test_blockers_skip_dormant_and_ready(self):
+    def test_gaps_skip_dormant_and_complete(self):
         accounts = glideslope.mark_switch_readiness(
             [claude("Alpha", ["laptop"]), claude("Bravo"), claude("Charlie", dormant=True),
              {"provider": "Codex", "display": "Codex"}], None)
-        self.assertEqual([line.split(":")[0] for line in glideslope.switch_blockers(accounts)],
+        self.assertEqual([line.split(":")[0] for line in glideslope.setup_gaps(accounts)],
                          ["Bravo"])
         self.assertNotIn("switch", accounts[3])
+
+    def test_no_meter_token_is_a_gap_but_not_a_switch_blocker(self):
+        account = dict(claude("Echo", ["laptop"]), meter_token=False)
+        [account] = glideslope.mark_switch_readiness([account], None)
+        self.assertTrue(account["switch"]["ready"])
+        self.assertFalse(account["switch"]["complete"])
+        self.assertIn("no meter token", account["switch"]["setup"][0])
+
+    def test_meter_tokens_join_by_login_and_only_keepers_speak(self):
+        def acct(email, org):
+            return {"provider": "Claude", "display": email[0].upper(), "email": email,
+                    "login": f"{email}#{org}"}
+        keeper = {"name": "studio", "snapshot": {
+            "a": {"email": "a@example.com", "org_uuid": "org-a", "meter_token": True},
+            "b": {"email": "b@example.com", "org_uuid": "org-b", "meter_token": False}}}
+        plain = {"name": "spare", "snapshot": {"a": {"email": "a@example.com", "org_uuid": "org-a"}}}
+        accounts = [acct("a@example.com", "org-a"), acct("b@example.com", "org-b"), acct("c@example.com", "org-c")]
+        glideslope.mark_meter_tokens(accounts, None, [plain, keeper])
+        self.assertEqual([(a["meter_token"], a["meter_on"]) for a in accounts],
+                         [(True, ["studio"]), (False, []), (False, [])])
+        glideslope.mark_meter_tokens(accounts, None, [plain])
+        self.assertEqual([a["meter_token"] for a in accounts], [None, None, None])
+        self.assertIsNone(glideslope.meter_token_logins(plain["snapshot"]))
+        glideslope.mark_meter_tokens(accounts, ["c@example.com#org-c"], [])
+        self.assertEqual([a["meter_on"] for a in accounts], [[], [], ["laptop"]])
 
     def test_manifest_labels(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -619,6 +619,16 @@ class MeterTokenTests(MeterCase):
         self.assertNotIn("extra_usage", row)
         self.assertNotIn("secret", out)
 
+    def test_status_says_which_accounts_a_meter_token_covers(self):
+        out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"], lambda token, **_: None)
+        self.assertNotIn("meter_token", json.loads(out)["lab"])  # no tokens here: no claim either way
+        self.token("lab.token")
+        out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
+                                 lambda token, **_: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
+        report = json.loads(out)
+        self.assertTrue(report["lab"]["meter_token"])
+        self.assertFalse(report["personal"]["meter_token"])
+
     def test_a_meter_read_drops_a_cached_counter_and_a_stale_login_keeps_one(self):
         self.tool.cache_put(
             "lab", "lab@example.com",

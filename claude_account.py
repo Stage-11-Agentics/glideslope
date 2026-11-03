@@ -49,7 +49,7 @@ Commands
     use <account|auto>       route new sessions to an account (auto = Glideslope's pick)
     home [account]           print the CLAUDE_CONFIG_DIR a new session should use
     exec [account] -- cmd    run cmd under an account's home (the shell `claude` uses this)
-    login <account|name>     create a login home and open Claude Code in it for /login
+    login <account|name>     create a login home and sign it in through the browser
     link                     refresh the shared-entry symlinks in every profile home
     list                     the roster (identities only — there are no credentials here)
     which                    the account new sessions go to, and where it is logged in
@@ -1174,6 +1174,28 @@ def remember_token_org(fingerprint: str, org: str) -> None:
         pass
 
 
+def meter_token_coverage(roster: dict) -> set[str] | None:
+    """The roster aliases a meter token here bills, or None when this machine keeps no meter tokens.
+
+    No request is sent: a token counts once a probe or `whose` has recorded the org it bills
+    (by fingerprint, in .meter-orgs.json), so a token never read yet covers nothing.
+    """
+    files = meter_token_files()
+    if not files:
+        return None
+    known = _meter_orgs()
+    covered: set[str] = set()
+    for path in files:
+        try:
+            fingerprint = token_fingerprint(read_token_file(path))
+        except Exception:  # a bad file covers nothing; meter_reads names it
+            continue
+        owners = aliases_for_org(known.get(fingerprint), roster)
+        if len(owners) == 1:
+            covered.add(owners[0])
+    return covered
+
+
 def meter_reads(roster: dict, want: set | None = None) -> tuple[dict[str, dict], list[str]]:
     """Probe meter tokens → ({alias: reading}, notes). Unknown and ambiguous orgs are noted, never credited.
 
@@ -1372,11 +1394,12 @@ def cmd_login(args: list[str]) -> None:
     watcher = GLIDESLOPE.parent / "tools" / "install-login-watch.sh"
     if watcher.exists():  # WatchPaths cannot glob — re-arm it so this home's login is seen at once
         subprocess.run([str(watcher)], capture_output=True, check=False)
-    print(f"opening Claude Code there — type {C['bold']}/login{C['off']} and sign in"
-          + (f" as {email}" if email else ""))
+    print("opening claude.ai in the browser" + (f" with {email} filled in" if email else "")
+          + "; approve it there and this home holds the login")
     env = dict(os.environ, CLAUDE_CONFIG_DIR=str(profile_dir))
     env.pop("CLAUDE_ACCOUNT", None)
-    os.execvpe("claude", ["claude"], env)
+    os.execvpe("claude", ["claude", "auth", "login", "--claudeai"]
+               + (["--email", email] if email else []), env)
 
 
 def cmd_link(_args: list[str]) -> None:
@@ -1666,6 +1689,13 @@ def cmd_status(args: list[str]) -> None:
             report[alias] = {**base, "stale": True, "limits": [], "error": "never read while logged in"}
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {email}",
                              f"  {C['dim']}never read while logged in{C['off']}"]
+
+    # Which accounts stay readable with no login anywhere. Said only by a machine that keeps
+    # meter tokens, so a reader can tell "no token for this account" from "no tokens here".
+    covered = meter_token_coverage(roster)
+    if covered is not None:
+        for alias, row in report.items():
+            row["meter_token"] = alias in covered
 
     if as_json:
         print(json.dumps(report, indent=2))

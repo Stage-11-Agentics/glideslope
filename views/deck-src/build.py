@@ -201,8 +201,10 @@ def build_snapshot(pos: dict) -> dict:
         # fact so nothing downstream has to know about the fleet to work.
         "logins": [str(name) for name in (a.get("logins") or [])],
         "held_on": [str(name) for name in (a.get("held_on") or [])],
-        # Whether a one-click switch to this account can work on this machine.
+        # Whether a one-click switch to this account can work on this machine, and
+        # whether a meter token keeps it readable (the setup ⓘ and its checklist).
         "switch": a.get("switch"),
+        "meter_on": [str(name) for name in (a.get("meter_on") or [])],
         "plan": a.get("plan") or "",
         "stale": bool(a.get("stale")),
         "observed_at": a.get("observed_at"),

@@ -480,9 +480,12 @@
      its confirm button is pressed. The card holds one size in every state, so the
      buttons never jump while a result comes back. */
   .reg-row.switchable { cursor: pointer; }
-  /* a Claude account this machine cannot switch to in one click: red name, ✕ mark */
-  .reg-row.switch-blocked .reg-name { color: var(--significant); }
-  .reg-row.switch-blocked .reg-name::after { content: " ✕"; font-weight: 800; }
+  /* A Claude account not fully set up: no one-click switch here, or no meter token
+     to keep its numbers live. A quiet ⓘ where the countdown ends; the name keeps its
+     colour, the header hint says what is missing on hover, and a click lists it. Drawn
+     by CSS so the row's text, which the honesty gate reads, is unchanged. */
+  .reg-row.setup-gap .reg-name::after { content: " ⓘ"; color: var(--muted); font-weight: 600; }
+  .reg-row.setup-gap.account-hover .reg-name::after { color: var(--ink); }
   /* Hovering any window of an account outlines all of that account's rows: the
      thing a click switches is the account, not the window. An outline, not a
      border, so nothing moves by a pixel. */
@@ -494,13 +497,14 @@
   /* The header says what a click does, and says it more exactly on hover. Fixed
      width, one line, so its changing text never shifts the total beside it. */
   .switch-hint {
-    display: inline-block; width: 190px; margin-left: 10px;
+    display: inline-block; width: 236px; margin-left: 10px;
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
     color: var(--muted-2); font: 650 8.5px/1.1 var(--mono); letter-spacing: .12em;
     text-transform: uppercase; vertical-align: 1px;
   }
   .switch-hint[data-live="switch"] { color: var(--ink); }
   .switch-hint[data-live="here"] { color: var(--ink-2); }
+  .switch-hint[data-live="setup"] { color: var(--ink); }
   .acct-dialog {
     position: fixed; inset: 0; z-index: 50;
     display: none; align-items: center; justify-content: center;
@@ -526,6 +530,15 @@
   .acct-meter b { display: block; margin-bottom: 4px; color: var(--ink); font: 700 15px/1 var(--mono); }
   .acct-meter small { color: var(--muted); font: 650 8.5px/1 var(--mono); letter-spacing: .12em; }
   .acct-meter.hot b { color: var(--significant); }
+  /* The setup checklist: always both lines, so the card keeps one size. */
+  .acct-setup { display: grid; gap: 4px; padding: 8px 9px; border: 1px solid var(--bezel); border-radius: 6px;
+    background: var(--panel-2); font: 600 10.5px/1.35 var(--mono); }
+  .acct-setup div { display: grid; grid-template-columns: 2ch 1fr; color: var(--ink-2); }
+  .acct-setup div[data-ok="true"] i { color: var(--codex); }
+  .acct-setup div[data-ok="false"] i { color: var(--ink); }
+  .acct-setup div[data-ok="none"] { color: var(--muted); }
+  .acct-setup i { font-style: normal; }
+  .acct-setup small { display: block; color: var(--muted); font: 500 10px/1.35 var(--mono); }
   .acct-status { min-height: 18px; color: var(--muted); font: 600 10.5px/1.4 var(--mono); letter-spacing: .04em; }
   .acct-status[data-state="error"] { color: var(--significant); }
   .acct-status[data-state="ok"] { color: var(--codex); }
@@ -643,6 +656,9 @@
      reads as "nothing to say here" when the truth is "no value to say". It gets
      a dash instead — and the dash is drawn in --muted, a step below the row's own
      ink, so it can never be mistaken for a read value. */
+  /* the countdown is a column too ("23h 59m" is the widest), so the reset chequer
+     and the setup ⓘ after it read straight down the register */
+  .reg-clock { display: inline-block; min-width: 7ch; }
   .reg-clock.missing { color: var(--muted); }
   /* used % is the rightmost column (operator, 2026-09-24): $ · deviation · used,
      so it needs a fixed advance to stay a column */
@@ -744,11 +760,11 @@
   /* the same fact about another satellite, one rank quieter */
   .active.remote { color: var(--muted); font-weight: 620; }
   .freshness.stale { color: var(--ahead); }
-  /* a switch that cannot be one click here: said on the row, before anyone clicks */
+  /* setup this account still lacks here: said on the row, quietly, before anyone clicks */
   .switch-block {
     display: block;
     margin: 3px 0 0 12px;
-    color: var(--significant);
+    color: var(--muted);
     font: 700 9.2px/1.2 var(--mono);
     letter-spacing: .06em;
     text-transform: uppercase;
@@ -932,9 +948,10 @@
       <div class="acct-title" id="acct-title"></div>
       <div class="acct-body" id="acct-body"></div>
       <div class="acct-meters" id="acct-meters"></div>
+      <div class="acct-setup" id="acct-setup"></div>
       <div class="acct-status" id="acct-status" role="status" aria-live="polite"></div>
       <div class="acct-actions">
-        <button class="acct-btn quiet" id="acct-relogin" type="button">Log in again</button>
+        <button class="acct-btn quiet" id="acct-relogin" type="button">Sign in again</button>
         <button class="acct-btn quiet" id="acct-moveall" type="button"
                 title="Log the shared default home in as this account. Every session running there follows at its next token read.">Move all sessions</button>
         <span class="spacer"></span>
@@ -1064,6 +1081,9 @@ function hoverAccount(account) {
   if (!account) {
     hint.textContent = SWITCH_HINT;
     hint.dataset.live = "";
+  } else if (setupGaps(account).length) {
+    hint.textContent = `ⓘ ${account.display}: ${setupGaps(account).join(" · ")}`;
+    hint.dataset.live = "setup";
   } else if (isHere(account)) {
     hint.textContent = `● ${account.display} in use here`;
     hint.dataset.live = "here";
@@ -1096,12 +1116,22 @@ const declares = (account, kind) => {
   const declared = (switchOf(account) || {}).declared;
   return declared == null || declared[kind] !== false;
 };
-const switchBlockHTML = account => {
+/* What an account still lacks here, in the fewest words: the hover hint and the
+   table note read these; the dialog's checklist says each one in full. */
+const setupGaps = account => {
   const sw = switchOf(account);
-  if (!sw || sw.ready || account.dormant || isHere(account)) return "";
-  const why = !sw.here ? "no login here" : "panel can't run it";
-  return `<span class="switch-block" title="${escapeHTML((sw.problems || []).join("\n"))}">`
-    + `✕ can't switch · ${why}</span>`;
+  if (!sw || account.dormant || sw.complete !== false) return [];
+  const gaps = [];
+  if (!sw.here && !isHere(account)) gaps.push("no login here");
+  else if (!sw.ready && !isHere(account)) gaps.push("panel can't run it");
+  if (sw.meter === false) gaps.push("no meter token");
+  return gaps;
+};
+const switchBlockHTML = account => {
+  const gaps = setupGaps(account);
+  if (!gaps.length) return "";
+  return `<span class="switch-block" title="${escapeHTML((switchOf(account).setup || []).join("\n"))}">`
+    + `ⓘ ${gaps.join(" · ")}</span>`;
 };
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const endOf = window => window.resets_at ? Date.parse(window.resets_at) : null;
@@ -2265,13 +2295,12 @@ function fillRegister(register, entries) {
       if (entry.account.provider === "Claude" && !entry.account.dormant) {
         row.classList.add("switchable");
         const sw = switchOf(entry.account);
-        const blocked = sw && !sw.ready && !isHere(entry.account);
-        if (blocked) row.classList.add("switch-blocked");
-        row.title = isHere(entry.account)
+        const gaps = setupGaps(entry.account).length ? sw.setup || [] : [];
+        if (gaps.length) row.classList.add("setup-gap");
+        row.title = (isHere(entry.account)
           ? `${entry.account.display} · this machine's account`
-          : blocked
-          ? `Can't switch to ${entry.account.display} in one click: ${(sw.problems || []).join("; ")}`
-          : `Switch to ${entry.account.display}…`;
+          : `Switch to ${entry.account.display}…`)
+          + (gaps.length ? `\nⓘ Not fully set up: ${gaps.join("; ")}` : "");
         row.addEventListener("click", () => openAccountDialog(entry.account));
         row.addEventListener("pointerenter", () => hoverAccount(entry.account));
         row.addEventListener("pointerleave", () => hoverAccount(null));
@@ -2514,6 +2543,7 @@ const dialogKicker = document.getElementById("acct-kicker");
 const dialogTitle = document.getElementById("acct-title");
 const dialogBody = document.getElementById("acct-body");
 const dialogMeters = document.getElementById("acct-meters");
+const dialogSetup = document.getElementById("acct-setup");
 const dialogStatus = document.getElementById("acct-status");
 const dialogConfirm = document.getElementById("acct-confirm");
 const dialogCancel = document.getElementById("acct-cancel");
@@ -2541,6 +2571,34 @@ function meterCells(account) {
       + `<small>${escapeHTML(label.toUpperCase())}</small></div>`;
   }).join("");
 }
+/* Two lines, always: can this machine switch to the account in one click, and does a
+   meter token keep its numbers live while nobody is logged in to it. */
+function setupLine(ok, text, detail) {
+  const mark = ok === true ? "✓" : ok === false ? "ⓘ" : "–";
+  return `<div data-ok="${ok == null ? "none" : ok}"><i>${mark}</i>`
+    + `<span>${escapeHTML(text)}<small>${escapeHTML(detail)}</small></span></div>`;
+}
+function setupHTML(account) {
+  const sw = switchOf(account) || {};
+  const who = account.display.toLowerCase();
+  const held = heldHere(account);
+  const runs = sw.ready !== false || isHere(account);
+  const login = !held
+    ? setupLine(false, `No login on ${hereName}`,
+      "Sign in once below; after that, switching here is one click.")
+    : !runs
+    ? setupLine(false, `Login on ${hereName}, but this panel can't run the switch`,
+      "The panel's manifest does not declare this account's Use, Log in and Move all actions.")
+    : setupLine(true, `Login on ${hereName}`, "Switching here is one click.");
+  const where = (account.meter_on || []).join(", ");
+  const meter = sw.meter === true
+    ? setupLine(true, `Meter token on ${where}`, "Its numbers stay live while nobody is logged in to it.")
+    : sw.meter === false
+    ? setupLine(false, "No meter token",
+      `Its numbers go stale while nobody is logged in to it. Add one: tools/add-meter-token ${who}`)
+    : setupLine(null, "No machine keeps meter tokens", "Optional: see Meter tokens in the README.");
+  return login + meter;
+}
 function setDialogStatus(state, text) {
   dialogStatus.dataset.state = state;
   dialogStatus.textContent = text;
@@ -2553,6 +2611,7 @@ function openAccountDialog(account) {
   dialogTitle.style.setProperty("--acc", colorFor(account.display));
   dialogKicker.textContent = `Claude account · ${hereName}`;
   dialogMeters.innerHTML = meterCells(account);
+  dialogSetup.innerHTML = setupHTML(account);
   setDialogStatus("", "");
   dialogRelogin.hidden = false;
   dialogMoveAll.hidden = false;
@@ -2564,7 +2623,7 @@ function openAccountDialog(account) {
     dialogTitle.innerHTML = `<span class="acct-swatch"></span>${name} is in use here`;
     dialogBody.textContent = `New sessions on ${hereName} already start as ${account.display}.`;
     dialogRelogin.hidden = true;
-    dialogConfirm.textContent = "Log in again";
+    dialogConfirm.textContent = "Sign in again";
     dialogCancel.textContent = "Close";
   } else if (heldHere(account)) {
     dialogMode = "switch";
@@ -2583,19 +2642,16 @@ function openAccountDialog(account) {
   } else {
     dialogMode = "login";
     dialogTitle.innerHTML = `<span class="acct-swatch"></span>${name} has no login here`;
-    dialogBody.textContent = `Open a terminal at /login for ${account.display}. `
-      + `Sign the browser in to claude.ai as ${account.display} first.`;
+    // The page never holds an email (the build fails on one), so it names the account.
+    dialogBody.textContent = `Signing in opens claude.ai in your browser with ${account.display}'s`
+      + ` email filled in. Approve it there and ${account.display} gets its own login on ${hereName}.`;
     dialogRelogin.hidden = true;
-    dialogConfirm.textContent = "Open login";
+    dialogConfirm.textContent = "Sign in";
   }
-  const sw = switchOf(account);
   const confirmKind = dialogMode === "switch" ? "Use" : "Log in";
   if (!declares(account, confirmKind)) dialogConfirm.disabled = true;
   if (!declares(account, "Log in")) dialogRelogin.hidden = true;
   if (!declares(account, "Move all")) dialogMoveAll.hidden = true;
-  if (sw && !sw.ready && !isHere(account) && (sw.problems || []).length) {
-    setDialogStatus("error", `Can't switch in one click: ${sw.problems.join("; ")}.`);
-  }
   dialog.dataset.open = "true";
   dialogCancel.focus();
 }
@@ -2622,7 +2678,7 @@ function sendAccountAction(kind) {
   dialogCancel.disabled = true;
   dialogRelogin.disabled = true;
   dialogMoveAll.disabled = true;
-  setDialogStatus("working", kind === "Use" ? "SWITCHING…" : "OPENING A LOGIN PANE…");
+  setDialogStatus("working", kind === "Use" ? "SWITCHING…" : "OPENING CLAUDE.AI…");
 }
 function accountActionResult(result) {
   const label = dialogPending;
@@ -2648,11 +2704,11 @@ function accountActionResult(result) {
     refreshButton.disabled = true;
     setRefreshState("working", `SWITCHED TO ${name.toUpperCase()} · UPDATING…`);
     waitForRefresh();
-  } else if (label.startsWith("Move all ")) {
-    setDialogStatus("ok", "Login pane opened on the shared home. Type /login there;"
-      + " every session in that home follows once the browser authorizes.");
   } else {
-    setDialogStatus("ok", "Login pane opened. Type /login there.");
+    const as = label.replace(/^(Move all|Log in) /, "");
+    setDialogStatus("ok", `Browser opened. Sign in as ${as} and approve`
+      + (label.startsWith("Move all ")
+        ? "; every session in the shared home follows." : "; a banner confirms when it lands."));
   }
 }
 dialogConfirm.addEventListener("click", () => {

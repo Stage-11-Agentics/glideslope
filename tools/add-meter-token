@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Give a Claude account a meter token: mint (browser approval), verify, place on the keeper,
+# back up to Bitwarden. The token is never shown. See tools/add_meter_token.py.
+set -euo pipefail
+PY=/opt/homebrew/bin/python3
+[ -x "$PY" ] || PY=python3
+exec "$PY" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/add_meter_token.py" "$@"
