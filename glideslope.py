@@ -222,6 +222,12 @@ CLAUDE_CALL_SIGNS: dict[str, str] = {
 NATO_ALPHABET = ("Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
                  "India", "Juliett", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa")
 CLAUDE_PLAN = str(_config_table("claude").get("plan") or "Max 20x")
+# The surface manifest that runs one-click account switches, if one does (the
+# popup sends "Use <Account>"; a host runs only labels its manifest declares).
+# Unset, nothing is known about it and no switch is reported as undeclared.
+CLAUDE_SWITCH_MANIFEST = (Path(os.path.expanduser(str(_config_table("claude")["switch_manifest"])))
+                          if _config_table("claude").get("switch_manifest") else None)
+SWITCH_ACTIONS = ("Use", "Log in", "Move all")
 # The plan is not in the usage gauge, but the tier IS in claude-account's roster,
 # which rewrites it on every status read. One account once came back from a
 # renewal on Pro, and a board that still called it Max 20x was the reason nobody
@@ -890,6 +896,60 @@ def reconcile_satellite_logins(
         account["logins"] = logins
         account["held_on"] = held
     return accounts
+
+
+def manifest_action_labels(path: Path | None) -> set[str] | None:
+    """Every action label PATH declares, or None when there is no manifest to read."""
+    if path is None:
+        return None
+    try:
+        import tomllib
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (ModuleNotFoundError, OSError, ValueError):
+        return None
+    actions = data.get("action") if isinstance(data, dict) else None
+    return {str(action.get("label")) for action in actions or []
+            if isinstance(action, dict) and action.get("label")}
+
+
+def mark_switch_readiness(
+    accounts: list[dict[str, Any]], manifest_labels: set[str] | None,
+) -> list[dict[str, Any]]:
+    """Record, per Claude account, whether a one-click switch to it works HERE.
+
+    A switch is one click only when this machine holds a login home for the
+    account (otherwise it is a browser sign-in first) and, where a surface
+    manifest is configured, that manifest declares the account's switch action
+    (otherwise the host refuses it as undeclared). `switch.problems` says what is
+    missing in plain words; `switch.declared` maps each action kind to whether
+    the manifest declares it, or is None when no manifest is known.
+    """
+    for account in accounts:
+        if account.get("provider") != "Claude":
+            continue
+        name = str(account.get("display") or account.get("account") or "")
+        held = LOCAL_SATELLITE in (account.get("held_on") or [])
+        declared = (None if manifest_labels is None
+                    else {kind: f"{kind} {name}" in manifest_labels for kind in SWITCH_ACTIONS})
+        problems: list[str] = []
+        if not held:
+            problems.append(f"no login on {LOCAL_SATELLITE}: sign in once before switching")
+        missing = [f"{kind} {name}" for kind, ok in (declared or {}).items() if not ok]
+        if missing:
+            problems.append("the panel cannot run " + ", ".join(f'"{label}"' for label in missing)
+                            + ": its manifest does not declare it")
+        account["switch"] = {"ready": not problems, "here": held, "declared": declared,
+                             "problems": problems}
+    return accounts
+
+
+def switch_blockers(accounts: list[dict[str, Any]]) -> list[str]:
+    """One line per live Claude account that cannot be switched to in one click here."""
+    return [f"{account.get('display')}: {'; '.join(account['switch']['problems'])}"
+            for account in accounts
+            if account.get("provider") == "Claude" and not account.get("dormant")
+            and account.get("switch") and not account["switch"]["ready"]]
 
 
 def reconcile_shared_logins(
@@ -2792,6 +2852,11 @@ def render_markdown(accounts: list[dict[str, Any]], now: dt.datetime, warnings: 
     if not rows:
         rows.append(["—", "—", "no usage data", "—", "—"])
     lines = banner_table("All windows", headers, rows, color=color)
+    blockers = switch_blockers(accounts)
+    if blockers:
+        lines.append("")
+        lines.append(paint(f"Cannot switch here in one click ({LOCAL_SATELLITE}):", "red", on=color))
+        lines.extend(f"- {line}" for line in blockers)
     if warnings:
         lines.append("")
         lines.extend(f"> {warning}" for warning in warnings)
@@ -4141,6 +4206,7 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     # Also journal built-in /login switches, which bypass claude-account's hook.
     reconcile_login(accounts, live_login)
     reconcile_satellite_logins(accounts, local_logins, satellites, live_login)
+    mark_switch_readiness(accounts, manifest_action_labels(CLAUDE_SWITCH_MANIFEST))
     if accounts and live_login:
         try:
             observe_login_switch(accounts, live_login, now)
