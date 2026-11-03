@@ -381,6 +381,31 @@ def resolve_login(name: str, roster: dict | None = None) -> str | None:
     return None
 
 
+def resolve_exact_login(name: str, roster: dict | None = None) -> str:
+    """resolve_login, made exact: an email alone becomes its one organization's login id.
+
+    Raises RuntimeError when the account is unknown, when its organization is not known
+    here, or when the email names several organizations (one email can hold two plans).
+    """
+    roster = roster_read() if roster is None else roster
+    login = resolve_login(name, roster)
+    if not login:
+        raise RuntimeError(f"unknown account '{name}': name a call-sign, roster alias or email")
+    email, org = split_login(login)
+    if org:
+        return login
+    found = sorted({entry_login(e) for e in roster.values()
+                    if str(e.get("email") or "").lower() == email and e.get("org_uuid")})
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise RuntimeError(f"{name}'s organization is not known here: sign it in once "
+                           "(claude-account login), or claude-account note <email> --org <id>")
+    raise RuntimeError(f"{email} holds {len(found)} accounts ("
+                       + ", ".join(label_for(login, roster) for login in found)
+                       + "); name one by its call-sign")
+
+
 def link_profile(profile_dir: Path) -> list[str]:
     """Create any missing symlinks from a profile home back into ~/.claude.
 

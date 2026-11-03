@@ -205,6 +205,7 @@ def build_snapshot(pos: dict) -> dict:
         # whether a meter token keeps it readable (the setup ⓘ and its checklist).
         "switch": a.get("switch"),
         "meter_on": [str(name) for name in (a.get("meter_on") or [])],
+        "meter_silent": [str(name) for name in (a.get("meter_silent") or [])],
         "plan": a.get("plan") or "",
         "stale": bool(a.get("stale")),
         "observed_at": a.get("observed_at"),

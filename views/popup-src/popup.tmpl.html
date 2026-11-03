@@ -539,7 +539,8 @@
   .acct-setup div[data-ok="none"] { color: var(--muted); }
   .acct-setup i { font-style: normal; }
   .acct-setup small { display: block; color: var(--muted); font: 500 10px/1.35 var(--mono); }
-  .acct-status { min-height: 18px; color: var(--muted); font: 600 10.5px/1.4 var(--mono); letter-spacing: .04em; }
+  /* two lines reserved: a result can wrap once, and the card must not grow when it does */
+  .acct-status { min-height: 30px; color: var(--muted); font: 600 10.5px/1.4 var(--mono); letter-spacing: .04em; }
   .acct-status[data-state="error"] { color: var(--significant); }
   .acct-status[data-state="ok"] { color: var(--codex); }
   .acct-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
@@ -1082,7 +1083,8 @@ function hoverAccount(account) {
     hint.textContent = SWITCH_HINT;
     hint.dataset.live = "";
   } else if (setupGaps(account).length) {
-    hint.textContent = `ⓘ ${account.display}: ${setupGaps(account).join(" · ")}`;
+    hint.textContent = (isHere(account) ? `● ${account.display} here · ` : `ⓘ ${account.display}: `)
+      + setupGaps(account).join(" · ");
     hint.dataset.live = "setup";
   } else if (isHere(account)) {
     hint.textContent = `● ${account.display} in use here`;
@@ -1122,7 +1124,7 @@ const setupGaps = account => {
   const sw = switchOf(account);
   if (!sw || account.dormant || sw.complete !== false) return [];
   const gaps = [];
-  if (!sw.here && !isHere(account)) gaps.push("no login here");
+  if (!sw.here && !isHere(account)) gaps.push("no login");
   else if (!sw.ready && !isHere(account)) gaps.push("panel can't run it");
   if (sw.meter === false) gaps.push("no meter token");
   return gaps;
@@ -1130,8 +1132,7 @@ const setupGaps = account => {
 const switchBlockHTML = account => {
   const gaps = setupGaps(account);
   if (!gaps.length) return "";
-  return `<span class="switch-block" title="${escapeHTML((switchOf(account).setup || []).join("\n"))}">`
-    + `ⓘ ${gaps.join(" · ")}</span>`;
+  return `<span class="switch-block">ⓘ ${gaps.join(" · ")}</span>`;
 };
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const endOf = window => window.resets_at ? Date.parse(window.resets_at) : null;
@@ -2294,13 +2295,12 @@ function fillRegister(register, entries) {
         <span class="reg-used num">${used}</span>`;
       if (entry.account.provider === "Claude" && !entry.account.dormant) {
         row.classList.add("switchable");
-        const sw = switchOf(entry.account);
-        const gaps = setupGaps(entry.account).length ? sw.setup || [] : [];
+        const gaps = setupGaps(entry.account);
         if (gaps.length) row.classList.add("setup-gap");
         row.title = (isHere(entry.account)
           ? `${entry.account.display} · this machine's account`
           : `Switch to ${entry.account.display}…`)
-          + (gaps.length ? `\nⓘ Not fully set up: ${gaps.join("; ")}` : "");
+          + (gaps.length ? `\nⓘ Not fully set up: ${gaps.join(", ")}` : "");
         row.addEventListener("click", () => openAccountDialog(entry.account));
         row.addEventListener("pointerenter", () => hoverAccount(entry.account));
         row.addEventListener("pointerleave", () => hoverAccount(null));
@@ -2533,9 +2533,9 @@ refreshButton.addEventListener("click", requestRefresh);
 
 /* ── switching accounts ──
    Switching points NEW sessions on this machine at an account; a running session
-   never moves. "Move all sessions" is the global switch: it opens /login in the
-   shared default home, and every session running there follows once the browser
-   authorizes. The page holds no command: it sends the host one manifest action
+   never moves. "Move all sessions" is the global switch: it signs the shared default
+   home in through the browser, and every session running there follows once the
+   browser authorizes. The page holds no command: it sends the host one manifest action
    label, "Use <Account>", "Log in <Account>" or "Move all <Account>", and the host
    decides what runs. Nothing is sent until a dialog button is pressed. */
 const dialog = document.getElementById("account-dialog");
@@ -2596,6 +2596,9 @@ function setupHTML(account) {
     : sw.meter === false
     ? setupLine(false, "No meter token",
       `Its numbers go stale while nobody is logged in to it. Add one: tools/add-meter-token ${who}`)
+    : sw.meter === "unknown"
+    ? setupLine(null, "Meter token unknown",
+      `${(account.meter_silent || []).join(", ") || "The keeper"} sent no reading this time; it keeps the tokens.`)
     : setupLine(null, "No machine keeps meter tokens", "Optional: see Meter tokens in the README.");
   return login + meter;
 }

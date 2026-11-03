@@ -59,15 +59,18 @@ def target(account: str, default: bool) -> tuple[str, str | None, str, ca.Home]:
     """(login id, email, display name, home) for ACCOUNT. Creates a profile home when none holds it."""
     ca.CALL_SIGNS.update(ca.call_signs_by_login())
     roster = ca.roster_read()
-    login = ca.resolve_login(account, roster)
-    if not login:
-        raise SystemExit(f"unknown account '{account}': name a call-sign, roster alias or email")
+    try:
+        login = ca.resolve_exact_login(account, roster)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from None
     email = ca.split_login(login)[0] or None
     display = ca.call_sign_for(login) or account
     if default:
         return login, email, display, ca.Home("default", None)
+    # A home already holding the account signs in again in place, the default home included:
+    # `use` and `exec` pick that home first, so a second one would never be used.
     held = ca.home_for(login)
-    if held is not None and not held.is_default:
+    if held is not None:
         return login, email, display, held
     name = display.lower().replace("@", "-at-").replace("#", "-")
     home = ca.Home(name, ca.ensure_profile(name))
@@ -155,17 +158,20 @@ def wait(account: str, default: bool) -> int:
         try:
             result = subprocess.run(cmd, env=opener_env(home_env(home)), stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, timeout=SIGNIN_TIMEOUT_S)
-            finished = result.returncode == 0
+            finished, code, said = result.returncode == 0, result.returncode, result.stderr or result.stdout
         except subprocess.TimeoutExpired:
-            finished = False
+            finished, code, said = False, "timeout", ""
         have = home.login()
-        print(f"{time.strftime('%c')}: finished={finished} holds={ca.split_login(have)[0] or '-'}", flush=True)
-        if have and ca.same_login(have, login) and (finished or have != before):
+        print(f"{time.strftime('%c')}: exit={code} holds={ca.split_login(have)[0] or '-'}", flush=True)
+        if said and not finished:
+            print("claude said: " + " ".join(said.split())[-400:], flush=True)
+        landed = finished or have != before
+        if have and landed and ca.same_login(have, login):
             ca.roster_note(home.account())
             notify("Glideslope", f"{display} is signed in on {machine_name()}"
                    + (": every session in the shared home follows." if default else "."))
             return 0
-        if have and have != before and not ca.same_login(have, login):
+        if have and landed and not ca.same_login(have, login):
             notify("Glideslope", f"That sign-in landed as {ca.label_for(have)}, not {display}. "
                    f"Sign claude.ai in as {email or display} and try again.")
             return 3

@@ -619,6 +619,18 @@ class MeterTokenTests(MeterCase):
         self.assertNotIn("extra_usage", row)
         self.assertNotIn("secret", out)
 
+    def test_an_email_resolves_to_its_one_organization_or_refuses(self):
+        self.assertEqual(self.tool.resolve_exact_login("lab@example.com"), "lab@example.com#org-lab")
+        roster = self.tool.roster_read()
+        roster["lab-two"] = {"email": "lab@example.com", "org_uuid": "org-lab-two"}
+        self.tool.roster_write(roster)
+        with self.assertRaises(RuntimeError) as shared:
+            self.tool.resolve_exact_login("lab@example.com")
+        self.assertIn("holds 2 accounts", str(shared.exception))
+        self.assertEqual(self.tool.resolve_exact_login("lab-two"), "lab@example.com#org-lab-two")
+        with self.assertRaises(RuntimeError):
+            self.tool.resolve_exact_login("nobody")
+
     def test_status_says_which_accounts_a_meter_token_covers(self):
         out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"], lambda token, **_: None)
         self.assertNotIn("meter_token", json.loads(out)["lab"])  # no tokens here: no claim either way

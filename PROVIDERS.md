@@ -138,8 +138,8 @@ into; every "logged in here" mark reads `logins`.
 confirm button sends the host a manifest action label, `Use <Account>` or `Log in <Account>`, over
 the same `runAction` bridge as Refresh. The host maps each label to a command (for example
 `tools/switch-account alpha`, which switches and then rebuilds the views from the cached gauge in
-about 2 s so the popup redraws at once, or `tools/claude-login-pane alpha`, which opens a terminal at
-Claude Code's `/login` for that account's home). The page never holds a command. Without a host the
+about 2 s so the popup redraws at once, or `tools/claude-login-pane alpha`, which opens claude.ai in the
+browser with that account's email filled in and signs its home in, with a banner when it lands). The page never holds a command. Without a host the
 dialog says which command to run instead.
 
 **`auto` asks Glideslope.** `glideslope.py --pick --json` → `pick_account()`: sticky — stay on

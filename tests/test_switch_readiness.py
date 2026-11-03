@@ -71,6 +71,25 @@ class SwitchReadinessTests(unittest.TestCase):
         glideslope.mark_meter_tokens(accounts, ["c@example.com#org-c"], [])
         self.assertEqual([a["meter_on"] for a in accounts], [[], [], ["laptop"]])
 
+    def test_a_silent_keeper_reads_unknown_and_a_plain_satellite_is_forgotten(self):
+        account = {"provider": "Claude", "display": "A", "login": "a@example.com#org-a"}
+        down = glideslope.mark_meter_tokens([account], None, [], {"studio"})
+        self.assertEqual((account["meter_token"], account["meter_silent"], down),
+                         ("unknown", ["studio"], {"studio"}))
+        plain = {"name": "studio", "snapshot": {"a": {"email": "a@example.com", "org_uuid": "org-a"}}}
+        self.assertEqual(glideslope.mark_meter_tokens([account], None, [plain], {"studio"}), set())
+        self.assertIsNone(account["meter_token"])
+        [ready] = glideslope.mark_switch_readiness([dict(claude("A", ["laptop"]), meter_token="unknown")], None)
+        self.assertTrue(ready["switch"]["complete"])
+
+    def test_one_email_two_plans_join_by_organization(self):
+        bravo = {"provider": "Claude", "display": "Bravo", "login": "shared@example.com#org-b"}
+        delta = {"provider": "Claude", "display": "Delta", "login": "shared@example.com#org-d"}
+        keeper = {"name": "studio", "snapshot": {
+            "b": {"email": "shared@example.com", "org_uuid": "org-b", "meter_token": True}}}
+        glideslope.mark_meter_tokens([bravo, delta], None, [keeper])
+        self.assertEqual((bravo["meter_token"], delta["meter_token"]), (True, False))
+
     def test_manifest_labels(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "m.toml"

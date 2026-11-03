@@ -928,28 +928,60 @@ def meter_token_logins(snapshot: Any) -> list[str] | None:
             for login in [login_id(row.get("email"), row.get("org_uuid"))] if login]
 
 
+METER_KEEPERS_PATH = STORE_DIR / "meter-keepers.json"  # satellites seen keeping meter tokens
+
+
 def mark_meter_tokens(
     accounts: list[dict[str, Any]], local_meters: list[str] | None,
-    satellites: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+    satellites: list[dict[str, Any]], remembered: set[str] | frozenset[str] = frozenset(),
+) -> set[str]:
     """Record, per Claude account, the satellites whose meter tokens keep it readable.
 
-    `meter_on` names them. `meter_token` is True when one does, False when some satellite
-    keeps meter tokens and none reads this account (its meters go stale whenever no
-    machine is logged in to it), and None when no satellite keeps meter tokens at all,
-    which is a setup choice, not a gap.
+    `meter_on` names them. `meter_token` is True when one does; "unknown" when a satellite
+    REMEMBERED as a keeper said nothing this read (unreachable, or its gauge failed and it
+    published no rows), so the absence of a token cannot be told from the absence of a read;
+    False when some satellite keeps meter tokens and none reads this account (its meters go
+    stale whenever no machine is logged in to it); and None when no satellite keeps any,
+    which is a setup choice, not a gap. `meter_silent` names the silent keepers.
+
+    Returns the keepers to remember: those that spoke as keepers, plus remembered ones that
+    were silent. A satellite that published rows without the field has stopped keeping.
     """
     keepers = ([(LOCAL_SATELLITE, local_meters)] if local_meters is not None else []) + [
         (satellite["name"], logins) for satellite in satellites
         for logins in [meter_token_logins(satellite.get("snapshot"))] if logins is not None]
+    spoke = {name for name, _ in keepers} | {LOCAL_SATELLITE} | {
+        satellite["name"] for satellite in satellites if satellite.get("snapshot")}
+    silent = sorted(set(remembered) - spoke)
     for account in accounts:
         if account.get("provider") != "Claude":
             continue
         mine = account.get("login") or account.get("email")
         on = [name for name, logins in keepers if any(same_login(mine, login) for login in logins)]
         account["meter_on"] = on
-        account["meter_token"] = True if on else (False if keepers else None)
-    return accounts
+        account["meter_silent"] = silent
+        account["meter_token"] = (True if on else "unknown" if silent
+                                  else False if keepers else None)
+    return {name for name, _ in keepers} | set(silent)
+
+
+def load_meter_keepers(path: Path | None = None) -> set[str]:
+    try:
+        value = json.loads((path or METER_KEEPERS_PATH).read_text())
+        return {str(name) for name in value} if isinstance(value, list) else set()
+    except (OSError, ValueError):
+        return set()
+
+
+def save_meter_keepers(keepers: set[str], path: Path | None = None) -> None:
+    path = path or METER_KEEPERS_PATH
+    if keepers == load_meter_keepers(path):
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(sorted(keepers)))
+    except OSError:
+        pass  # forgetting a keeper costs only the "unknown" state on its next silence
 
 
 def mark_switch_readiness(
@@ -980,7 +1012,7 @@ def mark_switch_readiness(
                             + ": its manifest does not declare it")
         # Setup beyond the switch itself: an account no meter token reads goes stale the
         # moment nobody is logged in to it, so its numbers can't be trusted before a switch.
-        meter = account.get("meter_token")
+        meter = account.get("meter_token")  # True, False, "unknown" or None: see mark_meter_tokens
         setup = list(problems)
         if meter is False:
             setup.append("no meter token: its numbers update only while a machine is logged in to it")
@@ -4254,7 +4286,10 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     # Also journal built-in /login switches, which bypass claude-account's hook.
     reconcile_login(accounts, live_login)
     reconcile_satellite_logins(accounts, local_logins, satellites, live_login)
-    mark_meter_tokens(accounts, local_meters, satellites)
+    keepers = mark_meter_tokens(accounts, local_meters, satellites,
+                                set() if args.skip_satellites else load_meter_keepers())
+    if not args.skip_satellites:
+        save_meter_keepers(keepers)
     mark_switch_readiness(accounts, manifest_action_labels(CLAUDE_SWITCH_MANIFEST))
     if accounts and live_login:
         try:
