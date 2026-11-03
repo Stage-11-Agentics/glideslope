@@ -43,6 +43,12 @@ host = "studio"
 # (Alpha, Bravo, Charlie...) in roster order.
 call_signs = { work = "Alpha", personal = "Bravo" }
 
+# The manifest of the surface that runs one-click switches, if one does. The
+# popup sends "Use <Account>", "Log in <Account>" and "Move all <Account>"; a host
+# that runs only declared labels refuses the rest. Set, every account whose
+# labels it lacks is flagged on the board. Unset: only a missing login is flagged.
+# switch_manifest = "/path/to/panel/glideslope.toml"
+
 # Plan labels.
 # Codex and Kimi are operator-declared: those APIs do not name the plan.
 # Claude's plan is not set here; it comes from the tier in claude-account's roster.

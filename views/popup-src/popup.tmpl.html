@@ -480,6 +480,9 @@
      its confirm button is pressed. The card holds one size in every state, so the
      buttons never jump while a result comes back. */
   .reg-row.switchable { cursor: pointer; }
+  /* a Claude account this machine cannot switch to in one click: red name, ✕ mark */
+  .reg-row.switch-blocked .reg-name { color: var(--significant); }
+  .reg-row.switch-blocked .reg-name::after { content: " ✕"; font-weight: 800; }
   /* Hovering any window of an account outlines all of that account's rows: the
      thing a click switches is the account, not the window. An outline, not a
      border, so nothing moves by a pixel. */
@@ -741,6 +744,15 @@
   /* the same fact about another satellite, one rank quieter */
   .active.remote { color: var(--muted); font-weight: 620; }
   .freshness.stale { color: var(--ahead); }
+  /* a switch that cannot be one click here: said on the row, before anyone clicks */
+  .switch-block {
+    display: block;
+    margin: 3px 0 0 12px;
+    color: var(--significant);
+    font: 700 9.2px/1.2 var(--mono);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
   .meter-tag {
     display: block;
     margin: 3px 0 0 12px;
@@ -1074,6 +1086,23 @@ const loginMarks = account => loginsOf(account).map(name =>
   (LOCAL_SAT ? name === LOCAL_SAT : true)
     ? `<span class="active">● ${escapeHTML(name)}</span>`
     : `<span class="active remote">◦ ${escapeHTML(name)}</span>`).join("");
+/* ── switch readiness ──
+   glideslope.mark_switch_readiness says whether a one-click switch to a Claude
+   account can work on this machine: a login home must be here, and the panel's
+   manifest must declare the action. The row says so before anyone clicks; the
+   dialog says why and never offers a button the host would refuse. */
+const switchOf = account => account.provider === "Claude" ? account.switch || null : null;
+const declares = (account, kind) => {
+  const declared = (switchOf(account) || {}).declared;
+  return declared == null || declared[kind] !== false;
+};
+const switchBlockHTML = account => {
+  const sw = switchOf(account);
+  if (!sw || sw.ready || account.dormant || isHere(account)) return "";
+  const why = !sw.here ? "no login here" : "panel can't run it";
+  return `<span class="switch-block" title="${escapeHTML((sw.problems || []).join("\n"))}">`
+    + `✕ can't switch · ${why}</span>`;
+};
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const endOf = window => window.resets_at ? Date.parse(window.resets_at) : null;
 const startOf = window => window.resets_at && window.window_minutes
@@ -1440,6 +1469,7 @@ function accountRowHTML(account, window) {
         </div>
         ${meterTag ? `<span class="meter-tag">${escapeHTML(meterTag)}</span>` : ""}
         ${loginMarks(account)}
+        ${switchBlockHTML(account)}
         ${freshnessHTML(account)}
       </td>
       <td>
@@ -2234,8 +2264,13 @@ function fillRegister(register, entries) {
         <span class="reg-used num">${used}</span>`;
       if (entry.account.provider === "Claude" && !entry.account.dormant) {
         row.classList.add("switchable");
+        const sw = switchOf(entry.account);
+        const blocked = sw && !sw.ready && !isHere(entry.account);
+        if (blocked) row.classList.add("switch-blocked");
         row.title = isHere(entry.account)
           ? `${entry.account.display} · this machine's account`
+          : blocked
+          ? `Can't switch to ${entry.account.display} in one click: ${(sw.problems || []).join("; ")}`
           : `Switch to ${entry.account.display}…`;
         row.addEventListener("click", () => openAccountDialog(entry.account));
         row.addEventListener("pointerenter", () => hoverAccount(entry.account));
@@ -2552,6 +2587,14 @@ function openAccountDialog(account) {
       + `Sign the browser in to claude.ai as ${account.display} first.`;
     dialogRelogin.hidden = true;
     dialogConfirm.textContent = "Open login";
+  }
+  const sw = switchOf(account);
+  const confirmKind = dialogMode === "switch" ? "Use" : "Log in";
+  if (!declares(account, confirmKind)) dialogConfirm.disabled = true;
+  if (!declares(account, "Log in")) dialogRelogin.hidden = true;
+  if (!declares(account, "Move all")) dialogMoveAll.hidden = true;
+  if (sw && !sw.ready && !isHere(account) && (sw.problems || []).length) {
+    setDialogStatus("error", `Can't switch in one click: ${sw.problems.join("; ")}.`);
   }
   dialog.dataset.open = "true";
   dialogCancel.focus();
