@@ -38,7 +38,7 @@ FILE_CACHE_VERSION = hashlib.sha256(
     Path(__file__).read_bytes() + Path(turn_trigger.__file__).read_bytes()
 ).hexdigest()
 _TIER_RE = re.compile(r'"service_tier"\s*:\s*"([a-z_]+)"')
-_EVIDENCE_MARKERS = ('"credential_org"', '"type":"user"', '"type": "user"')
+_EVIDENCE_MARKERS = ('"credential_org"', '"type":"user"', '"type": "user"', '"hook_additional_context"')
 _RECORD_ATTRIBUTES = {field: ("input_tokens" if field == "in" else field) for field in RECORD_FIELDS}
 _INTERN_FIELDS = frozenset(("tool", "model", "speed", "speed_src", "tier", "machine",
                             "sid", "org", "trigger", "version"))
@@ -209,6 +209,7 @@ class _Transcript:
         self.trigger = turn_trigger.SUBAGENT if self.is_agent else turn_trigger.SESSION_START
         self.digest: str | None = None
         self.fresh = not self.is_agent
+        self.position: tuple | None = None
         self.requests: dict[str, dict] = {}
 
     def read(self, row: dict) -> None:
@@ -225,6 +226,12 @@ class _Transcript:
         if not self.is_agent:
             opened = turn_trigger.row_trigger(row)
             if opened is not None:
+                position = turn_trigger.turn_position(row)
+                if position is not None and position == self.position:
+                    # A compaction mid-turn re-writes the turn's opening row with the same
+                    # position: the turn it opened is still running, so nothing new woke.
+                    return
+                self.position = position
                 self.trigger, self.digest = opened
                 self.fresh = True
                 return
