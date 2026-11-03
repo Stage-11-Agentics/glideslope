@@ -162,19 +162,15 @@
     text-transform: uppercase;
     cursor: pointer;
   }
-  /* The filters are previews, not tabs: resting on one shows only its set,
-     leaving shows everything again, and a click holds it (operator, 2026-09-14).
-     No box and no fill (operator, 2026-11-03): the state is the label's ink and a
-     rule under the label itself. Previewing lifts the ink and draws a faint rule;
-     holding draws it in gold; a lens another one includes (7 DAY, while FABLE is
-     held) wears the gold dimmed. A text decoration takes no layout, so no state
-     moves a pixel. */
+  /* The filters are toggles, clicked on and off (operator, 2026-11-03). No box and
+     no fill: the state is the label's ink and a rule under the label itself. Hover
+     draws a faint rule; on draws it in gold; 7 DAY riding along with FABLE wears
+     the gold dimmed. A text decoration takes no layout, so no state moves a pixel. */
   .lens {
     text-decoration: underline 2px transparent;
     text-underline-offset: 6px;
   }
-  .lens:hover { color: var(--ink-2); }
-  .lens[data-previewing="true"] { color: var(--ink); text-decoration-color: var(--muted-2); }
+  .lens:hover { color: var(--ink-2); text-decoration-color: var(--muted-2); }
   .lens[data-included="true"] { color: var(--ink-2); text-decoration-color: var(--golddim); }
   .lens[aria-pressed="true"] { color: var(--ink); text-decoration-color: var(--goldhi); }
   /* Filtered out: gone from the frame, faded in the register — a register row
@@ -939,13 +935,13 @@
 
   <nav class="lens-bar" aria-label="Plot filter">
     <button class="lens" type="button" data-filter="weekly" aria-pressed="false"
-            title="Hover to show only the 7 DAY budgets and the pools · click to hold">7 Day</button>
+            title="Toggle the 7 DAY budgets and the pools">7 Day</button>
     <button class="lens" type="button" data-filter="session" aria-pressed="false"
-            title="Hover to show only the 5 HOUR throttles · click to hold">5 Hour</button>
+            title="Toggle the 5 HOUR throttles">5 Hour</button>
     <button class="lens" type="button" data-filter="specialty" aria-pressed="false"
-            title="Hover to plot the Fable weeklies beside the 7 DAY budgets · click to hold, which also lists them below">Fable</button>
+            title="Toggle the Fable weeklies, plotted with the 7 DAY budgets and listed below">Fable</button>
     <button class="lens" type="button" data-filter="anthropic" aria-pressed="false"
-            title="A toggle: on, it hides every other provider from whichever lens is showing">Anthropic only</button>
+            title="Toggle: hide every provider but Claude">Anthropic only</button>
   </nav>
 
   <section class="plot-wrap" aria-label="Approach plot">
@@ -1012,49 +1008,45 @@ const PROJECTION_HORIZONS = {
 const horizonsFor = mark => PROJECTION_HORIZONS[mark.session ? "session" : "weekly"];
 
 /* The face is always the approach plot; the numbers live in the Detail view
-   (operator, 2026-09-14). The bar above it filters what the frame shows. Every
-   plotted node carries data-class — weekly, session, specialty, pool (Claude's)
-   or pool-total — and data-provider, and one predicate decides what survives:
+   (operator, 2026-09-14). The bar above it filters what the frame shows, as four
+   independent toggles (operator, 2026-11-03), each clicked on and off, none
+   exclusive. Every plotted node carries data-class (weekly, session, specialty,
+   pool for Claude's, pool-total) and data-provider.
+     none on    the default face: every class but Fable
      7 DAY      the weekly budgets and both pools
      5 HOUR     the throttles
-     FABLE      the 7 DAY set plus the Fable weeklies (the two weeklies read together),
-                and the only lens that plots Fable; held, it also lists Fable in the
-                register. With seven accounts their diamonds and rows
-                crowd the face, so every other view leaves them to the switch dialog
-                (operator, 2026-11-03)
-     ANTHROPIC  not a lens but a toggle (operator, 2026-11-03): on, it hides every
-                other provider from whatever lens is showing, the Claude pool kept,
-                the total pool not. It is held on its own and stacks with the rest. */
-const FILTERS = {
-  weekly: node => ["weekly", "pool", "pool-total"].includes(node.dataset.class),
-  session: node => node.dataset.class === "session",
-  specialty: node => ["weekly", "pool", "pool-total", "specialty"].includes(node.dataset.class),
-  anthropic: node => node.dataset.provider === "Claude",
+     FABLE      the Fable weeklies with the 7 DAY set (the two weeklies read
+                together), and the only toggle that plots Fable; on, it also lists
+                Fable in the register, into room the register always keeps for it
+     ANTHROPIC  narrows whatever the others show to Claude: the Claude pool kept,
+                the total pool not
+   Several window toggles show the union of their sets. */
+const WINDOW_TOGGLES = ["weekly", "session", "specialty"];
+const TOGGLE_CLASSES = {
+  weekly: ["weekly", "pool", "pool-total"],
+  session: ["session"],
+  specialty: ["weekly", "pool", "pool-total", "specialty"],
 };
-/* A held filter survives this page's own minute-ly reload — which carries it in
-   the URL — but never outlives the panel: reopening the panel asks the question fresh. */
-function initialFilter() {
-  const fromURL = new URL(location.href).searchParams.get("filter");
-  return FILTERS[fromURL] && fromURL !== "anthropic" ? fromURL : null;
+const DEFAULT_CLASSES = ["weekly", "session", "pool", "pool-total"];
+/* Held toggles survive this page's own minute-ly reload, which carries them in the
+   URL, but never outlive the panel: reopening the panel asks the question fresh. */
+function initialToggles() {
+  const raw = new URL(location.href).searchParams.get("filter") || "";
+  return raw.split(",").filter(name => WINDOW_TOGGLES.includes(name));
 }
 function initialClaudeOnly() {
   const url = new URL(location.href);
   return url.searchParams.get("claude") === "1" || url.searchParams.get("filter") === "anthropic";
 }
-let pinnedFilter = initialFilter();      // the held window lens: weekly, session, specialty
-let claudeOnly = initialClaudeOnly();    // the Anthropic only toggle, independent of the lens
-let previewFilter = null;                // a lens under the pointer, or "anthropic"
-const activeFilter = () => previewFilter && previewFilter !== "anthropic" ? previewFilter : pinnedFilter;
-const activeClaudeOnly = () => claudeOnly || previewFilter === "anthropic";
-/* What survives: the active lens's set, narrowed to Claude while the toggle is on. */
-function activePredicate() {
-  const lens = FILTERS[activeFilter()];
-  const claude = activeClaudeOnly() ? FILTERS.anthropic : null;
-  if (!lens && !claude) return null;
-  return node => (!lens || lens(node)) && (!claude || claude(node));
+let toggles = new Set(initialToggles());   // the window toggles that are on
+let claudeOnly = initialClaudeOnly();      // the Anthropic only toggle
+const fableListed = () => toggles.has("specialty");
+function shownClasses() {
+  if (!toggles.size) return new Set(DEFAULT_CLASSES);
+  return new Set([...toggles].flatMap(name => TOGGLE_CLASSES[name]));
 }
 function withFilterParams(url) {
-  if (pinnedFilter) url.searchParams.set("filter", pinnedFilter);
+  if (toggles.size) url.searchParams.set("filter", WINDOW_TOGGLES.filter(n => toggles.has(n)).join(","));
   else url.searchParams.delete("filter");
   if (claudeOnly) url.searchParams.set("claude", "1");
   else url.searchParams.delete("claude");
@@ -2243,7 +2235,7 @@ function fillRegister(register, entries) {
     // crowd the register, and the switch dialog still shows every Fable weekly. Their
     // room is kept as blank rows, so the frame is sized for the fullest register and
     // holding the lens never resizes it (operator, 2026-11-03).
-    if (entry.fable && pinnedFilter !== "specialty") {
+    if (entry.fable && !fableListed()) {
       const family = familyFor(entry.account.provider);
       reserved.set(family, (reserved.get(family) || 0) + 1);
       continue;
@@ -2426,16 +2418,18 @@ function applySelection(mark) {
     selectionClearTimer = null;
   }
   selectedMark = mark || null;
-  const filter = activePredicate();
+  const shown = shownClasses();
   for (const node of document.querySelectorAll(
       ".ils-trail, .ils-mark, .selection-reticle, .reg-row, .ils-reset, " +
       ".ils-pool-trail, .ils-pool-mark, " +
       ".ils-projection, .ils-projection-hit, .ils-projection-dot, .ils-projection-dot-hit")) {
     const match = Boolean(mark) && node.dataset.mark === mark;
     // projections carry no class of their own; they live inside a reticle that does
-    const off = (Boolean(filter) && node.dataset.class !== undefined && !filter(node))
-      || (node.dataset.class === "specialty" && activeFilter() !== "specialty"
-          && !node.classList.contains("reg-row") && !match);
+    const cls = node.dataset.class;
+    // a hidden Fable mark still shows while its own row is pointed at
+    const off = cls !== undefined
+      && ((!shown.has(cls) && !(cls === "specialty" && match))
+          || (claudeOnly && node.dataset.provider !== "Claude"));
     node.classList.toggle("selection-selected", match && !off);
     node.classList.toggle("selection-dimmed", Boolean(mark) && !match);
     node.classList.toggle("filter-off", off);
@@ -2460,53 +2454,38 @@ function bindSelection(root) {
   }
 }
 
-/* The filter bar. Resting on a filter previews it; leaving lets it go; a click
-   holds it until clicked again. The buttons never change size or place. */
+/* The filter bar: four toggles, each clicked on and off. Nothing moves on hover;
+   a click is the only thing that changes the face. The buttons never change size
+   or place. */
 const filterButtons = [...document.querySelectorAll(".lens[data-filter]")];
 function paintFilterBar() {
-  const active = activeFilter();
-  document.documentElement.dataset.filter = active || "all";
-  document.documentElement.dataset.claudeOnly = String(activeClaudeOnly());
+  document.documentElement.dataset.filter = WINDOW_TOGGLES.filter(n => toggles.has(n)).join(",") || "all";
+  document.documentElement.dataset.claudeOnly = String(claudeOnly);
   for (const button of filterButtons) {
-    if (button.dataset.filter === "anthropic") {
-      button.setAttribute("aria-pressed", String(claudeOnly));
-      button.dataset.previewing = String(previewFilter === "anthropic" && !claudeOnly);
-      button.dataset.included = "false";
-      continue;
-    }
-    button.setAttribute("aria-pressed", String(button.dataset.filter === pinnedFilter));
-    button.dataset.previewing = String(button.dataset.filter === active);
-    button.dataset.included = String(active === "specialty" && button.dataset.filter === "weekly");
+    const name = button.dataset.filter;
+    const on = name === "anthropic" ? claudeOnly : toggles.has(name);
+    button.setAttribute("aria-pressed", String(on));
+    // 7 DAY rides along with FABLE: said with the dimmed rule, not claimed as held
+    button.dataset.included = String(name === "weekly" && !on && toggles.has("specialty"));
   }
 }
-function setPreview(filter) {
-  if (previewFilter === filter) return;
-  previewFilter = filter;
-  paintFilterBar();
-  applySelection(selectedMark);
-}
 for (const button of filterButtons) {
-  button.addEventListener("pointerenter", () => setPreview(button.dataset.filter));
-  button.addEventListener("pointerleave", () => setPreview(null));
-  button.addEventListener("focus", () => setPreview(button.dataset.filter));
-  button.addEventListener("blur", () => setPreview(null));
   button.addEventListener("click", () => {
-    if (button.dataset.filter === "anthropic") {  // a toggle: the lens stays as it is
+    const name = button.dataset.filter;
+    if (name === "anthropic") {
       claudeOnly = !claudeOnly;
-      history.replaceState(null, "", withFilterParams(new URL(location.href)));
-      paintFilterBar();
-      applySelection(selectedMark);
-      return;
+    } else {
+      const listed = fableListed();
+      if (toggles.has(name)) toggles.delete(name);
+      else toggles.add(name);
+      if (listed !== fableListed()) {
+        // the Fable rows move in or out of the room kept for them; the frame stays put
+        history.replaceState(null, "", withFilterParams(new URL(location.href)));
+        renderView();
+        return;
+      }
     }
-    const listedFable = pinnedFilter === "specialty";
-    pinnedFilter = pinnedFilter === button.dataset.filter ? null : button.dataset.filter;
     history.replaceState(null, "", withFilterParams(new URL(location.href)));
-    // Holding or letting go of the Fable lens adds or drops its register rows, so the
-    // frame re-fits once, on the click; a hover preview never changes the rows.
-    if (listedFable !== (pinnedFilter === "specialty")) {
-      renderView();
-      return;
-    }
     paintFilterBar();
     applySelection(selectedMark);
   });
