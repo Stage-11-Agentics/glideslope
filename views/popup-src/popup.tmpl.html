@@ -28,7 +28,7 @@
     --charlie: #a8404f;   /* wine: redder than clay, so A and C part at a glance (2026-10-01) */
     --delta:   #c28b2c;   /* ochre */
     --codex: #1ba576;
-    --next-up: #4ade80;   /* the suggested next account's edge */
+    --next-up: #ffd76a;   /* the suggested next account's NEXT tag: Glideslope's gold */
     --kimi: #d1568f;
     --grok: #5b9cff;
     --router: #8d68e8;
@@ -449,39 +449,32 @@
   .reg-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 5px;
     height: 24px;
     padding: 0 4px;
     border-radius: 4px;
   }
-  /* Which account you are logged into is said the way the plot says it — in
-     luminance, never in hue. Gold made the row read as a warning about itself;
-     the same emphasis restated in ink is only the sentence "you are here": an
-     ink wash, an ink bar down the inside edge, and the row's text lifted from
-     --ink-2 to full --ink. No glow: a text-shadow in ink is a smudge, and the
-     brightness against the rows around it is already doing the work. The chips
-     keep their own ink/steel colours — identity and window class are separate
-     axes and neither may repaint the other. */
-  .reg-row.logged-in {
-    background: color-mix(in oklab, var(--ink) 11%, transparent);
-    box-shadow: inset 2px 0 0 var(--ink);
+  /* ── account state, in words (operator, 2026-11-03) ──
+     A fixed column at the head of every Claude row says it: NOW, the account in use
+     here (filled ink); NEXT, the suggested move (glideslope.mark_next_up; a gold
+     outline); OUT, a weekly spent to its ceiling (a gray outline, and the row grays
+     with it); or, in quiet gray, the machine that flies the account elsewhere. Words,
+     never an edge strip. NOW also lifts the row's text to full ink. */
+  .reg-state {
+    width: 5ch; flex: 0 0 auto; text-align: center; border-radius: 3px; color: transparent;
+    font: 800 8.5px/15px var(--mono); letter-spacing: .06em; white-space: nowrap; overflow: hidden;
   }
+  .reg-state[data-state="now"] { color: var(--void); background: var(--ink); }
+  .reg-state[data-state="next"] { color: var(--next-up); box-shadow: inset 0 0 0 1px var(--next-up); }
+  .reg-state[data-state="out"] { color: var(--muted-2); box-shadow: inset 0 0 0 1px var(--bezel-bright); }
+  .reg-state[data-state="there"] { color: var(--muted); }
   .reg-row.logged-in .reg-name,
-  .reg-row.logged-in .reg-used {
-    color: var(--ink);
-  }
-  /* An account flown from ANOTHER satellite is being spent too — but not from
-     this seat, and the row must not claim otherwise. So the same sentence one
-     rank quieter: no wash, and the bar moves to the outside edge. */
-  .reg-row.remote-login { box-shadow: inset -2px 0 0 var(--muted-2); }
-  .reg-row.logged-in.remote-login {
-    box-shadow: inset 2px 0 0 var(--ink), inset -2px 0 0 var(--muted-2);
-  }
-  /* The suggested next account (glideslope.mark_next_up): a green bar down the
-     outside edge, the mirror of the ink bar that says "you are here". It outranks
-     the quieter remote-login bar on the same edge. */
-  .reg-row.next-up,
-  .reg-row.next-up.remote-login { box-shadow: inset -3px 0 0 var(--next-up); }
+  .reg-row.logged-in .reg-used { color: var(--ink); }
+  .reg-row.spent .reg-name, .reg-row.spent .reg-used,
+  .reg-row.spent .reg-spend, .reg-row.spent .reg-dev.reg-dev { color: var(--muted-2); }
+  .reg-row.spent .window-chip { color: var(--muted-2); border-color: var(--bezel); background: none; }
+  .reg-row.spent .meter-badge circle, .reg-row.spent .meter-badge polygon { stroke: var(--muted-2); }
+  .reg-row.spent .meter-badge text { fill: var(--muted-2); }
   /* ── switching accounts ──
      A Claude row is a door: clicking it opens this dialog, and nothing moves until
      its confirm button is pressed. The card holds one size in every state, so the
@@ -495,7 +488,7 @@
      card (what the account has, what it lacks, what would fix it), and clicking it
      opens the switch dialog (operator, 2026-11-03). The glyph is generated content,
      so the row's text, which the honesty gate reads, is unchanged. */
-  .setup-mark { padding: 0 3px; margin-left: 2px; color: var(--muted); font-weight: 600; cursor: pointer; }
+  .setup-mark { padding: 0 2px; color: var(--muted); font-weight: 600; cursor: pointer; }
   .setup-mark::before { content: "ⓘ"; }
   .reg-row.account-hover .setup-mark { color: var(--ink-2); }
   .setup-mark:hover, .setup-mark:focus-visible { color: var(--ink); outline: none; }
@@ -625,8 +618,10 @@
      grid, never block children: innerText has to stay one line, because the
      honesty gate reads this row as text. */
   .reg-account, .reg-window { display: inline-block; }
-  .reg-account { width: 7.5ch; }
-  .reg-window { width: 6ch; }
+  /* exactly what the longest name ("Charlie", "Foxtrot") and a chip plus its colon
+     need: the state column at the head of the row spends the rest */
+  .reg-account { width: 7.2ch; }
+  .reg-window { width: 5ch; }
   /* The register is the one list in the popup where a 7 DAY budget and a 5 HOUR
      throttle sit line after line, and two characters of text is not enough to
      tell them apart at a glance. Every chip starts at the same x — one flush
@@ -1126,6 +1121,20 @@ const nextUpPhrase = account => {
     + hoursPhrase(up.hours_left)
     + (up.session_percent != null ? `, 5 hour window at ${Math.round(up.session_percent)}%` : "");
 };
+/* An account whose weekly (all models or Fable) reached its ceiling: OUT until it resets. */
+const isSpent = account => (account.limits || []).some(w =>
+  (w.meter_id === "weekly_all" || w.meter_id === "weekly_fable")
+  && w.used_percent != null && w.used_percent >= 99.5 && !rolled(w));
+function stateTagHTML(account) {
+  const away = loginsOf(account).filter(name => name !== LOCAL_SAT);
+  const [state, word] = isHere(account) ? ["now", "NOW"]
+    : account.next_up ? ["next", "NEXT"]
+    : isSpent(account) ? ["out", "OUT"]
+    : away.length ? ["there", away[0].slice(0, 5).toUpperCase()]
+    : ["", ""];
+  return `<span class="reg-state" data-state="${state}"`
+    + `${state === "there" ? ` title="Logged in on ${escapeHTML(away.join(", "))}"` : ""}>${escapeHTML(word)}</span>`;
+}
 const nextUpAccount = () => (SNAP.accounts || []).find(a => a.provider === "Claude" && a.next_up);
 const idleHint = () => nextUpAccount() ? `⇄ click to switch · next: ${nextUpAccount().display}` : SWITCH_HINT;
 /* Hovering a Claude row lights every row of that account and rewrites the
@@ -2344,6 +2353,7 @@ function fillRegister(register, entries) {
         drow.dataset.class = "weekly";
         drow.style.setProperty("--acc", colorFor(entry.account.display));
         drow.innerHTML = `
+          ${entry.account.provider === "Claude" ? `<span class="reg-state" data-state=""></span>` : ""}
           <span class="reg-key"></span>
           <span class="reg-name"><span class="reg-account">${escapeHTML(entry.account.display)}</span>
             <span class="dormant-tag">dormant</span><span class="reg-clock">—</span></span>
@@ -2371,6 +2381,7 @@ function fillRegister(register, entries) {
       const used = entry.window.resets_at && entry.window.used_percent != null
         ? `${Math.round(entry.window.used_percent)}%` : "—";
       row.innerHTML = `
+        ${entry.account.provider === "Claude" ? stateTagHTML(entry.account) : ""}
         <span class="reg-key">${badgeSVG(entry.account, entry.window, entry.session)}</span>
         <span class="reg-name">${name}${entry.account.provider === "Claude" && setupGaps(entry.account).length
           ? `<span class="setup-mark" role="button" tabindex="0" aria-label="${escapeHTML(
@@ -2384,6 +2395,7 @@ function fillRegister(register, entries) {
         const gaps = setupGaps(entry.account);
         if (gaps.length) row.classList.add("setup-gap");
         if (entry.account.next_up) row.classList.add("next-up");
+        if (isSpent(entry.account)) row.classList.add("spent");
         row.title = (isHere(entry.account)
           ? `${entry.account.display} · this machine's account`
           : `Switch to ${entry.account.display}…`)
