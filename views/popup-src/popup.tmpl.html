@@ -28,6 +28,7 @@
     --charlie: #a8404f;   /* wine: redder than clay, so A and C part at a glance (2026-10-01) */
     --delta:   #c28b2c;   /* ochre */
     --codex: #1ba576;
+    --next-up: #4ade80;   /* the suggested next account's edge */
     --kimi: #d1568f;
     --grok: #5b9cff;
     --router: #8d68e8;
@@ -475,6 +476,11 @@
   .reg-row.logged-in.remote-login {
     box-shadow: inset 2px 0 0 var(--ink), inset -2px 0 0 var(--muted-2);
   }
+  /* The suggested next account (glideslope.mark_next_up): a green bar down the
+     outside edge, the mirror of the ink bar that says "you are here". It outranks
+     the quieter remote-login bar on the same edge. */
+  .reg-row.next-up,
+  .reg-row.next-up.remote-login { box-shadow: inset -3px 0 0 var(--next-up); }
   /* ── switching accounts ──
      A Claude row is a door: clicking it opens this dialog, and nothing moves until
      its confirm button is pressed. The card holds one size in every state, so the
@@ -932,7 +938,7 @@
     <button class="lens" type="button" data-filter="session" aria-pressed="false"
             title="Hover to show only the 5 HOUR throttles · click to hold">5 Hour</button>
     <button class="lens" type="button" data-filter="specialty" aria-pressed="false"
-            title="Hover to show only the model-specific weeklies (Fable) · click to hold">Specialty</button>
+            title="Hover to show the Fable weeklies, which the plot hides otherwise · click to hold">Fable</button>
     <button class="lens" type="button" data-filter="anthropic" aria-pressed="false"
             title="Hover to show only Claude · click to hold">Anthropic only</button>
   </nav>
@@ -1006,7 +1012,9 @@ const horizonsFor = mark => PROJECTION_HORIZONS[mark.session ? "session" : "week
    or pool-total — and data-provider, and one predicate decides what survives:
      7 DAY      the weekly budgets and both pools
      5 HOUR     the throttles
-     SPECIALTY  the model-specific weeklies (Fable, today)
+     FABLE      the Fable weeklies, and the only lens that plots them: with seven
+                accounts their diamonds crowd the frame, so the default view and the
+                Anthropic lens leave them to the register (operator, 2026-11-03)
      ANTHROPIC  anything Claude, the Claude pool included, the total pool not */
 const FILTERS = {
   weekly: node => ["weekly", "pool", "pool-total"].includes(node.dataset.class),
@@ -1071,6 +1079,18 @@ const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, char => ({
    satellites existed still reads correctly. */
 const LOCAL_SAT = SNAP.local_satellite || "";
 const SWITCH_HINT = "⇄ click an account to switch";
+/* The green edge, in words: why this account is the one to move to next. */
+const hoursPhrase = hours => hours >= 24 ? `${Math.floor(hours / 24)}d ${Math.round(hours % 24)}h`
+  : `${Math.round(hours)}h`;
+const nextUpPhrase = account => {
+  const up = account.next_up;
+  return `Suggested next: ${Math.round(up.remaining_percent)}% of its week left, resets in `
+    + hoursPhrase(up.hours_left)
+    + (up.session_percent != null && up.session_percent >= 85
+      ? ` (its 5 hour window is at ${Math.round(up.session_percent)}%)` : "");
+};
+const nextUpAccount = () => (SNAP.accounts || []).find(a => a.provider === "Claude" && a.next_up);
+const idleHint = () => nextUpAccount() ? `⇄ click to switch · next: ${nextUpAccount().display}` : SWITCH_HINT;
 /* Hovering a Claude row lights every row of that account and rewrites the
    Anthropic header's hint into the exact thing a click will do. */
 function hoverAccount(account) {
@@ -1080,7 +1100,7 @@ function hoverAccount(account) {
   const hint = document.querySelector(".switch-hint");
   if (!hint) return;
   if (!account) {
-    hint.textContent = SWITCH_HINT;
+    hint.textContent = idleHint();
     hint.dataset.live = "";
   } else if (setupGaps(account).length) {
     hint.textContent = (isHere(account) ? `● ${account.display} here · ` : `ⓘ ${account.display}: `)
@@ -2245,7 +2265,7 @@ function fillRegister(register, entries) {
       ? `<span class="family-total num" title="${escapeHTML(family)}: API-equivalent at list prices, rolling 7 days${fam.all ? ` · ${spendFmt(fam.all.usd)} all time` : ""}; not money spent">${spendFmt(fam.d7.usd)}<small>7D</small></span>`
       : "";
     const hint = family === "Anthropic"
-      ? `<span class="switch-hint" data-live="">${SWITCH_HINT}</span>` : "";
+      ? `<span class="switch-hint" data-live="">${escapeHTML(idleHint())}</span>` : "";
     box.innerHTML = `<div class="family-label"><span>${escapeHTML(family)}${hint}</span>${famTotal}</div>`;
     const rows = document.createElement("div");
     rows.className = "family-rows";
@@ -2297,9 +2317,11 @@ function fillRegister(register, entries) {
         row.classList.add("switchable");
         const gaps = setupGaps(entry.account);
         if (gaps.length) row.classList.add("setup-gap");
+        if (entry.account.next_up) row.classList.add("next-up");
         row.title = (isHere(entry.account)
           ? `${entry.account.display} · this machine's account`
           : `Switch to ${entry.account.display}…`)
+          + (entry.account.next_up ? `\n→ ${nextUpPhrase(entry.account)}` : "")
           + (gaps.length ? `\nⓘ Not fully set up: ${gaps.join(", ")}` : "");
         row.addEventListener("click", () => openAccountDialog(entry.account));
         row.addEventListener("pointerenter", () => hoverAccount(entry.account));
@@ -2369,7 +2391,9 @@ function applySelection(mark) {
       ".ils-projection, .ils-projection-hit, .ils-projection-dot, .ils-projection-dot-hit")) {
     const match = Boolean(mark) && node.dataset.mark === mark;
     // projections carry no class of their own; they live inside a reticle that does
-    const off = Boolean(filter) && node.dataset.class !== undefined && !filter(node);
+    const off = (Boolean(filter) && node.dataset.class !== undefined && !filter(node))
+      || (node.dataset.class === "specialty" && activeFilter() !== "specialty"
+          && !node.classList.contains("reg-row") && !match);
     node.classList.toggle("selection-selected", match && !off);
     node.classList.toggle("selection-dimmed", Boolean(mark) && !match);
     node.classList.toggle("filter-off", off);
@@ -2651,6 +2675,7 @@ function openAccountDialog(account) {
     dialogRelogin.hidden = true;
     dialogConfirm.textContent = "Sign in";
   }
+  if (account.next_up) dialogBody.textContent += ` ${nextUpPhrase(account)}.`;
   const confirmKind = dialogMode === "switch" ? "Use" : "Log in";
   if (!declares(account, confirmKind)) dialogConfirm.disabled = true;
   if (!declares(account, "Log in")) dialogRelogin.hidden = true;

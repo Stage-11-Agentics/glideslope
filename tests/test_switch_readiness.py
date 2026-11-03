@@ -92,6 +92,26 @@ class SwitchReadinessTests(unittest.TestCase):
         glideslope.mark_meter_tokens([bravo, delta], None, [keeper])
         self.assertEqual((bravo["meter_token"], delta["meter_token"]), (True, False))
 
+    def test_next_up_is_the_capacity_closest_to_expiring(self):
+        import datetime as dt
+        now = dt.datetime(2026, 11, 3, 18, 0, tzinfo=dt.timezone.utc)
+
+        def acct(name, used, hours, fable=None, here=False):
+            limits = [{"meter_id": "weekly_all", "label": "Weekly · all models", "used_percent": used,
+                       "resets_at": now + dt.timedelta(hours=hours)}]
+            if fable is not None:
+                limits.append({"meter_id": "weekly_fable", "label": "Weekly · Fable", "used_percent": fable,
+                               "resets_at": now + dt.timedelta(hours=hours)})
+            return {"provider": "Claude", "display": name, "limits": limits,
+                    "logins": ["laptop"] if here else []}
+        accounts = [acct("Echo", 49, 68), acct("Delta", 0, 158), acct("Charlie", 88, 70),
+                    acct("Foxtrot", 28, 44, here=True), acct("Golf", 10, 10, fable=90)]
+        glideslope.mark_next_up(accounts, now)
+        self.assertEqual([a["display"] for a in accounts if a["next_up"]], ["Echo"])
+        self.assertEqual(accounts[0]["next_up"]["remaining_percent"], 51.0)
+        glideslope.mark_next_up(accounts[2:4], now)  # only the spent and the current: nobody
+        self.assertFalse(any(a["next_up"] for a in accounts[2:4]))
+
     def test_manifest_labels(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "m.toml"
