@@ -934,6 +934,7 @@ METER_KEEPERS_PATH = STORE_DIR / "meter-keepers.json"  # satellites seen keeping
 def mark_meter_tokens(
     accounts: list[dict[str, Any]], local_meters: list[str] | None,
     satellites: list[dict[str, Any]], remembered: set[str] | frozenset[str] = frozenset(),
+    *, local_read: bool = True,
 ) -> set[str]:
     """Record, per Claude account, the satellites whose meter tokens keep it readable.
 
@@ -950,7 +951,7 @@ def mark_meter_tokens(
     keepers = ([(LOCAL_SATELLITE, local_meters)] if local_meters is not None else []) + [
         (satellite["name"], logins) for satellite in satellites
         for logins in [meter_token_logins(satellite.get("snapshot"))] if logins is not None]
-    spoke = {name for name, _ in keepers} | {LOCAL_SATELLITE} | {
+    spoke = {name for name, _ in keepers} | ({LOCAL_SATELLITE} if local_read else set()) | {
         satellite["name"] for satellite in satellites if satellite.get("snapshot")}
     silent = sorted(set(remembered) - spoke)
     for account in accounts:
@@ -4256,6 +4257,7 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     # the fleet sees more of the position than this machine alone ever could.
     satellites = [] if args.skip_satellites else read_satellites(now, warnings)
     local_meters: list[str] | None = None
+    local_read = False
 
     # Who is logged in here, read before the gauge so a login change expires it.
     local_logins = local_login_ids()
@@ -4274,6 +4276,7 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
                         if args.claude_snapshot == DEFAULT_CLAUDE_SNAPSHOT else None),
             )
             local_meters = meter_token_logins(claude)  # before the merge folds remote rows in
+            local_read = True
             merge_satellite_claude(claude, satellites, now, warnings=warnings)
             accounts.extend(keep_claude_state(
                 normalize_claude(claude, observed_at), claude, now))
@@ -4286,8 +4289,11 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     # Also journal built-in /login switches, which bypass claude-account's hook.
     reconcile_login(accounts, live_login)
     reconcile_satellite_logins(accounts, local_logins, satellites, live_login)
+    # Only a machine still configured can be a silent keeper: a retired one is forgotten.
+    configured = {LOCAL_SATELLITE} | {str(s.get("name")) for s in REMOTE_SATELLITES}
     keepers = mark_meter_tokens(accounts, local_meters, satellites,
-                                set() if args.skip_satellites else load_meter_keepers())
+                                set() if args.skip_satellites else load_meter_keepers() & configured,
+                                local_read=local_read)
     if not args.skip_satellites:
         save_meter_keepers(keepers)
     mark_switch_readiness(accounts, manifest_action_labels(CLAUDE_SWITCH_MANIFEST))

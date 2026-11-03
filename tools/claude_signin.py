@@ -129,6 +129,14 @@ def start(account: str, default: bool) -> int:
     login, email, display, home = target(account, default)
     claude_binary()  # fail now, in the action's own output, rather than in the detached half
     SIGNIN_DIR.mkdir(parents=True, exist_ok=True)
+    with open(SIGNIN_DIR / f"{home.name}.lock", "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        except OSError:
+            print(f"a {display} sign-in is already waiting in the browser", file=sys.stderr)
+            print(f"a {display} sign-in is already waiting in the browser")
+            return 1
     log = SIGNIN_DIR / f"{home.name}.log"
     cmd = [sys.executable, str(Path(__file__).resolve()), "--wait", account]
     if default:
