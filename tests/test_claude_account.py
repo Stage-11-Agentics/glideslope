@@ -619,6 +619,28 @@ class MeterTokenTests(MeterCase):
         self.assertNotIn("extra_usage", row)
         self.assertNotIn("secret", out)
 
+    def test_an_email_resolves_to_its_one_organization_or_refuses(self):
+        self.assertEqual(self.tool.resolve_exact_login("lab@example.com"), "lab@example.com#org-lab")
+        roster = self.tool.roster_read()
+        roster["lab-two"] = {"email": "lab@example.com", "org_uuid": "org-lab-two"}
+        self.tool.roster_write(roster)
+        with self.assertRaises(RuntimeError) as shared:
+            self.tool.resolve_exact_login("lab@example.com")
+        self.assertIn("holds 2 accounts", str(shared.exception))
+        self.assertEqual(self.tool.resolve_exact_login("lab-two"), "lab@example.com#org-lab-two")
+        with self.assertRaises(RuntimeError):
+            self.tool.resolve_exact_login("nobody")
+
+    def test_status_says_which_accounts_a_meter_token_covers(self):
+        out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"], lambda token, **_: None)
+        self.assertNotIn("meter_token", json.loads(out)["lab"])  # no tokens here: no claim either way
+        self.token("lab.token")
+        out, _, _ = self.run_cmd(self.tool.cmd_status, ["--json"],
+                                 lambda token, **_: ("org-lab", self.tool.meter_rows(self.HEADERS), None))
+        report = json.loads(out)
+        self.assertTrue(report["lab"]["meter_token"])
+        self.assertFalse(report["personal"]["meter_token"])
+
     def test_a_meter_read_drops_a_cached_counter_and_a_stale_login_keeps_one(self):
         self.tool.cache_put(
             "lab", "lab@example.com",

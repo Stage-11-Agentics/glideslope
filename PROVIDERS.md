@@ -138,8 +138,8 @@ into; every "logged in here" mark reads `logins`.
 confirm button sends the host a manifest action label, `Use <Account>` or `Log in <Account>`, over
 the same `runAction` bridge as Refresh. The host maps each label to a command (for example
 `tools/switch-account alpha`, which switches and then rebuilds the views from the cached gauge in
-about 2 s so the popup redraws at once, or `tools/claude-login-pane alpha`, which opens a terminal at
-Claude Code's `/login` for that account's home). The page never holds a command. Without a host the
+about 2 s so the popup redraws at once, or `tools/claude-login-pane alpha`, which opens claude.ai in the
+browser with that account's email filled in and signs its home in, with a banner when it lands). The page never holds a command. Without a host the
 dialog says which command to run instead.
 
 **`auto` asks Glideslope.** `glideslope.py --pick --json` → `pick_account()`: sticky — stay on
@@ -312,6 +312,19 @@ faster cadence.
 
 **Team plans.** Seats on one Team plan share an organization, so an org ID cannot tell them
 apart. Two roster entries with the same org are ambiguous and are never credited.
+
+**Adding one.** `tools/add-meter-token <account>` runs `claude setup-token` with the account's
+email filled in on claude.ai (`login_hint`, as `claude auth login --email` sends it), captures the
+token from its output without echoing it, verifies it bills that account, places it on the first
+configured satellite (`--to <host>` or `local` for another), teaches that satellite's roster the
+account (`note`), and copies it to Bitwarden when the vault is unlocked (`--backup` does that later).
+A token that bills another account is dropped, not placed.
+
+**Who has one.** A machine that keeps meter tokens adds `meter_token: true|false` to every row of
+`claude-account status --json` (by the hash map above; no request); a machine with none omits the
+field. The reader joins that by login id into `meter_on` and `meter_token` per account: false when
+some satellite keeps tokens and none reads this account, None when no satellite keeps any. The
+popup marks an account that lacks one with its setup ⓘ.
 
 **Verifying a token before trusting it with work.** `claude-account whose <file> --expect
 <account> --json` reports the org, email, call-sign and meters for a token and exits `0` when
