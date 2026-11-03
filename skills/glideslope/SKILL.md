@@ -65,6 +65,8 @@ spend used each basis:
 
 - `transcript`: the latest `credential_org` in the request's own transcript, joined to the
   roster. A subagent inherits its parent's.
+- `unowned org`: the transcript names an organization no single roster seat owns. It stays
+  `unattributed`; the record proves the machine's login did not pay.
 - `token`: the satellite beacon saw the session running under `CLAUDE_CODE_OAUTH_TOKEN` and the
   token's account is known. The beacon stores a fingerprint, never the token. A warning naming a
   fingerprint means `claude-account whose <token-file>` needs to run once where the token is.

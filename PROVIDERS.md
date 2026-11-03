@@ -637,13 +637,11 @@ Each Claude request is credited by the strongest evidence it has. `attribution_b
 | Basis | Evidence | Reach |
 |---|---|---|
 | `transcript` | The latest `credential_org` attachment at or before the request in its own transcript, joined to the roster's `org_uuid`. A subagent inherits its parent session's organization at the request's time. | Sessions on a login, across any `/login` switch. |
+| `unowned org` | The transcript names an organization no single roster seat owns: Team seats sharing one, or an account the roster lacks. The request stays `unattributed`, never the machine's login, which the record proves did not pay. | |
 | `token` | The beacon saw the session running under `CLAUDE_CODE_OAUTH_TOKEN`, and that token's account is known. | Sessions launched with an env token. They write no `credential_org`. |
 | `unseen token` | No organization, from Claude Code 2.1.281 or later, which records one in every transcript it bills through a login. The request ran under a token nothing identified, and stays `unattributed`. | Token sessions that ended before a beacon tick, or before the beacon was installed. |
 | `timeline` | The account most recently seen logged in on the machine, from the switch log and samples. | Older Claude Code versions with no other evidence. |
 | `none` | No evidence, or evidence older than 24 hours. The request stays `unattributed`. | |
-
-An organization that several roster entries share (Team seats) names no single account and
-falls through to the next basis.
 
 `timeline` is the only basis that can name the wrong account, and it now applies only to
 versions before 2.1.281. On a machine whose sessions all run under tokens, no transcript records
@@ -654,9 +652,10 @@ is `unseen token`.
 `~/.claude/sessions/<pid>.json`, takes the fingerprint of `CLAUDE_CODE_OAUTH_TOKEN` in that
 process's environment (`ps -E`), and drops the value. It writes `<store>/session-tokens.json`,
 mode `0600`: one span per session and process, `{fp, start, first_seen, last_seen}`, plus a
-`tokens` map of fingerprint to organization. A request binds to a span between its process start
-and 15 minutes past its last sighting. Spans are only ever extended, and a token named late still
-credits sessions seen earlier.
+`tokens` map of fingerprint to organization. A span is one process: keyed by its start, or by its
+pid when the session file gives no start. A request binds to a span between its process start and
+15 minutes past its last sighting. Spans are only ever extended or merged, never dropped, and a
+token named late still credits sessions seen earlier.
 
 **Never a token, never a third credential path.** The beacon hashes the value in memory. It
 never stores, logs or sends it, and it makes no request with it, so the account behind a
@@ -669,9 +668,12 @@ running sessions per fingerprint.
 ### What woke the agent
 
 `turn_trigger.py` names the transcript row that opened each turn, and every request in the turn
-carries that label. Only a user row opens a turn. A notification, prompt or mail that arrives while
-the agent is working is a `queued_command` attachment folded into the running turn, so it wakes
-nothing. `spend.json` `triggers` lists dollars, turns and requests per label for
+carries that label. Claude Code marks the row that opens a turn with `turnOrigin` and
+`turnPosition`. That row can be a meta row: a peer message or a scheduled wakeup at idle is one.
+A marked row opens a turn and is labelled by its `turnOrigin`; an unmarked meta row is a system
+insert and opens nothing. A notification, prompt or mail that arrives while the agent is working is
+a `queued_command` attachment folded into the running turn, so it wakes nothing. Transcripts too
+old to carry the marks are labelled from the row's text. `spend.json` `triggers` lists dollars, turns and requests per label for
 `d1`, `d7`, `d30` and `all`, heaviest first, with each label's five costliest sessions.
 
 | Label | Row |
@@ -769,7 +771,7 @@ transcript history and machine. The collector uses two workers by default;
 |---|---|
 | `generated_at`, `collected_at`, `first_request_at` | Build time, per-machine collection time and earliest request time. |
 | `attribution`, `accounts[]`, `machines` | Claude account attribution and spend, plus machine totals. |
-| `attribution_basis` | Claude dollars and requests per basis (`transcript`, `token`, `unseen token`, `timeline`, `none`) for `d1`, `d7`, `d30` and `all`. |
+| `attribution_basis` | Claude dollars and requests per basis (`transcript`, `unowned org`, `token`, `unseen token`, `timeline`, `none`) for `d1`, `d7`, `d30` and `all`. |
 | `triggers` | What woke the agent, per label, for the same horizons. |
 | `totals`, `providers`, `meters`, `leverage` | Combined, provider, anchored meter-window and subscription comparison buckets. |
 | `daily` | 60-day date list and daily spend series. |

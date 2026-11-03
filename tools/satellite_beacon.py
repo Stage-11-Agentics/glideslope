@@ -247,19 +247,51 @@ def token_sightings() -> list[dict]:
             continue
         fingerprint = process_token_fingerprint(pid)
         if fingerprint:
-            sightings.append({"session": session, "fp": fingerprint,
+            sightings.append({"session": session, "fp": fingerprint, "pid": pid,
                               "start": _millis_iso(record.get("startedAt"))})
     return sightings
+
+
+def _process_key(sighting: dict) -> str:
+    """Which process a sighting is: its start time, else its pid when the session file has none."""
+    return sighting.get("start") or "pid:%s" % sighting.get("pid")
+
+
+def _span_process(span: dict) -> str | None:
+    # Spans written before `process` existed are keyed by their start.
+    return span.get("process") or span.get("start")
+
+
+def _coalesce(spans: list) -> list:
+    """Merge runs of spans that one process left because its start was unknown.
+
+    Such a span's start is its first sighting. Before spans were keyed by process, each tick of
+    that process opened a new one, so a run of them with one token and no process key is one
+    span. Other spans are left as they are.
+    """
+    merged: list = []
+    for span in spans:
+        last = merged[-1] if merged else None
+        if (last is not None and isinstance(span, dict) and not span.get("process")
+                and not last.get("process") and last.get("fp") == span.get("fp")
+                and last.get("start") == last.get("first_seen")
+                and span.get("start") == span.get("first_seen")):
+            last["last_seen"] = span.get("last_seen", last.get("last_seen"))
+        else:
+            merged.append(span)
+    return merged
 
 
 def record_token_sessions(sightings: list[dict], now: str, path: Path | None = None,
                           orgs_path: Path | None = None) -> tuple[dict[str, int], list[str]]:
     """Fold sightings into the evidence file. Returns (sessions per fingerprint, unnamed fingerprints).
 
-    {"schema": 1, "tokens": {fp: org}, "sessions": {id: [{fp, start, first_seen, last_seen}]}}.
-    A session gets a new span when its token or its process start changes. Spans are only
-    ever extended, so the file is the whole history of what this machine saw. A file that
-    cannot be read raises rather than being replaced: history is not rebuilt from one tick.
+    {"schema": 1, "tokens": {fp: org},
+     "sessions": {id: [{fp, process, start, first_seen, last_seen}]}}.
+    A session gets a new span when its token or its process changes. `process` is the process
+    start, or its pid when the session file gives no start. Spans are only ever extended or
+    merged, never dropped, so the file is the whole history of what this machine saw. A file
+    that cannot be read raises rather than being replaced: history is not rebuilt from one tick.
     """
     path = path or TOKEN_EVIDENCE
     try:
@@ -273,13 +305,17 @@ def record_token_sessions(sightings: list[dict], now: str, path: Path | None = N
     except (OSError, ValueError):
         known = {}
     counts: dict[str, int] = {}
+    for session in list(sessions):
+        if isinstance(sessions[session], list):
+            sessions[session] = _coalesce(sessions[session])
     for sighting in sightings:
         spans = sessions.setdefault(sighting["session"], [])
         counts[sighting["fp"]] = counts.get(sighting["fp"], 0) + 1
-        if spans and spans[-1].get("fp") == sighting["fp"] and spans[-1].get("start") == sighting["start"]:
+        process = _process_key(sighting)
+        if spans and spans[-1].get("fp") == sighting["fp"] and _span_process(spans[-1]) == process:
             spans[-1]["last_seen"] = now
         else:
-            spans.append({"fp": sighting["fp"], "start": sighting["start"] or now,
+            spans.append({"fp": sighting["fp"], "process": process, "start": sighting["start"] or now,
                           "first_seen": now, "last_seen": now})
     # A name, once learned, is kept: a run whose map has lost a fingerprint must not un-credit
     # sessions it already named.

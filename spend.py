@@ -29,9 +29,9 @@ from quarantine import hide_quarantined
 
 HORIZONS = ("d1", "d7", "d30", "d90", "all")
 MODEL_HORIZONS = ("d1", "d7", "d30", "all")
-# How a Claude request found its account, strongest evidence first. "unseen token" and "none"
-# stay unattributed.
-BASES = ("transcript", "token", "unseen token", "timeline", "none")
+# How a Claude request found its account, strongest evidence first. "unowned org",
+# "unseen token" and "none" stay unattributed.
+BASES = ("transcript", "unowned org", "token", "unseen token", "timeline", "none")
 # The first Claude Code that writes credential_org into every transcript it bills through a login.
 # A request from it or later with no organization ran under a token.
 ORG_RECORD_SINCE = (2, 1, 281)
@@ -322,9 +322,11 @@ def _credit(record: Any, ms: int | None, orgs: dict[str, str], evidence: dict,
     A request with no organization from a Claude Code that always records one ran under a token
     nothing identified. The machine's login did not pay for it, so it stays unattributed.
     """
-    name = orgs.get(record.get("org"))
-    if name:
-        return name, "transcript"
+    org = record.get("org")
+    if org:
+        # The transcript names who paid. An org no single roster seat owns (Team seats sharing
+        # one, or an account the roster lacks) still proves the machine's login did not pay.
+        return (orgs[org], "transcript") if org in orgs else ("unattributed", "unowned org")
     if ms is not None:
         for start, end, org in evidence.get(record.get("sid"), ()):
             if start <= ms <= end and org in orgs:

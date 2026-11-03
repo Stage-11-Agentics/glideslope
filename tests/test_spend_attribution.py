@@ -143,13 +143,21 @@ def test_token_evidence_binds_only_inside_its_span(tmp_path, monkeypatch):
     assert spend._credit({"org": None, "sid": "sess"}, MS, orgs, evidence, TIMELINE) == ("Timeline", "timeline")
 
 
-def test_an_org_two_seats_share_names_no_account(tmp_path, monkeypatch):
+def test_an_org_two_seats_share_names_no_account_and_never_the_login(tmp_path, monkeypatch):
     _roster(tmp_path, monkeypatch, {
         "one": {"email": "one@example.test", "org_uuid": ORG_WORK},
         "two": {"email": "two@example.test", "org_uuid": ORG_WORK},
     })
     assert spend._org_names() == {}
-    assert spend._credit({"org": ORG_WORK, "sid": "s"}, MS, {}, {}, TIMELINE) == ("Timeline", "timeline")
+    evidence = {"s": [(MS - 1, MS + 1, ORG_PERSONAL)]}
+    assert spend._credit({"org": ORG_WORK, "sid": "s"}, MS, {}, evidence, TIMELINE) == (
+        "unattributed", "unowned org")
+
+
+def test_an_org_the_roster_lacks_is_unowned(tmp_path, monkeypatch):
+    _roster(tmp_path, monkeypatch)
+    record = {"org": "33333333-3333-4333-8333-333333333333", "sid": "s"}
+    assert spend._credit(record, MS, spend._org_names(), {}, TIMELINE) == ("unattributed", "unowned org")
 
 
 def test_a_late_named_token_credits_sessions_seen_before_it_was_named(tmp_path):
@@ -338,7 +346,48 @@ def test_sightings_read_the_session_files(tmp_path, monkeypatch):
     monkeypatch.setattr(beacon, "PROFILES_DIR", tmp_path / "profiles")
     monkeypatch.setattr(beacon, "process_token_fingerprint", lambda pid: "abc" if pid == 7 else None)
     assert beacon.token_sightings() == [
-        {"session": "sess", "fp": "abc", "start": "2026-09-21T14:13:20Z"}]
+        {"session": "sess", "fp": "abc", "pid": 7, "start": "2026-09-21T14:13:20Z"}]
+
+
+def test_a_session_with_no_start_keeps_one_span_per_process(tmp_path):
+    evidence = tmp_path / "session-tokens.json"
+    orgs = tmp_path / "orgs.json"
+    sighting = {"session": "sess", "fp": "abc", "pid": 7, "start": None}
+    for minute in ("05", "10", "15"):
+        beacon.record_token_sessions([sighting], "2026-10-01T10:%s:00Z" % minute, path=evidence, orgs_path=orgs)
+    beacon.record_token_sessions([{**sighting, "pid": 8}], "2026-10-01T10:20:00Z", path=evidence, orgs_path=orgs)
+    spans = json.loads(evidence.read_text())["sessions"]["sess"]
+    assert [(span["process"], span["first_seen"], span["last_seen"]) for span in spans] == [
+        ("pid:7", "2026-10-01T10:05:00Z", "2026-10-01T10:15:00Z"),
+        ("pid:8", "2026-10-01T10:20:00Z", "2026-10-01T10:20:00Z"),
+    ]
+
+
+def test_spans_the_old_beacon_split_per_tick_are_merged_and_others_kept(tmp_path):
+    evidence = tmp_path / "session-tokens.json"
+    def tick(minute):
+        stamp = "2026-10-01T10:%s:00Z" % minute
+        return {"fp": "abc", "start": stamp, "first_seen": stamp, "last_seen": stamp}
+    known = {"fp": "abc", "start": "2026-10-01T09:00:00Z", "first_seen": "2026-10-01T09:05:00Z",
+             "last_seen": "2026-10-01T09:30:00Z"}
+    evidence.write_text(json.dumps({"schema": 1, "tokens": {}, "sessions": {
+        "split": [tick("05"), tick("10"), tick("15")], "kept": [known]}}), encoding="utf-8")
+    beacon.record_token_sessions([], "2026-10-01T11:00:00Z", path=evidence, orgs_path=tmp_path / "none.json")
+    sessions = json.loads(evidence.read_text())["sessions"]
+    assert [(s["first_seen"], s["last_seen"]) for s in sessions["split"]] == [
+        ("2026-10-01T10:05:00Z", "2026-10-01T10:15:00Z")]
+    assert sessions["kept"] == [known]
+
+
+def test_an_old_span_keyed_by_start_is_extended_not_split(tmp_path):
+    evidence = tmp_path / "session-tokens.json"
+    evidence.write_text(json.dumps({"schema": 1, "tokens": {}, "sessions": {"sess": [
+        {"fp": "abc", "start": "2026-10-01T09:00:00Z", "first_seen": "2026-10-01T09:05:00Z",
+         "last_seen": "2026-10-01T09:05:00Z"}]}}), encoding="utf-8")
+    beacon.record_token_sessions([{"session": "sess", "fp": "abc", "pid": 7, "start": "2026-10-01T09:00:00Z"}],
+                                 "2026-10-01T09:10:00Z", path=evidence, orgs_path=tmp_path / "none.json")
+    spans = json.loads(evidence.read_text())["sessions"]["sess"]
+    assert len(spans) == 1 and spans[0]["last_seen"] == "2026-10-01T09:10:00Z"
 
 
 def test_whose_remembers_the_fingerprint(tmp_path, monkeypatch):
@@ -365,9 +414,6 @@ NOTE = "<task-notification>\n<task-id>x</task-id>\n<status>completed</status>\n<
     (_user(NOTE.format('Agent "review" finished'), "t"), turn_trigger.AGENT),
     (_user(NOTE.format('Background agent "review" stopped'), "t"), turn_trigger.AGENT),
     (_user(NOTE.format('Monitor event: "logs"') + "<event>x</event>", "t"), turn_trigger.MONITOR),
-    (_user("You have mail: run c11 mailbox recv --ack", "t"), turn_trigger.DOORBELL),
-    (_user("Another Claude session sent: c11 mail waiting: run c11 mailbox recv", "t"), turn_trigger.DOORBELL),
-    (_user("Another Claude session sent a note", "t"), turn_trigger.PEER),
     (_user("summary of before", "t", isCompactSummary=True), turn_trigger.COMPACTION),
     (_user("This session is being continued from a previous one", "t"), turn_trigger.COMPACTION),
     (_user("<command-name>/model</command-name>", "t"), turn_trigger.SLASH),
@@ -396,6 +442,25 @@ def test_row_labels(row, label):
 ])
 def test_rows_that_open_no_turn(row):
     assert turn_trigger.row_trigger(row) is None
+
+
+def test_wakes_from_real_shaped_rows(tmp_path):
+    """Rows shaped from Claude Code 2.1.31x transcripts (values are fake): idle peer messages and
+    scheduled wakeups are meta rows that open turns; queued arrivals and system inserts do not."""
+    home = tmp_path / "home"
+    target = home / ".claude" / "projects" / "p" / "00000000-0000-4000-8000-00000000aaaa.jsonl"
+    target.parent.mkdir(parents=True)
+    target.write_text((Path(__file__).parent / "fixtures" / "claude-wakes.jsonl").read_text())
+    records = {key.split("_", 1)[1]: record for key, record in _collect(tmp_path, home).items()}
+    assert {name: (record["trigger"], record["turn"]) for name, record in records.items()} == {
+        "typed_1": (turn_trigger.TYPED, 1),
+        "typed_2": (turn_trigger.TYPED, 0),
+        "doorbell": (turn_trigger.DOORBELL, 1),
+        "peer": (turn_trigger.PEER, 1),
+        "scheduled": (turn_trigger.SCHEDULED, 1),
+        "shell": (turn_trigger.SHELL, 1),
+        "shell_2": (turn_trigger.SHELL, 0),
+    }
 
 
 def test_requests_carry_their_turn_and_only_the_first_counts_it(tmp_path):

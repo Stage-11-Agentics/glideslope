@@ -35,6 +35,7 @@ SESSION_START = "session start"
 SUBAGENT = "inside subagent"
 
 MAIL_PHRASES = ("c11 mail waiting", "You have mail: run c11 mailbox")
+_ORIGIN_LABELS = {"scheduled": SCHEDULED, "sdk": SCRIPTED}
 _PASTE_RE = re.compile(r"^\s*<pasted_content\b[^>]*>(.*)</pasted_content>\s*$", re.DOTALL)
 _SUMMARY_RE = re.compile(r"<summary>\s*([^<]*)")
 DIGEST_CHARS = 2000
@@ -100,18 +101,34 @@ def _from_text(text: str, origin: str | None) -> str | None:
 def row_trigger(row: dict) -> tuple[str, str | None] | None:
     """(label, digest) when ROW opens a turn, else None. Digest is set on typed prompts only.
 
-    Only a user row opens a turn. Whatever arrives while the agent is working (a task
-    notification, a prompt typed mid-turn, mail) is a queued_command attachment folded into the
-    turn already running. It woke nothing, so it labels nothing.
+    Claude Code marks the row that opens a turn with `turnOrigin` and `turnPosition`, and that
+    row can be meta: a peer message or a scheduled wakeup at idle is an isMeta user row. Such a
+    row opens a turn whatever else it is, and is labelled by its turnOrigin. A meta row without
+    those marks is a system insert and opens nothing. A transcript too old to carry the marks
+    falls back to the row's text.
+
+    Whatever arrives while the agent is working (a task notification, a prompt typed mid-turn,
+    mail) is a queued_command attachment folded into the turn already running, so it opens
+    nothing.
     """
-    if row.get("type") != "user" or row.get("isMeta") or row.get("isSidechain"):
+    if row.get("type") != "user" or row.get("isSidechain"):
         return None
     if row.get("isCompactSummary"):
         return COMPACTION, None
+    turn_origin = row.get("turnOrigin") if isinstance(row.get("turnOrigin"), str) else None
+    marked = turn_origin is not None or isinstance(row.get("turnPosition"), dict)
+    if row.get("isMeta") and not marked:
+        return None
     message = row.get("message")
     text = _text(message.get("content") if isinstance(message, dict) else None)
     if text is None or text.startswith("[Request interrupted"):
         return None
+    if turn_origin in _ORIGIN_LABELS:
+        return _ORIGIN_LABELS[turn_origin], None
+    if turn_origin == "task_notification":
+        return task_kind(text), None
+    if turn_origin == "peer":
+        return (DOORBELL if any(phrase in text[:600] for phrase in MAIL_PHRASES) else PEER), None
     origin = row.get("origin")
     origin = origin.get("kind") if isinstance(origin, dict) else None
 
