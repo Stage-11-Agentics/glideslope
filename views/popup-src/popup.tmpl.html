@@ -944,7 +944,7 @@
     <button class="lens" type="button" data-filter="specialty" aria-pressed="false"
             title="Hover to plot the Fable weeklies beside the 7 DAY budgets · click to hold, which also lists them below">Fable</button>
     <button class="lens" type="button" data-filter="anthropic" aria-pressed="false"
-            title="Hover to show only Claude · click to hold">Anthropic only</button>
+            title="A toggle: on, it hides every other provider from whichever lens is showing">Anthropic only</button>
   </nav>
 
   <section class="plot-wrap" aria-label="Approach plot">
@@ -1021,7 +1021,9 @@ const horizonsFor = mark => PROJECTION_HORIZONS[mark.session ? "session" : "week
                 register. With seven accounts their diamonds and rows
                 crowd the face, so every other view leaves them to the switch dialog
                 (operator, 2026-11-03)
-     ANTHROPIC  anything Claude, the Claude pool included, the total pool not */
+     ANTHROPIC  not a lens but a toggle (operator, 2026-11-03): on, it hides every
+                other provider from whatever lens is showing, the Claude pool kept,
+                the total pool not. It is held on its own and stacks with the rest. */
 const FILTERS = {
   weekly: node => ["weekly", "pool", "pool-total"].includes(node.dataset.class),
   session: node => node.dataset.class === "session",
@@ -1032,11 +1034,31 @@ const FILTERS = {
    the URL — but never outlives the panel: reopening the panel asks the question fresh. */
 function initialFilter() {
   const fromURL = new URL(location.href).searchParams.get("filter");
-  return FILTERS[fromURL] ? fromURL : null;
+  return FILTERS[fromURL] && fromURL !== "anthropic" ? fromURL : null;
 }
-let pinnedFilter = initialFilter();
-let previewFilter = null;
-const activeFilter = () => previewFilter || pinnedFilter;
+function initialClaudeOnly() {
+  const url = new URL(location.href);
+  return url.searchParams.get("claude") === "1" || url.searchParams.get("filter") === "anthropic";
+}
+let pinnedFilter = initialFilter();      // the held window lens: weekly, session, specialty
+let claudeOnly = initialClaudeOnly();    // the Anthropic only toggle, independent of the lens
+let previewFilter = null;                // a lens under the pointer, or "anthropic"
+const activeFilter = () => previewFilter && previewFilter !== "anthropic" ? previewFilter : pinnedFilter;
+const activeClaudeOnly = () => claudeOnly || previewFilter === "anthropic";
+/* What survives: the active lens's set, narrowed to Claude while the toggle is on. */
+function activePredicate() {
+  const lens = FILTERS[activeFilter()];
+  const claude = activeClaudeOnly() ? FILTERS.anthropic : null;
+  if (!lens && !claude) return null;
+  return node => (!lens || lens(node)) && (!claude || claude(node));
+}
+function withFilterParams(url) {
+  if (pinnedFilter) url.searchParams.set("filter", pinnedFilter);
+  else url.searchParams.delete("filter");
+  if (claudeOnly) url.searchParams.set("claude", "1");
+  else url.searchParams.delete("claude");
+  return url;
+}
 const classOf = entry => entry.fable ? "specialty" : entry.session ? "session" : "weekly";
 const TOTAL_POOL_MARK = "Total/pool";
 
@@ -1047,10 +1069,8 @@ document.documentElement.dataset.reloadMs = String(RELOAD_MS);
 document.documentElement.dataset.reloadOnReturn = "true";
 
 function freshSnapshotURL(now = Date.now()) {
-  const next = new URL(location.href);
+  const next = withFilterParams(new URL(location.href));
   next.searchParams.set("snapshot", String(now));
-  if (pinnedFilter) next.searchParams.set("filter", pinnedFilter);
-  else next.searchParams.delete("filter");
   return next.href;
 }
 function reloadSnapshot() {
@@ -2392,7 +2412,7 @@ function applySelection(mark) {
     selectionClearTimer = null;
   }
   selectedMark = mark || null;
-  const filter = FILTERS[activeFilter()];
+  const filter = activePredicate();
   for (const node of document.querySelectorAll(
       ".ils-trail, .ils-mark, .selection-reticle, .reg-row, .ils-reset, " +
       ".ils-pool-trail, .ils-pool-mark, " +
@@ -2432,7 +2452,14 @@ const filterButtons = [...document.querySelectorAll(".lens[data-filter]")];
 function paintFilterBar() {
   const active = activeFilter();
   document.documentElement.dataset.filter = active || "all";
+  document.documentElement.dataset.claudeOnly = String(activeClaudeOnly());
   for (const button of filterButtons) {
+    if (button.dataset.filter === "anthropic") {
+      button.setAttribute("aria-pressed", String(claudeOnly));
+      button.dataset.previewing = String(previewFilter === "anthropic" && !claudeOnly);
+      button.dataset.included = "false";
+      continue;
+    }
     button.setAttribute("aria-pressed", String(button.dataset.filter === pinnedFilter));
     button.dataset.previewing = String(button.dataset.filter === active);
     button.dataset.included = String(active === "specialty" && button.dataset.filter === "weekly");
@@ -2450,12 +2477,16 @@ for (const button of filterButtons) {
   button.addEventListener("focus", () => setPreview(button.dataset.filter));
   button.addEventListener("blur", () => setPreview(null));
   button.addEventListener("click", () => {
+    if (button.dataset.filter === "anthropic") {  // a toggle: the lens stays as it is
+      claudeOnly = !claudeOnly;
+      history.replaceState(null, "", withFilterParams(new URL(location.href)));
+      paintFilterBar();
+      applySelection(selectedMark);
+      return;
+    }
     const listedFable = pinnedFilter === "specialty";
     pinnedFilter = pinnedFilter === button.dataset.filter ? null : button.dataset.filter;
-    const next = new URL(location.href);
-    if (pinnedFilter) next.searchParams.set("filter", pinnedFilter);
-    else next.searchParams.delete("filter");
-    history.replaceState(null, "", next);
+    history.replaceState(null, "", withFilterParams(new URL(location.href)));
     // Holding or letting go of the Fable lens adds or drops its register rows, so the
     // frame re-fits once, on the click; a hover preview never changes the rows.
     if (listedFable !== (pinnedFilter === "specialty")) {
