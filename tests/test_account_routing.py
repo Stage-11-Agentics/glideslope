@@ -313,7 +313,7 @@ class TwoOrganizationsOneEmailTests(unittest.TestCase):
         accounts = glideslope.reconcile_plans(self.accounts(), roster)
         glideslope.reconcile_dormant(accounts, roster)
         self.assertEqual({a["account"]: (a["plan"], a["dormant"]) for a in accounts},
-                         {"old": ("Max 5x", True), "new": ("Max 20x", False)})
+                         {"old": ("Max", True), "new": ("Ultra", False)})
 
     def test_an_old_beacon_naming_only_the_shared_email_credits_neither(self):
         accounts = self.accounts()

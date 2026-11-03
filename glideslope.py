@@ -221,7 +221,7 @@ CLAUDE_CALL_SIGNS: dict[str, str] = {
     str(alias): str(name) for alias, name in (_config_table("claude").get("call_signs") or {}).items()}
 NATO_ALPHABET = ("Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
                  "India", "Juliett", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa")
-CLAUDE_PLAN = str(_config_table("claude").get("plan") or "Max 20x")
+CLAUDE_PLAN = str(_config_table("claude").get("plan") or "Ultra")
 # The surface manifest that runs one-click account switches, if one does (the
 # popup sends "Use <Account>"; a host runs only labels its manifest declares).
 # Unset, nothing is known about it and no switch is reported as undeclared.
@@ -234,10 +234,17 @@ SWITCH_ACTIONS = ("Use", "Log in", "Move all")
 # noticed Fable had stopped being included. Unknown tiers keep their raw string:
 # a name we do not recognize is still a fact, and better than a confident wrong one.
 CLAUDE_PLAN_BY_TIER = {
-    "default_claude_max_20x": "Max 20x",
-    "default_claude_max_5x": "Max 5x",
+    "default_claude_max_20x": "Ultra",   # $200; was "Max 20x" until Anthropic's 2026 rename
+    "default_claude_max_5x": "Max",      # $100; was "Max 5x"
     "default_claude_ai": "Pro",
 }
+# Plan names this store recorded before the rename read as today's, so stored
+# history and live reads agree and a rename is never mistaken for a plan change.
+PLAN_RENAMES = {"Max 20x": "Ultra", "Max 5x": "Max"}
+
+
+def current_plan(name: Any) -> Any:
+    return PLAN_RENAMES.get(name, name) if isinstance(name, str) else name
 CODEX_PLAN = str(_config_table("codex").get("plan") or "20x")
 CODEX_ANCHOR_FIELD = "_glideslopeAnchored"
 CODEX_ZERO_PROBE_SECONDS = 1.1
@@ -2415,7 +2422,7 @@ def detect_early_resets(points: list[tuple[dt.datetime, float]]) -> list[dict[st
 def _sample_plan(point: tuple) -> str | None:
     if len(point) < 3 or not isinstance(point[2], str) or not point[2]:
         return None
-    return point[2]
+    return current_plan(point[2])
 
 
 def _samples_have_plan(conn: sqlite3.Connection) -> bool:
@@ -3212,7 +3219,7 @@ def claude_pool(
     hero row's own column) or `weekly_fable`, so the hero table's Fable column
     gets the identical pooled-read treatment with no second implementation.
 
-    Three Max 20x subscriptions are three separate quotas on three separate
+    Several Claude subscriptions are separate quotas on separate
     clocks, and no single row can say whether the *fleet* is ahead or behind.
     This one can, because both halves of the glide-slope comparison average
     cleanly when the plans are the same size:
@@ -3224,8 +3231,17 @@ def claude_pool(
     even burn predicts usedᵢ to be. So the mean of the phases is the pool's own
     even-burn mark, offset windows and all, and the existing ◆ vocabulary carries
     over untouched: above the mark is ahead of budget, below is capacity going to
-    waste. (It generalizes to unequal plans by weighting each term by its cap;
-    all three are 20x, so the weights are 1.)
+    waste.
+
+    Plans of different sizes pool by weight, and the weight is what the plan costs
+    (PLAN_PRICE_USD): a $100 Max counts half a $200 Ultra, which is also half its
+    usage (operator, 2026-11-03), so
+
+        used = Σ wᵢ·usedᵢ / Σ wᵢ      ◆ = Σ wᵢ·phaseᵢ / Σ wᵢ
+
+    and a fleet on one plan reduces to the plain means above. `weights` names each
+    member's weight relative to the largest. A plan with no price is left out
+    rather than guessed at.
 
     **The number is a floor whenever any component is.** A stale account's used
     can only have gone up since it was read, and an unread window contributes at
@@ -3259,23 +3275,22 @@ def claude_pool(
             "floor": bool(account.get("stale")) or percent is None,
             "unread": percent is None,
         })
-    # Both halves of the comparison are unweighted means, which only say
-    # something true when the caps behind them are the same size. With one
-    # account on Pro and the others on Max 20x, averaging a small allowance
-    # with two large ones would invent headroom the fleet does not have. So the pool is the largest group of
-    # accounts that share one plan, and it says which plan it pooled.
-    groups: dict[str, list[dict[str, Any]]] = {}
+    # Every plan with a price, each term weighted by it: an unweighted mean would
+    # let a small allowance move the pool as much as a large one.
     for part in parts:
-        groups.setdefault(str(part.get("plan") or "unknown plan"), []).append(part)
-    if not groups:
-        return None
-    plan, parts = max(groups.items(), key=lambda item: (len(item[1]), item[0] == CLAUDE_PLAN))
+        part["price_usd"] = PLAN_PRICE_USD.get(("Claude", current_plan(part.get("plan") or CLAUDE_PLAN)))
+    parts = [part for part in parts if part["price_usd"]]
     if len(parts) < 2:  # a "pool" of one is just that account's row again
         return None
+    plans = sorted({str(current_plan(p.get("plan") or CLAUDE_PLAN)) for p in parts},
+                   key=lambda name: -PLAN_PRICE_USD.get(("Claude", name), 0.0))
+    plan = " + ".join(plans)
 
     count = len(parts)
-    used = sum(float(p["used_percent"] or 0.0) for p in parts) / count
-    pace = sum(float(p["pace_percent"]) for p in parts) / count
+    top = max(p["price_usd"] for p in parts)
+    total = sum(p["price_usd"] for p in parts)
+    used = sum(p["price_usd"] * float(p["used_percent"] or 0.0) for p in parts) / total
+    pace = sum(p["price_usd"] * float(p["pace_percent"]) for p in parts) / total
     floor = any(p["floor"] for p in parts)
     nearest = min(parts, key=lambda p: p["resets_at"])
     if used > pace:
@@ -3294,6 +3309,7 @@ def claude_pool(
         "meter_id": meter_id,
         "count": count,
         "accounts": [p["display"] for p in parts],
+        "weights": {p["display"]: round(p["price_usd"] / top, 6) for p in parts},
         "used_percent": round(used, 6),
         "pace_percent": round(pace, 6),
         "floor": floor,
@@ -3309,8 +3325,8 @@ def claude_pool(
 # pool. Keyed by (provider, plan) as the accounts report them. A subscription
 # not listed here is left out of the total rather than guessed at.
 PLAN_PRICE_USD = {
-    ("Claude", "Max 20x"): 200.0,
-    ("Claude", "Max 5x"): 100.0,
+    ("Claude", "Ultra"): 200.0,
+    ("Claude", "Max"): 100.0,
     ("Claude", "Pro"): 20.0,
     ("Codex", "20x"): 200.0,
     # Pro $500: https://learn.chatgpt.com/docs/pricing (2026-10-01).
@@ -3340,7 +3356,7 @@ def total_pool(accounts: list[dict[str, Any]], now: dt.datetime) -> dict[str, An
         provider = account.get("provider")
         if provider not in TOTAL_POOL_PROVIDERS or account.get("dormant"):
             continue
-        price = PLAN_PRICE_USD.get((provider, account.get("plan")))
+        price = PLAN_PRICE_USD.get((provider, current_plan(account.get("plan"))))
         weekly = _weekly_all(account)
         if price is None or weekly is None or not isinstance(weekly.get("resets_at"), dt.datetime):
             continue
