@@ -2931,6 +2931,12 @@ def render_markdown(accounts: list[dict[str, Any]], now: dt.datetime, warnings: 
     if not rows:
         rows.append(["—", "—", "no usage data", "—", "—"])
     lines = banner_table("All windows", headers, rows, color=color)
+    following = next((account for account in accounts if account.get("next_up")), None)
+    if following is not None:
+        up = following["next_up"]
+        lines.append("")
+        lines.append(paint(f"→ Next up: {following.get('display')} ({up['remaining_percent']:.0f}% of its week "
+                           f"left, resets in {format_countdown(dt.timedelta(hours=up['hours_left']))})", "green", on=color))
     gaps = setup_gaps(accounts)
     if gaps:
         lines.append("")
@@ -3081,6 +3087,51 @@ def best_alternative(
                     "pace_percent": binding["pace_percent"], "slack": binding["slack"],
                     "meter_id": binding["meter_id"], "floor": bool(account.get("stale"))}
     return best
+
+
+NEXT_UP_PERCENT = 85.0  # a weekly at or above this is too spent to be the next account
+
+
+def mark_next_up(
+    accounts: list[dict[str, Any]], now: dt.datetime, *, threshold: float = NEXT_UP_PERCENT,
+) -> list[dict[str, Any]]:
+    """Mark the one Claude account to move to next: the fresh capacity closest to expiring.
+
+    Eligible: a live Claude account this machine is not using, both weeklies under
+    THRESHOLD, a weekly reset still ahead. Ranked by weekly remaining ÷ hours to that
+    reset: the capacity a reset will throw away soonest, per hour left to spend it,
+    which is what a move should spend first. Echo with 51% left and 68 hours to go
+    (0.75 %/h) outranks Delta with 100% left and 158 hours (0.63 %/h). `next_up` is
+    that account's {remaining_percent, hours_left, session_percent}; every other
+    Claude account carries None. Advice only: nothing switches on it.
+    """
+    best: tuple[float, dict[str, Any], dict[str, Any]] | None = None
+    for account in accounts:
+        if account.get("provider") != "Claude":
+            continue
+        account["next_up"] = None
+        if account.get("dormant") or LOCAL_SATELLITE in (account.get("logins") or []):
+            continue
+        weekly, fable = _weekly_all(account), _weekly_fable(account)
+        if weekly is None or weekly.get("used_percent") is None:
+            continue
+        resets = parse_timestamp(weekly.get("resets_at"))
+        hours = (resets - now).total_seconds() / 3600 if resets else 0.0
+        used = float(weekly["used_percent"])
+        if hours <= 0 or used >= threshold:
+            continue
+        if fable is not None and fable.get("used_percent") is not None and float(fable["used_percent"]) >= threshold:
+            continue
+        session = next((limit for limit in account.get("limits", []) if limit.get("meter_id") == "session"), None)
+        score = (100.0 - used) / hours
+        if best is None or score > best[0]:
+            best = (score, account, {
+                "remaining_percent": round(100.0 - used, 1), "hours_left": round(hours, 1),
+                "session_percent": (None if session is None or session.get("used_percent") is None
+                                    else round(float(session["used_percent"]), 1))})
+    if best is not None:
+        best[1]["next_up"] = best[2]
+    return accounts
 
 
 PICK_METER_LABELS = {"session": "5h session", "weekly_all": "weekly", "weekly_fable": "Fable weekly"}
@@ -4297,6 +4348,7 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     if not args.skip_satellites:
         save_meter_keepers(keepers)
     mark_switch_readiness(accounts, manifest_action_labels(CLAUDE_SWITCH_MANIFEST))
+    mark_next_up(accounts, now)
     if accounts and live_login:
         try:
             observe_login_switch(accounts, live_login, now)

@@ -204,6 +204,8 @@ def build_snapshot(pos: dict) -> dict:
         # Whether a one-click switch to this account can work on this machine, and
         # whether a meter token keeps it readable (the setup ⓘ and its checklist).
         "switch": a.get("switch"),
+        # The suggested next account (glideslope.mark_next_up): numbers only, or None.
+        "next_up": a.get("next_up"),
         "meter_on": [str(name) for name in (a.get("meter_on") or [])],
         "meter_silent": [str(name) for name in (a.get("meter_silent") or [])],
         "plan": a.get("plan") or "",
