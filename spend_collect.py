@@ -26,7 +26,7 @@ from pricing import CODEX_SPEED, SpeedLedger
 
 # Evidence about who paid and what woke the agent. Claude Code transcripts only; every other
 # record leaves these None.
-EVIDENCE_FIELDS = ("sid", "org", "trigger", "turn", "digest")
+EVIDENCE_FIELDS = ("sid", "org", "trigger", "turn", "digest", "version")
 RECORD_FIELDS = (
     "tool", "model", "ts", "in", "out", "cr", "cw5", "cw1", "think",
     "speed", "speed_src", "tier", "prompt", "key", "machine",
@@ -38,10 +38,10 @@ FILE_CACHE_VERSION = hashlib.sha256(
     Path(__file__).read_bytes() + Path(turn_trigger.__file__).read_bytes()
 ).hexdigest()
 _TIER_RE = re.compile(r'"service_tier"\s*:\s*"([a-z_]+)"')
-_EVIDENCE_MARKERS = ('"credential_org"', '"queued_command"', '"type":"user"', '"type": "user"')
+_EVIDENCE_MARKERS = ('"credential_org"', '"type":"user"', '"type": "user"')
 _RECORD_ATTRIBUTES = {field: ("input_tokens" if field == "in" else field) for field in RECORD_FIELDS}
 _INTERN_FIELDS = frozenset(("tool", "model", "speed", "speed_src", "tier", "machine",
-                            "sid", "org", "trigger"))
+                            "sid", "org", "trigger", "version"))
 
 
 class RequestRecord:
@@ -199,15 +199,86 @@ def _keep_earliest(previous: dict, current: dict) -> None:
         previous["org"] = current["org"]
 
 
+class _Transcript:
+    """What one transcript has said so far: who pays, and what opened the current turn."""
+
+    def __init__(self, path: Path) -> None:
+        self.sid, self.is_agent = _session_of(path)
+        self.org: str | None = None
+        self.orgs: list[list] = []
+        self.trigger = turn_trigger.SUBAGENT if self.is_agent else turn_trigger.SESSION_START
+        self.digest: str | None = None
+        self.fresh = not self.is_agent
+        self.requests: dict[str, dict] = {}
+
+    def read(self, row: dict) -> None:
+        if self.sid is None and isinstance(row.get("sessionId"), str):
+            self.sid = row["sessionId"]
+        attachment = row.get("attachment")
+        if isinstance(attachment, dict) and attachment.get("type") == "credential_org":
+            value = attachment.get("organizationUuid")
+            if isinstance(value, str) and value.strip():
+                self.org = value.strip().lower()
+                if not self.orgs or self.orgs[-1][1] != self.org:
+                    self.orgs.append([_timestamp_ms(row.get("timestamp")), self.org])
+            return
+        if not self.is_agent:
+            opened = turn_trigger.row_trigger(row)
+            if opened is not None:
+                self.trigger, self.digest = opened
+                self.fresh = True
+                return
+        if row.get("type") != "assistant":
+            return
+        message = row.get("message") or {}
+        usage = message.get("usage")
+        model = message.get("model")
+        if not isinstance(usage, dict) or not model or model == "<synthetic>":
+            return
+
+        message_id = message.get("id") or row.get("uuid")
+        request_id = row.get("requestId") or ""
+        if not message_id and not request_id:
+            return
+        key = "%s|%s" % (message_id or "", request_id)
+        cache_creation = usage.get("cache_creation") or {}
+        cw_total = _integer(usage.get("cache_creation_input_tokens"))
+        cw5 = cache_creation.get("ephemeral_5m_input_tokens")
+        cw1 = cache_creation.get("ephemeral_1h_input_tokens")
+        if cw5 is None and cw1 is None:
+            cw5, cw1 = cw_total, 0
+        else:
+            cw5, cw1 = _integer(cw5), _integer(cw1)
+        uncached = _integer(usage.get("input_tokens"))
+        cached = _integer(usage.get("cache_read_input_tokens"))
+        prompt = uncached + cached + cw5 + cw1
+        details = usage.get("output_tokens_details") or {}
+        speed = usage.get("speed")
+        version = row.get("version")
+        current = _record({
+            "tool": "claude", "model": model, "ts": _timestamp_ms(row.get("timestamp")),
+            "in": uncached, "out": _integer(usage.get("output_tokens")), "cr": cached,
+            "cw5": cw5, "cw1": cw1, "think": _integer(details.get("thinking_tokens")),
+            "speed": speed, "speed_src": "api" if speed else None, "tier": usage.get("service_tier"),
+            "prompt": prompt, "key": key, "machine": "",
+            "sid": self.sid, "org": self.org, "trigger": self.trigger, "turn": 1 if self.fresh else 0,
+            "digest": self.digest, "version": version if isinstance(version, str) else None,
+        })
+        previous = self.requests.get(key)
+        if previous is None:
+            self.requests[key] = current
+            self.fresh = False
+        else:
+            _keep_earliest(previous, current)
+
+
 def _claude_file(path: Path) -> dict:
-    """Requests plus the transcript's organization records, which subagent files inherit."""
-    requests: dict[str, dict] = {}
-    orgs: list[list] = []
-    sid, is_agent = _session_of(path)
-    org = None
-    trigger = turn_trigger.SUBAGENT if is_agent else turn_trigger.SESSION_START
-    digest = None
-    fresh = not is_agent
+    """Requests plus the transcript's organization records, which subagent files inherit.
+
+    A row of an unexpected shape is skipped and counted, never fatal to the collection.
+    """
+    transcript = _Transcript(path)
+    skipped = 0
     try:
         handle = path.open("r", encoding="utf-8", errors="ignore")
     except OSError:
@@ -222,67 +293,18 @@ def _claude_file(path: Path) -> dict:
                 row = json.loads(line)
             except ValueError:
                 continue
-            if sid is None and isinstance(row.get("sessionId"), str):
-                sid = row["sessionId"]
-            attachment = row.get("attachment")
-            if isinstance(attachment, dict) and attachment.get("type") == "credential_org":
-                value = attachment.get("organizationUuid")
-                if isinstance(value, str) and value.strip():
-                    org = value.strip().lower()
-                    if not orgs or orgs[-1][1] != org:
-                        orgs.append([_timestamp_ms(row.get("timestamp")), org])
+            if not isinstance(row, dict):
                 continue
-            if not is_agent:
-                opened = turn_trigger.row_trigger(row)
-                if opened is not None:
-                    trigger, digest = opened
-                    fresh = True
-                    continue
-            if row.get("type") != "assistant":
-                continue
-            message = row.get("message") or {}
-            usage = message.get("usage")
-            model = message.get("model")
-            if not isinstance(usage, dict) or not model or model == "<synthetic>":
-                continue
-
-            message_id = message.get("id") or row.get("uuid")
-            request_id = row.get("requestId") or ""
-            if not message_id and not request_id:
-                continue
-            key = "%s|%s" % (message_id or "", request_id)
-            cache_creation = usage.get("cache_creation") or {}
-            cw_total = _integer(usage.get("cache_creation_input_tokens"))
-            cw5 = cache_creation.get("ephemeral_5m_input_tokens")
-            cw1 = cache_creation.get("ephemeral_1h_input_tokens")
-            if cw5 is None and cw1 is None:
-                cw5, cw1 = cw_total, 0
-            else:
-                cw5, cw1 = _integer(cw5), _integer(cw1)
-            uncached = _integer(usage.get("input_tokens"))
-            cached = _integer(usage.get("cache_read_input_tokens"))
-            prompt = uncached + cached + cw5 + cw1
-            details = usage.get("output_tokens_details") or {}
-            speed = usage.get("speed")
-            timestamp = _timestamp_ms(row.get("timestamp"))
-            current = _record({
-                "tool": "claude", "model": model, "ts": timestamp,
-                "in": uncached, "out": _integer(usage.get("output_tokens")), "cr": cached,
-                "cw5": cw5, "cw1": cw1, "think": _integer(details.get("thinking_tokens")),
-                "speed": speed, "speed_src": "api" if speed else None, "tier": usage.get("service_tier"),
-                "prompt": prompt, "key": key, "machine": "",
-                "sid": sid, "org": org, "trigger": trigger, "turn": 1 if fresh else 0,
-                "digest": digest,
-            })
-            previous = requests.get(key)
-            if previous is None:
-                requests[key] = current
-                fresh = False
-            else:
-                _keep_earliest(previous, current)
-    for request in requests.values():
-        request["sid"] = request["sid"] or sid
-    return {"records": list(requests.values()), "orgs": orgs, "session": None if is_agent else sid}
+            try:
+                transcript.read(row)
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                skipped += 1
+    if skipped:
+        sys.stderr.write("[glideslope spend] skipped %d malformed transcript row(s)\n" % skipped)
+    for request in transcript.requests.values():
+        request["sid"] = request["sid"] or transcript.sid
+    return {"records": list(transcript.requests.values()), "orgs": transcript.orgs,
+            "session": None if transcript.is_agent else transcript.sid}
 
 
 def _codex_file(path: Path) -> tuple[str, list[dict]]:

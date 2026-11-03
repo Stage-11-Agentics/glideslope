@@ -638,17 +638,17 @@ Each Claude request is credited by the strongest evidence it has. `attribution_b
 |---|---|---|
 | `transcript` | The latest `credential_org` attachment at or before the request in its own transcript, joined to the roster's `org_uuid`. A subagent inherits its parent session's organization at the request's time. | Sessions on a login, across any `/login` switch. |
 | `token` | The beacon saw the session running under `CLAUDE_CODE_OAUTH_TOKEN`, and that token's account is known. | Sessions launched with an env token. They write no `credential_org`. |
-| `timeline` | The account most recently seen logged in on the machine, from the switch log and samples. | Everything else. |
+| `unseen token` | No organization, from Claude Code 2.1.281 or later, which records one in every transcript it bills through a login. The request ran under a token nothing identified, and stays `unattributed`. | Token sessions that ended before a beacon tick, or before the beacon was installed. |
+| `timeline` | The account most recently seen logged in on the machine, from the switch log and samples. | Older Claude Code versions with no other evidence. |
 | `none` | No evidence, or evidence older than 24 hours. The request stays `unattributed`. | |
 
 An organization that several roster entries share (Team seats) names no single account and
 falls through to the next basis.
 
-`timeline` is the only basis that can be wrong. A token session the beacon never saw, because it
-ended before a tick or before the beacon was installed, lands there and bills the machine's
-login on paper. Read that row as the ledger's remaining doubt. Claude Code does not write
-`credential_org` on every machine (one satellite's transcripts have none at all), so `token` can
-be the only exact basis a machine has.
+`timeline` is the only basis that can name the wrong account, and it now applies only to
+versions before 2.1.281. On a machine whose sessions all run under tokens, no transcript records
+`credential_org`, so `token` is the only basis that names an account there. Everything it misses
+is `unseen token`.
 
 **The token join.** `tools/satellite_beacon.py` reads each live session from
 `~/.claude/sessions/<pid>.json`, takes the fingerprint of `CLAUDE_CODE_OAUTH_TOKEN` in that
@@ -669,7 +669,9 @@ running sessions per fingerprint.
 ### What woke the agent
 
 `turn_trigger.py` names the transcript row that opened each turn, and every request in the turn
-carries that label. `spend.json` `triggers` lists dollars, turns and requests per label for
+carries that label. Only a user row opens a turn. A notification, prompt or mail that arrives while
+the agent is working is a `queued_command` attachment folded into the running turn, so it wakes
+nothing. `spend.json` `triggers` lists dollars, turns and requests per label for
 `d1`, `d7`, `d30` and `all`, heaviest first, with each label's five costliest sessions.
 
 | Label | Row |
@@ -767,7 +769,7 @@ transcript history and machine. The collector uses two workers by default;
 |---|---|
 | `generated_at`, `collected_at`, `first_request_at` | Build time, per-machine collection time and earliest request time. |
 | `attribution`, `accounts[]`, `machines` | Claude account attribution and spend, plus machine totals. |
-| `attribution_basis` | Claude dollars and requests per basis (`transcript`, `token`, `timeline`, `none`) for `d1`, `d7`, `d30` and `all`. |
+| `attribution_basis` | Claude dollars and requests per basis (`transcript`, `token`, `unseen token`, `timeline`, `none`) for `d1`, `d7`, `d30` and `all`. |
 | `triggers` | What woke the agent, per label, for the same horizons. |
 | `totals`, `providers`, `meters`, `leverage` | Combined, provider, anchored meter-window and subscription comparison buckets. |
 | `daily` | 60-day date list and daily spend series. |

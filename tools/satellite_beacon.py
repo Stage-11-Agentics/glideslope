@@ -59,6 +59,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -201,20 +202,26 @@ def session_files() -> list[Path]:
 def process_token_fingerprint(pid: int) -> str | None:
     """The fingerprint of the token in one process's environment, or None. The value is dropped here.
 
-    Matches claude_account.token_fingerprint. The environment follows argv in `ps -E`, so the
-    last occurrence is the environment's, whatever a prompt in argv happens to say.
+    Matches claude_account.token_fingerprint. `ps -E` prints argv and then the environment, so
+    the environment is what follows the plain argv: a prompt that quotes the variable is argv,
+    and an empty value is no token.
     """
+    def read(*flags: str) -> str:
+        return subprocess.run(["ps", *flags, "-o", "command=", "-p", str(pid)], capture_output=True,
+                              text=True, timeout=TOKEN_READ_TIMEOUT, check=False).stdout.rstrip("\n")
     try:
-        text = subprocess.run(["ps", "-Eww", "-o", "command=", "-p", str(pid)], capture_output=True,
-                              text=True, timeout=TOKEN_READ_TIMEOUT, check=False).stdout
+        command, text = read("-ww"), read("-Eww")
     except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
         return None
+    environment = text[len(command):] if command and text.startswith(command) else None
+    if environment is None:
+        return None  # argv and environment cannot be told apart: no sighting beats a wrong one
     marker = TOKEN_VARIABLE + "="
-    index = text.rfind(marker)
-    if index < 0 or (index and not text[index - 1].isspace()):
+    index = environment.rfind(marker)
+    if index < 0 or (index and not environment[index - 1].isspace()):
         return None
-    words = text[index + len(marker):].split()
-    return hashlib.sha256(words[0].encode()).hexdigest()[:10] if words else None
+    value = re.match(r"\S*", environment[index + len(marker):]).group(0)
+    return hashlib.sha256(value.encode()).hexdigest()[:10] if value else None
 
 
 def _millis_iso(value: object) -> str | None:
@@ -256,9 +263,10 @@ def record_token_sessions(sightings: list[dict], now: str, path: Path | None = N
     """
     path = path or TOKEN_EVIDENCE
     try:
-        sessions = json.loads(path.read_text())["sessions"]
+        document = json.loads(path.read_text())
+        sessions, tokens = document["sessions"], dict(document.get("tokens") or {})
     except FileNotFoundError:
-        sessions = {}
+        sessions, tokens = {}, {}
     try:
         known = json.loads((orgs_path or METER_ORGS).read_text())
         known = known if isinstance(known, dict) else {}
@@ -273,8 +281,10 @@ def record_token_sessions(sightings: list[dict], now: str, path: Path | None = N
         else:
             spans.append({"fp": sighting["fp"], "start": sighting["start"] or now,
                           "first_seen": now, "last_seen": now})
+    # A name, once learned, is kept: a run whose map has lost a fingerprint must not un-credit
+    # sessions it already named.
     seen = {span.get("fp") for spans in sessions.values() for span in spans}
-    tokens = {fp: known[fp] for fp in seen if isinstance(known.get(fp), str)}
+    tokens.update({fp: known[fp] for fp in seen if isinstance(known.get(fp), str)})
     write_private({"schema": 1, "tokens": tokens, "sessions": sessions}, path)
     return counts, sorted(fp for fp in counts if fp not in tokens)
 

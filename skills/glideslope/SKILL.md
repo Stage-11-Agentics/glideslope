@@ -68,9 +68,11 @@ spend used each basis:
 - `token`: the satellite beacon saw the session running under `CLAUDE_CODE_OAUTH_TOKEN` and the
   token's account is known. The beacon stores a fingerprint, never the token. A warning naming a
   fingerprint means `claude-account whose <token-file>` needs to run once where the token is.
+- `unseen token`: no organization from Claude Code 2.1.281 or later, which always records one for
+  a login. A token nothing identified paid, so it stays `unattributed`.
 - `timeline`: active-login samples and switch-log events, resolved through
-  `glideslope.call_sign`. This is the only basis that can be wrong: a token session nothing saw
-  lands here and reads as the machine's login.
+  `glideslope.call_sign`, for older versions only. It is the only basis that can name the wrong
+  account.
 - `none`: no earlier evidence, or evidence more than 24 hours old. It stays `unattributed`.
 
 `--print` also shows what woke the agent over 7 days: dollars, share, turns and requests per

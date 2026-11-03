@@ -59,19 +59,19 @@ def task_kind(text: str) -> str:
 
 
 def _text(content) -> str | None:
-    """A user row's text, or None when the row carries a tool result."""
+    """A user row's text, or None when the row carries a tool result or no content."""
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
-        return ""
+        return None
     parts = []
     for item in content:
         if not isinstance(item, dict):
             continue
         if item.get("type") == "tool_result":
             return None
-        if item.get("type") == "text":
-            parts.append(item.get("text") or "")
+        if item.get("type") == "text" and isinstance(item.get("text"), str):
+            parts.append(item["text"])
     return " ".join(parts)
 
 
@@ -98,25 +98,22 @@ def _from_text(text: str, origin: str | None) -> str | None:
 
 
 def row_trigger(row: dict) -> tuple[str, str | None] | None:
-    """(label, digest) when ROW opens a turn, else None. Digest is set on typed prompts only."""
-    kind = row.get("type")
-    if kind == "attachment":
-        attachment = row.get("attachment") or {}
-        if attachment.get("type") != "queued_command":
-            return None
-        origin = (attachment.get("origin") or {}).get("kind")
-        text = _text(attachment.get("prompt")) or ""
-    elif kind == "user":
-        if row.get("isMeta") or row.get("isSidechain"):
-            return None
-        if row.get("isCompactSummary"):
-            return COMPACTION, None
-        text = _text((row.get("message") or {}).get("content"))
-        if text is None or text.startswith("[Request interrupted"):
-            return None
-        origin = (row.get("origin") or {}).get("kind")
-    else:
+    """(label, digest) when ROW opens a turn, else None. Digest is set on typed prompts only.
+
+    Only a user row opens a turn. Whatever arrives while the agent is working (a task
+    notification, a prompt typed mid-turn, mail) is a queued_command attachment folded into the
+    turn already running. It woke nothing, so it labels nothing.
+    """
+    if row.get("type") != "user" or row.get("isMeta") or row.get("isSidechain"):
         return None
+    if row.get("isCompactSummary"):
+        return COMPACTION, None
+    message = row.get("message")
+    text = _text(message.get("content") if isinstance(message, dict) else None)
+    if text is None or text.startswith("[Request interrupted"):
+        return None
+    origin = row.get("origin")
+    origin = origin.get("kind") if isinstance(origin, dict) else None
 
     label = _from_text(text, origin)
     if label:

@@ -222,9 +222,14 @@ def _ps(stdout: str):
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
 
 
+def _process(argv: str, environment: str):
+    """`ps` for one process: plain argv first, then argv followed by its environment."""
+    return mock.patch.object(beacon.subprocess, "run", side_effect=[
+        _ps(argv + "\n"), _ps(argv + " " + environment + "\n")])
+
+
 def test_the_fingerprint_matches_claude_accounts_and_the_value_goes_nowhere(tmp_path, capsys):
-    text = f"/bin/claude --model opus TERM=xterm CLAUDE_CODE_OAUTH_TOKEN={FAKE_TOKEN} HOME=/x\n"
-    with mock.patch.object(beacon.subprocess, "run", return_value=_ps(text)):
+    with _process("/bin/claude --model opus", f"TERM=xterm CLAUDE_CODE_OAUTH_TOKEN={FAKE_TOKEN} HOME=/x"):
         fingerprint = beacon.process_token_fingerprint(42)
     assert fingerprint == claude_account.token_fingerprint(FAKE_TOKEN)
 
@@ -240,13 +245,25 @@ def test_the_fingerprint_matches_claude_accounts_and_the_value_goes_nowhere(tmp_
     assert evidence.stat().st_mode & 0o777 == 0o600
 
 
-def test_only_the_environment_counts_not_a_prompt_that_quotes_the_variable():
-    text = "/bin/claude say CLAUDE_CODE_OAUTH_TOKEN=quoted-in-a-prompt\nsecond line TERM=xterm\n"
-    with mock.patch.object(beacon.subprocess, "run", return_value=_ps("/bin/claude TERM=xterm HOME=/x\n")):
+def test_a_prompt_that_quotes_the_variable_is_argv_not_a_token():
+    argv = "/bin/claude say CLAUDE_CODE_OAUTH_TOKEN=quoted-in-a-prompt\nsecond line"
+    with _process(argv, "TERM=xterm HOME=/x"):
         assert beacon.process_token_fingerprint(42) is None
-    multi = text + f"HOME=/x CLAUDE_CODE_OAUTH_TOKEN={FAKE_TOKEN}\n"
-    with mock.patch.object(beacon.subprocess, "run", return_value=_ps(multi)):
+    with _process(argv, f"HOME=/x CLAUDE_CODE_OAUTH_TOKEN={FAKE_TOKEN}"):
         assert beacon.process_token_fingerprint(42) == claude_account.token_fingerprint(FAKE_TOKEN)
+
+
+def test_an_empty_token_is_no_token():
+    with _process("/bin/claude", "CLAUDE_CODE_OAUTH_TOKEN= HOME=/x"):
+        assert beacon.process_token_fingerprint(42) is None
+    with _process("/bin/claude", "HOME=/x CLAUDE_CODE_OAUTH_TOKEN="):
+        assert beacon.process_token_fingerprint(42) is None
+
+
+def test_argv_that_changed_between_reads_is_no_sighting():
+    with mock.patch.object(beacon.subprocess, "run", side_effect=[
+            _ps("/bin/claude one\n"), _ps(f"/bin/claude two CLAUDE_CODE_OAUTH_TOKEN={FAKE_TOKEN}\n")]):
+        assert beacon.process_token_fingerprint(42) is None
 
 
 def test_a_ps_failure_is_no_sighting():
@@ -268,6 +285,19 @@ def test_spans_extend_and_a_new_process_opens_a_new_one(tmp_path):
         ("2026-10-01T10:00:00Z", "2026-10-01T10:10:00Z"),
         ("2026-10-01T11:00:00Z", "2026-10-01T11:05:00Z"),
     ]
+
+
+def test_a_learned_name_survives_a_map_that_lost_it(tmp_path):
+    evidence = tmp_path / "session-tokens.json"
+    orgs = tmp_path / "orgs.json"
+    orgs.write_text(json.dumps({"abc": ORG_WORK}), encoding="utf-8")
+    sighting = {"session": "sess", "fp": "abc", "start": "2026-10-01T10:00:00Z"}
+    beacon.record_token_sessions([sighting], "2026-10-01T10:05:00Z", path=evidence, orgs_path=orgs)
+    orgs.write_text("{}", encoding="utf-8")
+    counts, unnamed = beacon.record_token_sessions([sighting], "2026-10-01T10:10:00Z",
+                                                   path=evidence, orgs_path=orgs)
+    assert unnamed == []
+    assert json.loads(evidence.read_text())["tokens"] == {"abc": ORG_WORK}
 
 
 def test_an_unnamed_fingerprint_is_reported_and_credits_nothing(tmp_path):
@@ -335,12 +365,9 @@ NOTE = "<task-notification>\n<task-id>x</task-id>\n<status>completed</status>\n<
     (_user(NOTE.format('Agent "review" finished'), "t"), turn_trigger.AGENT),
     (_user(NOTE.format('Background agent "review" stopped'), "t"), turn_trigger.AGENT),
     (_user(NOTE.format('Monitor event: "logs"') + "<event>x</event>", "t"), turn_trigger.MONITOR),
-    (_queued(NOTE.format('Background command "x" failed'), "task-notification"), turn_trigger.SHELL),
-    (_queued("c11 mail waiting: run c11 mailbox recv --ack", "peer"), turn_trigger.DOORBELL),
     (_user("You have mail: run c11 mailbox recv --ack", "t"), turn_trigger.DOORBELL),
     (_user("Another Claude session sent: c11 mail waiting: run c11 mailbox recv", "t"), turn_trigger.DOORBELL),
     (_user("Another Claude session sent a note", "t"), turn_trigger.PEER),
-    (_queued("hello from a peer", "peer"), turn_trigger.PEER),
     (_user("summary of before", "t", isCompactSummary=True), turn_trigger.COMPACTION),
     (_user("This session is being continued from a previous one", "t"), turn_trigger.COMPACTION),
     (_user("<command-name>/model</command-name>", "t"), turn_trigger.SLASH),
@@ -360,6 +387,11 @@ def test_row_labels(row, label):
     _user("meta", "t", isMeta=True),
     _user("side", "t", isSidechain=True),
     _user("[Request interrupted by user]", "t"),
+    _queued(NOTE.format('Background command "x" failed'), "task-notification"),
+    _queued("c11 mail waiting: run c11 mailbox recv --ack", "peer"),
+    _queued("typed while the agent worked", "human"),
+    {"type": "user", "message": "not a mapping"},
+    {"type": "user", "message": {"content": 7}, "origin": "not a mapping"},
     {"type": "user", "message": {"content": [{"type": "tool_result", "content": "x"}]}},
 ])
 def test_rows_that_open_no_turn(row):
@@ -381,6 +413,77 @@ def test_requests_carry_their_turn_and_only_the_first_counts_it(tmp_path):
     assert (records["one"]["trigger"], records["one"]["turn"]) == (turn_trigger.TYPED, 1)
     assert (records["two"]["trigger"], records["two"]["turn"]) == (turn_trigger.TYPED, 0)
     assert (records["three"]["trigger"], records["three"]["turn"]) == (turn_trigger.SHELL, 1)
+
+
+def _tool_use(message_id: str, when: str) -> dict:
+    row = _assistant(message_id, when)
+    row["message"]["stop_reason"] = "tool_use"
+    row["message"]["content"] = [{"type": "tool_use", "id": "tool-" + message_id, "name": "Bash"}]
+    return row
+
+
+def _tool_result(tool_id: str, when: str) -> dict:
+    return {"type": "user", "timestamp": when, "toolUseResult": {},
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tool_id, "content": "ok"}]}}
+
+
+def test_a_notification_that_lands_mid_turn_wakes_nothing(tmp_path):
+    """A background shell finishing while the agent works is folded into the running turn."""
+    home = tmp_path / "home"
+    queued = _queued(NOTE.format('Background command "tests" finished'), "task-notification")
+    queued["timestamp"] = "2026-10-01T10:00:03Z"
+    _write(home / ".claude" / "projects" / "p" / "sess.jsonl", [
+        _user("fix the build", "2026-10-01T10:00:00Z", origin={"kind": "human"}),
+        _tool_use("one", "2026-10-01T10:00:01Z"),
+        _tool_result("tool-one", "2026-10-01T10:00:02Z"),
+        queued,
+        _tool_use("two", "2026-10-01T10:00:04Z"),
+        _tool_result("tool-two", "2026-10-01T10:00:05Z"),
+        _assistant("three", "2026-10-01T10:00:06Z"),
+        _user(NOTE.format('Background command "tests" finished'), "2026-10-01T10:05:00Z",
+              origin={"kind": "task-notification"}),
+        _assistant("woken", "2026-10-01T10:05:01Z"),
+    ])
+    records = _collect(tmp_path, home)
+    assert [(records[k]["trigger"], records[k]["turn"]) for k in ("one", "two", "three")] == [
+        (turn_trigger.TYPED, 1), (turn_trigger.TYPED, 0), (turn_trigger.TYPED, 0)]
+    assert (records["woken"]["trigger"], records["woken"]["turn"]) == (turn_trigger.SHELL, 1)
+
+
+def test_a_malformed_row_is_skipped_and_the_rest_collected(tmp_path, capsys):
+    home = tmp_path / "home"
+    bad = _assistant("bad", "2026-10-01T10:00:00Z")
+    bad["message"]["usage"]["cache_creation"] = ["not", "a", "mapping"]
+    odd_org = {"type": "attachment", "attachment": {"type": "credential_org", "organizationUuid": ["x"]}}
+    _write(home / ".claude" / "projects" / "p" / "sess.jsonl", [
+        bad, odd_org, ["a", "list"], _assistant("good", "2026-10-01T10:00:01Z")])
+    records = _collect(tmp_path, home)
+    assert list(records) == ["good"]
+    assert "skipped 1 malformed transcript row" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("version", "expected"), [
+    ("2.1.281", ("unattributed", "unseen token")),
+    ("2.1.317", ("unattributed", "unseen token")),
+    ("2.2.0-beta", ("unattributed", "unseen token")),
+    ("2.1.280", ("Timeline", "timeline")),
+    (None, ("Timeline", "timeline")),
+    ("garbage", ("Timeline", "timeline")),
+])
+def test_no_org_from_a_version_that_always_records_one_is_an_unseen_token(tmp_path, monkeypatch,
+                                                                           version, expected):
+    _roster(tmp_path, monkeypatch)
+    record = {"org": None, "sid": "s", "version": version}
+    assert spend._credit(record, MS, spend._org_names(), {}, TIMELINE) == expected
+
+
+def test_a_token_sighting_beats_the_unseen_token_rule(tmp_path, monkeypatch):
+    _roster(tmp_path, monkeypatch)
+    orgs = spend._org_names()
+    record = {"org": None, "sid": "s", "version": "2.1.317"}
+    evidence = {"s": [(MS - 1, MS + 1, ORG_WORK)]}
+    assert spend._credit(record, MS, orgs, evidence, TIMELINE) == (orgs[ORG_WORK], "token")
 
 
 def test_a_typed_prompt_c11_sent_is_labelled_a_c11_send(tmp_path):

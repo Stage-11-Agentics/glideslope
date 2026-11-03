@@ -29,8 +29,12 @@ from quarantine import hide_quarantined
 
 HORIZONS = ("d1", "d7", "d30", "d90", "all")
 MODEL_HORIZONS = ("d1", "d7", "d30", "all")
-# How a Claude request found its account, strongest evidence first. "none" stayed unattributed.
-BASES = ("transcript", "token", "timeline", "none")
+# How a Claude request found its account, strongest evidence first. "unseen token" and "none"
+# stay unattributed.
+BASES = ("transcript", "token", "unseen token", "timeline", "none")
+# The first Claude Code that writes credential_org into every transcript it bills through a login.
+# A request from it or later with no organization ran under a token.
+ORG_RECORD_SINCE = (2, 1, 281)
 TOKEN_EVIDENCE_NAME = "session-tokens.json"
 TOKEN_END_GRACE_MS = 15 * 60 * 1000  # a beacon tick and a bit: requests after the last sighting
 TOP_TRIGGER_SESSIONS = 5
@@ -304,9 +308,20 @@ def _token_evidence(path: Path) -> dict[str, list[tuple[int, int, str]]]:
     return evidence
 
 
+def _version(value: Any) -> tuple[int, ...] | None:
+    try:
+        return tuple(int(part) for part in str(value).split("-")[0].split("."))
+    except ValueError:
+        return None
+
+
 def _credit(record: Any, ms: int | None, orgs: dict[str, str], evidence: dict,
             timeline: tuple[list[int], list[str]] | None) -> tuple[str, str]:
-    """(payer, basis) for a Claude request: its transcript, then its token, then the login."""
+    """(payer, basis) for a Claude request: its transcript, then its token, then the login.
+
+    A request with no organization from a Claude Code that always records one ran under a token
+    nothing identified. The machine's login did not pay for it, so it stays unattributed.
+    """
     name = orgs.get(record.get("org"))
     if name:
         return name, "transcript"
@@ -314,6 +329,9 @@ def _credit(record: Any, ms: int | None, orgs: dict[str, str], evidence: dict,
         for start, end, org in evidence.get(record.get("sid"), ()):
             if start <= ms <= end and org in orgs:
                 return orgs[org], "token"
+    version = _version(record.get("version")) if record.get("version") else None
+    if record.get("org") is None and version is not None and version >= ORG_RECORD_SINCE:
+        return "unattributed", "unseen token"
     payer = _account_at(timeline, ms)
     return payer, "none" if payer == "unattributed" else "timeline"
 

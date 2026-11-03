@@ -53,6 +53,7 @@ def _request(tool, model, when, *, key, inp=0, out=0, speed=None, prompt=None):
         "trigger": None,
         "turn": None,
         "digest": None,
+        "version": None,
     }
 
 
