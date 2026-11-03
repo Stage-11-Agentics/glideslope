@@ -2864,7 +2864,7 @@ def account_name(account: dict[str, Any]) -> str:
 
 
 # Meter badges: the outline says which window, the letter inside says whose.
-# Circle = weekly (all models), triangle = 5h session, diamond = weekly Fable —
+# Circle = weekly (all models), diamond = 5h session, triangle = weekly Fable (operator, 2026-11-03) —
 # the same vocabulary the popup's plot and register draw.
 # Codex takes X because C is the third Claude account's.
 BADGE_LETTERS = {"Alpha": "A", "Bravo": "B", "Charlie": "C", "Delta": "D", "Codex": "X", "Kimi": "K", "Grok": "G"}
@@ -2876,9 +2876,9 @@ def meter_badge(account: dict[str, Any], limit: dict[str, Any]) -> str:
     display = str(account.get("display") or account.get("account") or "?")
     letter = BADGE_LETTERS.get(display, display[:1].upper())
     if limit.get("meter_id") == "weekly_fable" or limit.get("label") == "Weekly · Fable":
-        shape = "diamond"
-    elif limit.get("meter_id") == "session" or limit.get("window_minutes") == 300:
         shape = "triangle"
+    elif limit.get("meter_id") == "session" or limit.get("window_minutes") == 300:
+        shape = "diamond"
     else:
         shape = "circle"
     return letter + BADGE_ENCLOSURES[shape]

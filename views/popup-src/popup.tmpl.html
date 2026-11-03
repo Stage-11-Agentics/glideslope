@@ -601,7 +601,7 @@
   }
   .reg-key .meter-badge { display: block; overflow: visible; }
   .meter-badge circle, .meter-badge polygon { fill: var(--void); stroke: var(--acc); stroke-width: 1.5; stroke-linejoin: round; }
-  .meter-badge.triangle polygon { stroke-dasharray: 2 1.6; }
+  .meter-badge.diamond polygon { stroke-dasharray: 2 1.6; }  /* the 5 HOUR throttle's dash */
   .meter-badge text { fill: var(--acc); font: 800 9px var(--mono); text-anchor: middle; dominant-baseline: central; }
   .reg-name {
     min-width: 0;
@@ -1694,12 +1694,12 @@ const NSVG = "http://www.w3.org/2000/svg";
 /* ── meter badges ──
    The account's letter inside an outline shape (operator, 2026-09-14): the
    OUTLINE says which window, the LETTER says whose. Circle = 7 DAY budget,
-   triangle = 5 HOUR throttle, diamond = Fable — the plot's existing vocabulary,
+   diamond = 5 HOUR throttle, triangle = Fable (operator, 2026-11-03) — the plot's vocabulary,
    now hollow so a letter fits. One geometry feeds the plot and the register, so
    the two can never wear different marks. */
 const BADGE_LETTERS = { Alpha: "A", Bravo: "B", Charlie: "C", Delta: "D", Codex: "X", Kimi: "K", Grok: "G" };
 const badgeLetter = display => BADGE_LETTERS[display] || String(display || "?").charAt(0).toUpperCase();
-const badgeShape = (window, session) => isFable(window) ? "diamond" : session ? "triangle" : "circle";
+const badgeShape = (window, session) => isFable(window) ? "triangle" : session ? "diamond" : "circle";
 /* `size` is the radius of the circle; the diamond and triangle are scaled so the
    letter has the same clear room inside each shape. Returns [tag, attrs, letterDy]. */
 function badgeOutline(shape, cx, cy, size) {

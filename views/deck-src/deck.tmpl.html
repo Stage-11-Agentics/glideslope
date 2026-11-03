@@ -861,16 +861,15 @@
   }
   .badge-key .meter-badge { display: block; overflow: visible; }
   .meter-badge circle, .meter-badge polygon { fill: var(--void); stroke: var(--acc); stroke-width: 1.4; stroke-linejoin: round; }
-  .meter-badge.triangle polygon { stroke-dasharray: 2 1.6; }
+  .meter-badge.diamond polygon { stroke-dasharray: 2 1.6; }  /* the 5 HOUR throttle's dash */
   .meter-badge text { fill: var(--acc); font: 800 8px var(--mono); text-anchor: middle; dominant-baseline: central; }
   .ils-badge { fill: var(--void); stroke-width: 1.8; stroke-linejoin: round; }
   .ils-badge-letter { font: 800 10px var(--mono); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
-  /* the throttle wears the triangle now — drawn in borders because a dashed
-     outline cannot follow a clip-path, and shape alone already separates them */
+  /* the throttle wears the diamond (operator, 2026-11-03): a square turned on
+     its point, and shape alone already separates it from the budget's disc */
   .reg-row.session .provider-key {
-    background: none; box-shadow: none; border-radius: 0;
-    width: 0; height: 0; border-bottom: 10px solid var(--acc);
-    border-left: 5.5px solid transparent; border-right: 5.5px solid transparent;
+    box-shadow: none; border-radius: 1px;
+    width: 7px; height: 7px; transform: rotate(45deg);
   }
   .selection-reticle { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
   .selection-reticle.selection-selected { opacity: 1; }
@@ -1187,11 +1186,11 @@ const NAMED_METER_BY_ID = new Map(NAMED_METERS.map(m => [m.meter, m]));
 /* ── meter badges ──
    The account's letter inside an outline shape (operator, 2026-09-14): the
    OUTLINE says which window, the LETTER says whose. Circle = 7 DAY budget,
-   triangle = 5 HOUR throttle, diamond = Fable — the same badge the popup preview
+   diamond = 5 HOUR throttle, triangle = Fable (operator, 2026-11-03) — the same badge the popup preview
    and the CLI tables wear. One geometry feeds the plot and the register. */
 const BADGE_LETTERS = { Alpha: "A", Bravo: "B", Charlie: "C", Delta: "D", Codex: "X", Kimi: "K", Grok: "G" };
 const badgeLetter = display => BADGE_LETTERS[display] || String(display || "?").charAt(0).toUpperCase();
-const badgeShape = w => w.id === "weekly_fable" ? "diamond" : w.minutes === 300 ? "triangle" : "circle";
+const badgeShape = w => w.id === "weekly_fable" ? "triangle" : w.minutes === 300 ? "diamond" : "circle";
 /* `size` is the circle's radius; the diamond and triangle are scaled so the
    letter has the same clear room inside each. Returns [tag, attrs, letterDy]. */
 function badgeOutline(shape, cx, cy, size) {
@@ -2789,8 +2788,8 @@ function render() {
           </div>
           <div class="plot-key">
             <span>${badgeKeySVG("circle")}${wclass("7 DAY", false)} budget</span>
-            <span>${badgeKeySVG("triangle")}${wclass("5 HOUR", true)} throttle</span>
-            <span>${badgeKeySVG("diamond")}Fable</span>
+            <span>${badgeKeySVG("diamond")}${wclass("5 HOUR", true)} throttle</span>
+            <span>${badgeKeySVG("triangle")}Fable</span>
             <span>letter = account</span>
             <span>${claudeBurstSVG(12)}Claude pool</span>
           </div>
@@ -3174,8 +3173,8 @@ function render() {
          not this one: someone is spending it, just not from this seat. */
       if (loggedIn) mk("circle", { cx: x(t.e), cy: y(t.u), r: 15, class: "active-ring" }, null, g);
       else if (remote) mk("circle", { cx: x(t.e), cy: y(t.u), r: 15, class: "remote-ring" }, null, g);
-      /* the meter badge: outline = window class (circle 7 DAY, triangle 5 HOUR,
-         diamond Fable), letter = account. A presumed value keeps its distinct
+      /* the meter badge: outline = window class (circle 7 DAY, diamond 5 HOUR,
+         triangle Fable), letter = account. A presumed value keeps its distinct
          dim treatment. */
       const [badgeTag, badgeAttrs, badgeDy] = badgeOutline(badgeShape(t.m.w), x(t.e), y(t.u), 8.5);
       mk(badgeTag, { ...badgeAttrs, class: `ils-badge ${t.m.session ? "ils-throttle session" : "ils-budget"}`,

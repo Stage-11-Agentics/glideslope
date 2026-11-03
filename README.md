@@ -31,14 +31,14 @@ this is built for the hyperengineer flying several subscriptions at once, on pur
 
 now the picture. the approach plot puts every window of every account on the same axes.
 
-x is the window: 0% at its start, 100% at its reset. y is what you have used. the dashed beam is y = x, even burn, the glide slope itself. every marker is one window of one account. the letter is the account. the shape is the window: ○ seven-day budget, △ five-hour session, ◇ the weekly Fable meter. behind each marker is its trail, every sample the journal took this window.
+x is the window: 0% at its start, 100% at its reset. y is what you have used. the dashed beam is y = x, even burn, the glide slope itself. every marker is one window of one account. the letter is the account. the shape is the window: ○ seven-day budget, ◇ five-hour session, △ the weekly Fable meter. behind each marker is its trail, every sample the journal took this window.
 
 above the beam, ahead: the trail is climbing faster than the window is closing, and you will reach 100% before the reset does. below it, banking. the register beside the plot says the same thing as a number: `+66%` is Bravo sixty-six points above its own slope, `−53%` is Codex fifty-three points below it.
 
 **the pool.** if you rotate between Claude accounts, the sum of all those accounts' 7-day limits is the pool.
 
 <p align="center"><img src="docs/screenshots/deck-plot.png" alt="the Detail view: approach plot with trails, the legend row beneath it, and the deviation register listing every window's distance from its own slope"></p>
-<p align="center"><sub><i>the Detail view. the same frame with trails, and the key in the row beneath it: ○ 7 DAY budget, △ 5 HOUR throttle, ◇ Fable, letter = account, ✳ Claude pool. on the right, the deviation register: every window's distance from its own slope, as a bar you can read from across the room.</i></sub></p>
+<p align="center"><sub><i>the Detail view. the same frame with trails, and the key in the row beneath it: ○ 7 DAY budget, ◇ 5 HOUR throttle, △ Fable, letter = account, ✳ Claude pool. on the right, the deviation register: every window's distance from its own slope, as a bar you can read from across the room.</i></sub></p>
 
 ### a note on the learning curve.
 

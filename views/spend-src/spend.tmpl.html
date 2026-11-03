@@ -86,7 +86,7 @@
     white-space: nowrap;
   }
   .meter-badge circle, .meter-badge polygon { fill: var(--void); stroke: var(--acc); stroke-width: 1.4; stroke-linejoin: round; }
-  .meter-badge.triangle polygon { stroke-dasharray: 2 1.6; }
+  .meter-badge.diamond polygon { stroke-dasharray: 2 1.6; }  /* the 5 HOUR throttle's dash */
   .meter-badge text { fill: var(--acc); font: 800 8px var(--mono); text-anchor: middle; dominant-baseline: central; }
   .reg-code { font: 700 9.5px/1 var(--mono); font-style: normal; letter-spacing: .06em; color: var(--ink-2); }
 
@@ -466,7 +466,7 @@ if (FIRST_CLAUDE && !PROVIDER_COLORS.Anthropic) PROVIDER_COLORS.Anthropic = COLO
 const pairFor = name => COLOR[name] || PROVIDER_COLORS[name] || PALETTE[PALETTE.length - 1];
 const accStyle = name => { const [acc, hot] = pairFor(name); return `--acc:${acc};--hot:${hot}`; };
 
-/* badge geometry, as the deck draws it: circle = 7 DAY, diamond = Fabes, triangle = 5 HOUR */
+/* badge geometry, as the deck draws it: circle = 7 DAY, triangle = Fable, diamond = 5 HOUR */
 const letter = name => [...String(name || "")].find(char => /[\p{L}\p{N}]/u.test(char))?.toUpperCase() || "·";
 function badge(name, shape, px = 17) {
   const c = px / 2, s = px * .4; let el, dy = 0;
@@ -831,7 +831,7 @@ function meterRow(name, kind) {
   if (!claude && kind === "fable") return `<div class="mrow na">no Fable meter</div>`;
   const s = slot(name, kind);
   if (!s && !claude) return `<div class="mrow na">no ${kind === "session" ? "5 HOUR" : "7 DAY"} reading</div>`;
-  const shape = kind === "fable" ? "diamond" : kind === "session" ? "triangle" : "circle";
+  const shape = kind === "fable" ? "triangle" : kind === "session" ? "diamond" : "circle";
   const lab = `<span class="mk">${badge(name, shape)}${wclass(kind === "session" ? "5 HOUR" : "7 DAY", kind === "session")}${kind === "fable" ? `<i class="reg-code">F</i>` : ""}</span>`;
   if (!s) return `<div class="mrow" title="no reading in samples.db">${lab}<span class="mpct nil">—</span><span class="musd nil">—</span><span class="mper nil">—</span></div>`;
   const [id, r] = s;
