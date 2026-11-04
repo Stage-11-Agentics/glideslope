@@ -29,6 +29,7 @@
     --delta:   #c28b2c;   /* ochre */
     --codex: #1ba576;
     --next-up: #ffd76a;   /* the suggested next account's NEXT tag: Glideslope's gold */
+    --fresh: #7ee2a8;     /* FRESH: a 7 day budget barely touched. Mint, clear of Codex's green */
     --kimi: #d1568f;
     --grok: #5b9cff;
     --router: #8d68e8;
@@ -458,15 +459,19 @@
      A fixed column at the head of every Claude row says it: NOW, the account in use
      here (filled ink); NEXT, the suggested move (glideslope.mark_next_up; a gold
      outline); OUT, a weekly spent to its ceiling (a gray outline, and the row grays
-     with it); or, in quiet gray, the machine that flies the account elsewhere. Words,
+     with it); FRESH, a 7 day budget under 10% used (mint, a faint outline: available,
+     not urged); or, in quiet gray, the machine that flies the account elsewhere. Words,
      never an edge strip. NOW also lifts the row's text to full ink. */
   .reg-state {
-    width: 5ch; flex: 0 0 auto; text-align: center; border-radius: 3px; color: transparent;
+    width: 6ch; flex: 0 0 auto; text-align: center; border-radius: 3px; color: transparent;
     font: 800 8.5px/15px var(--mono); letter-spacing: .06em; white-space: nowrap; overflow: hidden;
   }
   .reg-state[data-state="now"] { color: var(--void); background: var(--ink); }
   .reg-state[data-state="next"] { color: var(--next-up); box-shadow: inset 0 0 0 1px var(--next-up); }
   .reg-state[data-state="out"] { color: var(--muted-2); box-shadow: inset 0 0 0 1px var(--bezel-bright); }
+  .reg-state[data-state="fresh"] {
+    color: var(--fresh); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fresh) 32%, transparent);
+  }
   .reg-state[data-state="there"] { color: var(--muted); }
   .reg-row.logged-in .reg-name,
   .reg-row.logged-in .reg-used { color: var(--ink); }
@@ -1125,15 +1130,28 @@ const nextUpPhrase = account => {
 const isSpent = account => (account.limits || []).some(w =>
   (w.meter_id === "weekly_all" || w.meter_id === "weekly_fable")
   && w.used_percent != null && w.used_percent >= 99.5 && !rolled(w));
+/* FRESH: the 7 day (all models) budget is under 10% used, so the account has its
+   week ahead of it (operator, 2026-11-03). Only a number that can be trusted now
+   counts: a current reading, or a window rolled past its reset (presumed zero). A
+   stale low reading may have grown since, so it never claims FRESH. */
+const FRESH_PERCENT = 10;
+const freshWeek = account => (account.limits || []).find(w => w.meter_id === "weekly_all"
+  && w.used_percent != null && w.used_percent < FRESH_PERCENT && (w.presumed || !account.stale));
 function stateTagHTML(account) {
   const away = loginsOf(account).filter(name => name !== LOCAL_SAT);
+  const fresh = freshWeek(account);
   const [state, word] = isHere(account) ? ["now", "NOW"]
     : account.next_up ? ["next", "NEXT"]
     : isSpent(account) ? ["out", "OUT"]
+    : fresh ? ["fresh", "FRESH"]
     : away.length ? ["there", away[0].slice(0, 5).toUpperCase()]
     : ["", ""];
+  const title = state === "there" ? `Logged in on ${away.join(", ")}`
+    : state === "fresh" ? `7 day at ${Math.round(fresh.used_percent)}%${fresh.presumed ? " (reset, presumed)" : ""}`
+      + (away.length ? ` · logged in on ${away.join(", ")}` : "")
+    : "";
   return `<span class="reg-state" data-state="${state}"`
-    + `${state === "there" ? ` title="Logged in on ${escapeHTML(away.join(", "))}"` : ""}>${escapeHTML(word)}</span>`;
+    + `${title ? ` title="${escapeHTML(title)}"` : ""}>${escapeHTML(word)}</span>`;
 }
 const nextUpAccount = () => (SNAP.accounts || []).find(a => a.provider === "Claude" && a.next_up);
 const idleHint = () => nextUpAccount() ? `⇄ click to switch · next: ${nextUpAccount().display}` : SWITCH_HINT;
