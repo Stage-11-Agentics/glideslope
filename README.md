@@ -98,7 +98,7 @@ developing Glideslope with an agent: [`AGENTS.md`](AGENTS.md).
 
 | Provider | Meters | Credential |
 |---|---|---|
-| **Claude** | 5h session, weekly, weekly Fable, per account | the token Claude Code already holds, read-only |
+| **Claude** | 5h session, weekly, weekly Fable, and banked resets, per account | the token Claude Code already holds, read-only |
 | **Codex** | every native meter plus banked reset credits | none; read through the Codex app-server |
 | **Kimi** | plan quota and 5h burst window | a static platform key |
 | **Grok** | weekly compute pool; the row's plan is the live tier | the Grok Build login |

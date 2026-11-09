@@ -829,7 +829,8 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(banked["expires_at"], glideslope.parse_timestamp(1785525195))
 
     def test_no_banked_resets_when_none_available(self):
-        self.assertIsNone(glideslope.normalize_codex(codex_snapshot(), NOW)["banked_resets"])
+        banked = glideslope.normalize_codex(codex_snapshot(), NOW)["banked_resets"]
+        self.assertEqual(banked, {"count": 0, "expires_at": None, "credits": []})
 
     def test_render_codex_resets_is_a_banner_table(self):
         raw = codex_snapshot()
@@ -837,14 +838,14 @@ class RenderTests(unittest.TestCase):
             {"status": "available", "grantedAt": 1782933195, "expiresAt": 1785525195},
             {"status": "available", "grantedAt": 1783966325, "expiresAt": 1786558325}]}
         accounts = glideslope.codex_accounts(glideslope.normalize_codex(raw, NOW))
-        rendered = glideslope.render_codex_resets(accounts, NOW)
-        self.assertIn("| Codex reset banks |||||", rendered)  # banner spans 5 columns
-        self.assertIn("| **#** | **Credit** | **Granted** | **Expires** | **Time left** |", rendered)
-        self.assertIn("| 1 | Full reset |", rendered)  # soonest-expiring credit is row 1
+        rendered = glideslope.render_reset_banks(accounts, NOW)
+        self.assertIn("| Reset banks ||||||", rendered)  # banner spans 6 columns
+        self.assertIn("| **Account** | **Reset** | **Left** | **Clears** | **Expires** | **Time left** |", rendered)
+        self.assertIn("| Codex | Full reset | 1 | Weekly · all models |", rendered)
 
-    def test_render_codex_resets_empty_without_credits(self):
+    def test_render_reset_banks_empty_without_credits(self):
         accounts = glideslope.codex_accounts(glideslope.normalize_codex(codex_snapshot(), NOW))
-        self.assertEqual(glideslope.render_codex_resets(accounts, NOW), "")
+        self.assertEqual(glideslope.render_reset_banks(accounts, NOW), "")
 
     def test_report_leads_with_weekly_status_before_the_full_table(self):
         rendered = glideslope.render_report(
@@ -900,12 +901,12 @@ class WeeklySummaryTests(unittest.TestCase):
         openrouter = glideslope.normalize_openrouter(
             {"usage_weekly": 6.06, "limit": 100, "limit_remaining": 93.94, "limit_reset": "monthly"}, NOW)
         rendered = glideslope.render_weekly_summary(self._accounts(), openrouter, NOW)
-        self.assertIn("| Weekly status ||||", rendered)  # centered banner spanning the table (4 cols now)
-        self.assertIn("| **Account** | **Weekly** | **Fable** | **Next reset at** |", rendered)
+        self.assertIn("| Weekly status |||||", rendered)  # centered banner spanning the table (5 cols)
+        self.assertIn("| **Account** | **Weekly** | **Fable** | **Banked resets** | **Next reset at** |", rendered)
         self.assertIn("| Claude · Alpha | A⃝ 32% (◆ ", rendered)
         self.assertIn(f"| Claude · Bravo ● {glideslope.LOCAL_SATELLITE} | B⃝ 56% (◆ ", rendered)  # Bravo is active in the fixture
         self.assertIn("| Codex | X⃝ 2% (◆ ", rendered)
-        self.assertIn(" | — | rolling 7d · $94 left of $100/monthly |", rendered)
+        self.assertIn(" | — | — | rolling 7d · $94 left of $100/monthly |", rendered)
         self.assertIn("$6.06", rendered)
 
     def test_kimi_sits_in_the_hero_read_beside_the_others(self):
@@ -1775,7 +1776,7 @@ class WeeklySummaryDormantTests(unittest.TestCase):
         rendered = glideslope.render_weekly_summary(self._accounts(), None, NOW)
         self.assertIn("| Claude · Bravo", rendered)
         bravo_row = next(line for line in rendered.splitlines() if "Bravo" in line)
-        self.assertEqual(len(bravo_row.split("|")), 6)  # '' Account Weekly Fable Reset ''
+        self.assertEqual(len(bravo_row.split("|")), 7)  # '' Account Weekly Fable Banked Reset ''
 
     def test_all_windows_omits_the_dormant_account_entirely(self):
         rendered = glideslope.render_markdown(self._accounts(), NOW, [])
