@@ -222,6 +222,11 @@ CLAUDE_CALL_SIGNS: dict[str, str] = {
 NATO_ALPHABET = ("Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
                  "India", "Juliett", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa")
 CLAUDE_PLAN = str(_config_table("claude").get("plan") or "Ultra")
+# Standing notes about an account, keyed by its display name (call sign):
+# [claude] notes = { Charlie = "..." }. Printed under Weekly status so a person
+# or agent choosing an account sees what sets it apart.
+CLAUDE_NOTES: dict[str, str] = {
+    str(name): str(text) for name, text in (_config_table("claude").get("notes") or {}).items() if text}
 # The surface manifest that runs one-click account switches, if one does (the
 # popup sends "Use <Account>"; a host runs only labels its manifest declares).
 # Unset, nothing is known about it and no switch is reported as undeclared.
@@ -4440,6 +4445,13 @@ def gather(args: argparse.Namespace) -> tuple[dt.datetime, list[dict[str, Any]],
     return now, accounts, openrouter, harness_spend, switches, warnings, satellites, remote_seats
 
 
+def render_account_notes(notes: dict[str, str] | None = None, *, color: bool = False) -> str:
+    """One line per account note from `[claude] notes`, or "" when there are none."""
+    notes = CLAUDE_NOTES if notes is None else notes
+    return "\n".join(f"ⓘ {paint(name, 'bold', on=color) if color else '**' + name + '**'}: {text}"
+                     for name, text in notes.items())
+
+
 def render_report(
     accounts: list[dict[str, Any]], openrouter: dict[str, Any] | None,
     harness_spend: dict[str, Any] | None, switches: list[dict[str, Any]],
@@ -4454,6 +4466,9 @@ def render_report(
     weekly = render_weekly_summary(accounts, openrouter, now, color=color)
     if weekly:
         output += "\n" + weekly
+    notes = render_account_notes(color=color)
+    if notes:
+        output += "\n\n" + notes
     output += "\n\n" + render_markdown(accounts, now, warnings, color=color)
     harness = render_harness_spend(harness_spend, now, color=color)
     if harness:
@@ -4605,7 +4620,7 @@ def resolved_config() -> dict[str, Any]:
         "timezone": getattr(LOCAL_TZ, "key", None) or str(LOCAL_TZ),
         "satellite": LOCAL_SATELLITE,
         "satellites": list(REMOTE_SATELLITES),
-        "claude": {"call_signs": dict(CLAUDE_CALL_SIGNS), "plan": CLAUDE_PLAN},
+        "claude": {"call_signs": dict(CLAUDE_CALL_SIGNS), "plan": CLAUDE_PLAN, "notes": dict(CLAUDE_NOTES)},
         "codex": {"plan": CODEX_PLAN},
         "kimi": {"plan": KIMI_PLAN},
         "grok": {"plan": GROK_PLAN},
