@@ -799,7 +799,8 @@ def cache_put(alias: str, email: str, rows: list[tuple[str, float, str]],
         # and only while the organization is the same.
         if reset_bank is None:
             previous = cache_get(alias) or {}
-            if not org_uuid or str(previous.get("org_uuid") or "").lower() == str(org_uuid).lower():
+            before = str(previous.get("org_uuid") or "").lower()
+            if org_uuid and before and before == str(org_uuid).lower():
                 reset_bank = valid_reset_bank(previous.get("reset_bank"))
         if reset_bank is not None:
             payload["reset_bank"] = reset_bank

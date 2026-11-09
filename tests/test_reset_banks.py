@@ -71,7 +71,7 @@ def test_status_cells_count_mark_and_pool():
     assert glideslope.resets_cell(by["alpha"], color=False) == "3"
     assert glideslope.resets_cell(by["bravo"], color=False) == "unread"
     assert glideslope.resets_cell(by["charlie"], color=False) == "3 stale"  # a ceiling: one may be spent
-    assert glideslope.pooled_resets_cell(accounts, color=False) == "6 floor"  # Bravo unread
+    assert glideslope.pooled_resets_cell(accounts, color=False) == "6 uncertain"  # Bravo unread, Charlie stale
 
 
 def test_one_table_for_both_providers_names_the_unread():
@@ -86,6 +86,37 @@ def test_one_table_for_both_providers_names_the_unread():
     assert "One more Fable reset at 6 months' tenure" in rendered
     assert "| Codex | Full reset | 1 | Weekly · all models |" in rendered
     assert "unread: Bravo." in rendered
+
+
+def test_a_satellite_bank_survives_a_fresher_local_read():
+    """Another machine holds the login and sees the bank; this machine read the meters more recently."""
+    bank = claude_account.parse_reset_bank(USAGE, read_at="2026-11-09T20:55:00Z")
+    snapshot = {"alpha": {**claude("alpha", None), "org_uuid": "org-a", "fetched_at": "2026-11-09T20:59:00Z"}}
+    satellite = {"name": "studio", "local": False, "age_seconds": 60.0,
+                 "observed_at": dt.datetime(2026, 11, 9, 20, 56, tzinfo=dt.timezone.utc),
+                 "snapshot": {"alpha": {**claude("alpha", bank), "org_uuid": "org-a", "logged_in": True}}}
+    merged = glideslope.merge_satellite_claude(snapshot, [satellite], NOW)
+    assert merged["alpha"]["reset_bank"]["read_at"] == "2026-11-09T20:55:00Z"
+    assert merged["alpha"]["fetched_at"] == "2026-11-09T20:59:00Z"  # the local percents stand
+
+
+def test_pooled_cell_says_which_way_it_can_be_wrong():
+    fresh = claude_account.parse_reset_bank(USAGE, read_at="2026-11-09T20:55:00Z")
+    old = claude_account.parse_reset_bank(USAGE, read_at="2026-11-08T20:55:00Z")
+    both = glideslope.normalize_claude({"alpha": claude("alpha", fresh), "charlie": claude("charlie", old)}, NOW)
+    assert glideslope.pooled_resets_cell(both, color=False) == "6 stale"
+    mixed = glideslope.normalize_claude({"bravo": claude("bravo", None), "charlie": claude("charlie", old)}, NOW)
+    assert glideslope.pooled_resets_cell(mixed, color=False) == "3 uncertain"
+
+
+def test_a_bank_carries_forward_only_within_one_organization(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_account, "USAGE_CACHE", tmp_path)
+    bank = claude_account.parse_reset_bank(USAGE, read_at="2026-11-09T20:55:00Z")
+    claude_account.cache_put("alpha", "a@example.com", [], org_uuid="org-a", reset_bank=bank)
+    claude_account.cache_put("alpha", "a@example.com", [], org_uuid="org-a")  # a meter read: no bank seen
+    assert claude_account.cache_get("alpha")["reset_bank"]["read_at"] == "2026-11-09T20:55:00Z"
+    claude_account.cache_put("alpha", "a@example.com", [], org_uuid="org-b")  # another organization
+    assert "reset_bank" not in claude_account.cache_get("alpha")
 
 
 def test_an_expired_grant_is_not_banked():

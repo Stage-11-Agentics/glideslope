@@ -787,6 +787,17 @@ def read_satellites(
     return found
 
 
+def merge_reset_bank(local: dict[str, Any], bank: Any) -> None:
+    """Keep whichever of two reset banks was read last."""
+    theirs = parse_timestamp(bank.get("read_at")) if isinstance(bank, dict) else None
+    if theirs is None:
+        return
+    mine = local.get("reset_bank")
+    ours = parse_timestamp(mine.get("read_at")) if isinstance(mine, dict) else None
+    if ours is None or theirs > ours:
+        local["reset_bank"] = bank
+
+
 def merge_satellite_claude(
     snapshot: dict[str, Any], satellites: list[dict[str, Any]], now: dt.datetime,
     *, warnings: list[str] | None = None,
@@ -832,6 +843,9 @@ def merge_satellite_claude(
             if satellite["age_seconds"] > SATELLITE_BEACON_MAX_AGE_SECONDS:
                 continue  # too old to be a reading; the local journal is no worse
             local = snapshot[alias]
+            # The bank is dated by its own read, so the newer one wins whichever
+            # machine took it, even when this machine's percents are the fresher.
+            merge_reset_bank(local, raw.get("reset_bank"))
             local_at = parse_timestamp(local.get("fetched_at"))
             if not local.get("stale") and local.get("limits"):
                 if raw.get("source") == "meter-token":
@@ -852,13 +866,6 @@ def merge_satellite_claude(
                 local["extra_usage"] = extra
             else:
                 local.pop("extra_usage", None)
-            # The bank is dated by its own read, so the newer one wins whichever
-            # machine took it.
-            bank = raw.get("reset_bank")
-            if isinstance(bank, dict) and (
-                    not isinstance(local.get("reset_bank"), dict)
-                    or str(bank.get("read_at") or "") > str(local["reset_bank"].get("read_at") or "")):
-                local["reset_bank"] = bank
             local.pop("error", None)
     return snapshot
 
@@ -1151,6 +1158,7 @@ def claude_banked_resets(raw: Any, now: dt.datetime, *, stale: bool = False) -> 
             "left": left,
             "clears": [RESET_CLEARS.get(c, c) for c in grant.get("clears") or []],
             "usable": bool(grant.get("usable_now")) and not grant.get("paused"),
+            "paused": bool(grant.get("paused")),
             "next": grant.get("id") is not None and grant.get("id") == raw.get("next_grant_id"),
         })
     far_future = dt.datetime.max.replace(tzinfo=dt.timezone.utc)
@@ -3606,10 +3614,16 @@ def resets_cell(account: dict[str, Any], *, color: bool) -> str:
         return paint("unread", "dim", on=color)
     cell = str(bank["count"])
     if bank["count"] and not any(c.get("usable", True) for c in bank["credits"]):
-        cell += " paused"
-    if bank.get("stale"):
+        cell += " paused" if all(c.get("paused") for c in bank["credits"]) else " cooling down"
+    if bank_stale(account):
         cell += " " + paint("stale", "dim", on=color)
     return cell
+
+
+def bank_stale(account: dict[str, Any]) -> bool:
+    """A bank is a ceiling when it, or the read that carried it, is not fresh."""
+    bank = account.get("banked_resets")
+    return bool(bank) and bool(bank.get("stale") or account.get("stale"))
 
 
 def pooled_resets_cell(accounts: list[dict[str, Any]], *, color: bool) -> str:
@@ -3617,11 +3631,12 @@ def pooled_resets_cell(accounts: list[dict[str, Any]], *, color: bool) -> str:
     keeping = [a for a in accounts if "banked_resets" in a and not a.get("dormant")]
     if not keeping:
         return "—"
-    read = [a["banked_resets"] for a in keeping if a["banked_resets"] is not None]
-    cell = str(sum(bank["count"] for bank in read))
-    if len(read) < len(keeping):
-        cell += " " + paint("floor", "dim", on=color)
-    return cell
+    read = [a for a in keeping if a["banked_resets"] is not None]
+    cell = str(sum(a["banked_resets"]["count"] for a in read))
+    unread, stale = len(read) < len(keeping), any(bank_stale(a) for a in read)
+    # unread alone: the truth is this or higher. stale alone: this or lower. Both: neither.
+    mark = "uncertain" if unread and stale else "floor" if unread else "stale" if stale else ""
+    return f"{cell} {paint(mark, 'dim', on=color)}" if mark else cell
 
 
 def render_weekly_summary(
@@ -3881,9 +3896,11 @@ def render_reset_banks(accounts: list[dict[str, Any]], now: dt.datetime, *, colo
             title = credit.get("title") or "Full reset"
             if several and credit.get("next"):
                 title += " · used next"
-            if not credit.get("usable", True):
+            if credit.get("paused"):
                 title += " · paused"
-            count = str(credit.get("left", 1)) + (" " + paint("stale", "dim", on=color) if bank.get("stale") else "")
+            elif not credit.get("usable", True):
+                title += " · cooling down"
+            count = str(credit.get("left", 1)) + (" " + paint("stale", "dim", on=color) if bank_stale(account) else "")
             entries.append((expires if isinstance(expires, dt.datetime) else far_future, order, [
                 name, title, count, ", ".join(credit.get("clears") or []) or "—", when(expires), left]))
     if not entries and not unread:
@@ -3894,8 +3911,8 @@ def render_reset_banks(accounts: list[dict[str, Any]], now: dt.datetime, *, colo
     lines = [""] + (banner_table("Reset banks", headers, rows, color=color) if rows else [paint("**Reset banks**", "bold", on=color)])
     if unread:
         lines.append("")
-        lines.append(paint(f"unread: {', '.join(unread)}. A bank is read only through a live login "
-                           "(a meter token cannot see it).", "dim", on=color))
+        lines.append(paint(f"unread: {', '.join(unread)}. A bank is read only by a live login "
+                           "on a current Claude Code; a meter token cannot see it.", "dim", on=color))
     for note in notes:
         lines.append(paint(note, "dim", on=color))
     return "\n".join(lines)
