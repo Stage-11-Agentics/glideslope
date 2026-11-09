@@ -37,10 +37,11 @@ If `glideslope` is not on PATH, run it from the clone: `python3 <path-to-clone>/
 - **ⓘ Name: note** under Weekly status is a standing note from the config (`[claude] notes`): what sets that account apart. Weigh it before suggesting a switch to or away from that account.
 - **Honesty markers**: `stale` (last-known read), `presumed` (rolled over, nothing could have spent it), `unread` (unknowable), `floor` (the truth is this or higher), `undecided` (a pooled floor below the mark). Never restate one of these as a plain number.
 - **On remote seats**, when present, names the coding agents running on cloud sandboxes and the account each bills: `6 Grok (Grok) · 1 Claude (Alpha)`. Mention it in a position check. That burn is already inside each account's meters, so it says who is spending, never extra usage; never add it to a number. A `stale` part is an old file, not the current fleet: say so.
+- **Banked resets**: whole-meter resets an account can spend on demand, Claude and Codex alike. `unread` means no live login has read that bank (a meter token cannot), never zero. A pooled `floor` means some banks are unread. A `stale` count is a ceiling: one may have been spent since. Glideslope never spends a reset.
 - **API-equivalent**, when present, is a valuation at list API prices, never money spent. Say so if you summarize it.
 - **💸 amount** on a 5-hour or 7-day all-models cell is usage-credit spend during that window. Real money. The percent and the ◆ stay. The 5-hour amount is inside the 7-day amount. Absence means no known burn. `floor` after the amount means it understates. Relay it exactly. It is not the API-equivalent panel, and it is not on Fable.
 
-Output order: login banner, On remote seats (only when seats are live), Weekly status, account notes (only when the config sets them), All windows, OpenRouter, API-equivalent (only if the user keeps a ledger), Codex reset banks (only when credits are banked), Recent switches. Relay all of it, in order.
+Output order: login banner, On remote seats (only when seats are live), Weekly status, account notes (only when the config sets them), Reset banks (only when any account keeps one), All windows, OpenRouter, API-equivalent (only if the user keeps a ledger), Recent switches. Relay all of it, in order.
 
 ## API-equivalent spend
 

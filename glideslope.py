@@ -852,6 +852,13 @@ def merge_satellite_claude(
                 local["extra_usage"] = extra
             else:
                 local.pop("extra_usage", None)
+            # The bank is dated by its own read, so the newer one wins whichever
+            # machine took it.
+            bank = raw.get("reset_bank")
+            if isinstance(bank, dict) and (
+                    not isinstance(local.get("reset_bank"), dict)
+                    or str(bank.get("read_at") or "") > str(local["reset_bank"].get("read_at") or "")):
+                local["reset_bank"] = bank
             local.pop("error", None)
     return snapshot
 
@@ -1097,6 +1104,69 @@ def claude_limits(raw_account: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(limits, key=lambda limit: CLAUDE_ROW_ORDER.get(limit["meter_id"], 9))
 
 
+# The meters a Claude reset grant names under `clears`, in this program's labels.
+RESET_CLEARS = {
+    "seven_day": "Weekly · all models",
+    "seven_day_overage_included": "Weekly · Fable",
+    "five_hour": "5h session",
+}
+# A bank read longer ago than this is shown `stale`: a reset may have been spent since.
+RESET_BANK_FRESH = dt.timedelta(hours=1)
+
+
+def _grant_title(label: str | None) -> str:
+    """'New model launch: one more Fable reset at 6 months' tenure' -> 'One more Fable reset at 6 months' tenure'."""
+    text = (label or "Reset").split(": ", 1)[-1].strip()
+    text = text.replace(" for Max, Team Premium and Enterprise Premium", "")
+    return text[:1].upper() + text[1:]
+
+
+def claude_banked_resets(raw: Any, now: dt.datetime, *, stale: bool = False) -> dict[str, Any] | None:
+    """A Claude account's reset bank in the shape Codex's has, or None when unread.
+
+    `count` is the resets left in unexpired grants. `stale` is set when the
+    account is stale or the bank was read over an hour ago: the true count is
+    this or lower, since a reset may have been spent since.
+    """
+    if not isinstance(raw, dict) or not isinstance(raw.get("grants"), list):
+        return None
+    read_at = parse_timestamp(raw.get("read_at"))
+    if read_at is None:
+        return None
+    credits = []
+    for grant in raw["grants"]:
+        if not isinstance(grant, dict):
+            continue
+        left = grant.get("left")
+        if isinstance(left, bool) or not isinstance(left, int) or left <= 0:
+            continue
+        expires = parse_timestamp(grant.get("ends_at"))
+        if expires is not None and expires <= now:
+            continue
+        credits.append({
+            "id": grant.get("id"),
+            "title": _grant_title(grant.get("label")),
+            "granted_at": parse_timestamp(grant.get("starts_at")),
+            "expires_at": expires,
+            "left": left,
+            "clears": [RESET_CLEARS.get(c, c) for c in grant.get("clears") or []],
+            "usable": bool(grant.get("usable_now")) and not grant.get("paused"),
+            "next": grant.get("id") is not None and grant.get("id") == raw.get("next_grant_id"),
+        })
+    far_future = dt.datetime.max.replace(tzinfo=dt.timezone.utc)
+    credits.sort(key=lambda c: (not c["next"], c["expires_at"] or far_future))
+    soonest = min((c["expires_at"] for c in credits if c["expires_at"]), default=None)
+    return {
+        "count": sum(c["left"] for c in credits),
+        "expires_at": soonest,
+        "credits": credits,
+        "read_at": read_at,
+        "stale": stale or now - read_at > RESET_BANK_FRESH,
+        "cooldown_until": parse_timestamp(raw.get("cooldown_until")),
+        "tenure": raw.get("tenure"),
+    }
+
+
 def normalize_claude(snapshot: dict[str, Any], observed_at: dt.datetime) -> list[dict[str, Any]]:
     """Normalize each stored Claude account into the shared account shape."""
     accounts: list[dict[str, Any]] = []
@@ -1122,6 +1192,8 @@ def normalize_claude(snapshot: dict[str, Any], observed_at: dt.datetime) -> list
             "observed_at": min(account_observed, observed_at),
             "limits": limits,
         }
+        account["banked_resets"] = claude_banked_resets(
+            raw_account.get("reset_bank"), observed_at, stale=account["stale"])
         extra = clean_extra_usage(raw_account.get("extra_usage"))
         if extra is not None:
             account["extra_usage"] = extra
@@ -1152,6 +1224,8 @@ def keep_claude_state(
             extra = clean_extra_usage(raw_account.get("extra_usage"))
             if extra is not None:
                 payload["extra_usage"] = extra
+            if isinstance(raw_account.get("reset_bank"), dict):
+                payload["reset_bank"] = raw_account["reset_bank"]
             cache_provider_read(name, payload, account["observed_at"])
             continue
         # locked out: whichever surviving copy was observed last wins
@@ -1170,6 +1244,9 @@ def keep_claude_state(
                 account["extra_usage"] = extra
             else:
                 account.pop("extra_usage", None)
+            kept_bank = claude_banked_resets(stored_raw.get("reset_bank"), now, stale=True)
+            if kept_bank is not None:
+                account["banked_resets"] = kept_bank
     return accounts
 
 
@@ -1368,17 +1445,23 @@ def _codex_banked_resets(snapshot: dict[str, Any]) -> dict[str, Any] | None:
 
     The app-server reports these under ``rateLimitResetCredits``; a banked reset
     means the weekly cap is effectively higher on demand. Returns the available
-    count and the soonest expiry, or None when none are banked.
+    count, the soonest expiry and one entry per credit, in the shape a Claude
+    account's bank has (`claude_banked_resets`). Count 0 when none are banked.
     """
     block = snapshot.get("rateLimitResetCredits")
     if not isinstance(block, dict):
-        return None
+        # The protocol schema marks the field optional and nullable on every
+        # rate-limit read: absent or null is the server's "none banked".
+        return {"count": 0, "expires_at": None, "credits": []}
     raw_credits = block.get("credits") if isinstance(block.get("credits"), list) else []
     available = [
         {
             "title": c.get("title") or "Full reset",
             "granted_at": parse_timestamp(c.get("grantedAt")),
             "expires_at": parse_timestamp(c.get("expiresAt")),
+            "left": 1,
+            "clears": ["Weekly · all models"],
+            "usable": True,
         }
         for c in raw_credits
         if isinstance(c, dict) and c.get("status") == "available"
@@ -1389,7 +1472,7 @@ def _codex_banked_resets(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     raw_count = block.get("availableCount")
     count = raw_count if isinstance(raw_count, int) and not isinstance(raw_count, bool) else len(available)
     if count <= 0:
-        return None
+        return {"count": 0, "expires_at": None, "credits": []}
     soonest = next((c["expires_at"] for c in available if c["expires_at"]), None)
     return {"count": count, "expires_at": soonest, "credits": available}
 
@@ -3510,6 +3593,37 @@ def _pool_row(
     return (name, cell, fable_cell, f"next {pool['next_reset_account']} in {left} – {when}")
 
 
+def resets_cell(account: dict[str, Any], *, color: bool) -> str:
+    """Banked resets left on one account: a count, `unread`, or `—` where the provider has none.
+
+    A missing bank on a provider that keeps one is `unread`, never 0. A stale bank
+    is a ceiling (a reset may have been spent since), so it says so.
+    """
+    if "banked_resets" not in account:
+        return "—"
+    bank = account["banked_resets"]
+    if bank is None:
+        return paint("unread", "dim", on=color)
+    cell = str(bank["count"])
+    if bank["count"] and not any(c.get("usable", True) for c in bank["credits"]):
+        cell += " paused"
+    if bank.get("stale"):
+        cell += " " + paint("stale", "dim", on=color)
+    return cell
+
+
+def pooled_resets_cell(accounts: list[dict[str, Any]], *, color: bool) -> str:
+    """The sum of every read bank. `floor` when an account's bank is unread: the truth is this or higher."""
+    keeping = [a for a in accounts if "banked_resets" in a and not a.get("dormant")]
+    if not keeping:
+        return "—"
+    read = [a["banked_resets"] for a in keeping if a["banked_resets"] is not None]
+    cell = str(sum(bank["count"] for bank in read))
+    if len(read) < len(keeping):
+        cell += " " + paint("floor", "dim", on=color)
+    return cell
+
+
 def render_weekly_summary(
     accounts: list[dict[str, Any]], openrouter: dict[str, Any] | None, now: dt.datetime, *, color: bool = False
 ) -> str:
@@ -3520,7 +3634,7 @@ def render_weekly_summary(
     could sit at a calm 20% while Fable was already capped. Providers without a
     Fable meter render `—`, never a blank — the column count never changes.
     """
-    rows: list[tuple[str, str, str, str]] = []
+    rows: list[tuple[str, ...]] = []
     last_claude = -1
     for account in accounts:
         claude = account["provider"] == "Claude"
@@ -3531,7 +3645,7 @@ def render_weekly_summary(
             # position, so nothing here may look like one.
             name = f"Claude · {account['display']} · dormant"
             name = _elsewhere_name(name, color=color)
-            rows.append((name, "—", "—", "—"))
+            rows.append((name, "—", "—", "—", "—"))
             last_claude = len(rows) - 1
             continue
         weekly = _weekly_all(account)
@@ -3556,6 +3670,7 @@ def render_weekly_summary(
             name,
             f"{meter_badge(account, weekly)} {used_cell(account, weekly, now, color=color)}",
             fable_cell,
+            resets_cell(account, color=color),
             format_reset(weekly, now),
         ))
         if claude:
@@ -3563,7 +3678,9 @@ def render_weekly_summary(
     pool = claude_pool(accounts, now)
     if pool is not None and last_claude >= 0:
         fable_pool = claude_pool(accounts, now, meter_id="weekly_fable")
-        rows.insert(last_claude + 1, _pool_row(pool, now, color=color, fable_pool=fable_pool))
+        name, used, fable, reset = _pool_row(pool, now, color=color, fable_pool=fable_pool)
+        claude_rows = [a for a in accounts if a["provider"] == "Claude"]
+        rows.insert(last_claude + 1, (name, used, fable, pooled_resets_cell(claude_rows, color=color), reset))
     everything = total_pool(accounts, now)
     if everything is not None:
         left = (format_countdown(everything["next_reset_at"] - now)
@@ -3571,6 +3688,7 @@ def render_weekly_summary(
         when = everything["next_reset_at"].astimezone(LOCAL_TZ).strftime("%a %b %-d, %-I:%M %p %Z")
         rows.append((f"Total · pooled ({everything['count']} · ${everything['monthly_usd']:.0f}/mo, not Kimi)",
                      _pool_used_cell(everything, color=color), "—",
+                     pooled_resets_cell(accounts, color=color),
                      f"next {everything['next_reset_account']} in {left} – {when}"))
     if openrouter:
         remaining = openrouter.get("remaining_usd")
@@ -3580,15 +3698,15 @@ def render_weekly_summary(
             tail = f"rolling 7d · ${remaining:.0f} left of ${cap:.0f}/{reset or 'mo'}"
         else:
             tail = f"rolling 7d · resets {reset}" if reset else "rolling 7d"
-        rows.append(("OpenRouter", f"${openrouter['weekly_usd']:.2f}", "—", tail))
+        rows.append(("OpenRouter", f"${openrouter['weekly_usd']:.2f}", "—", "—", tail))
     if not rows:
         return ""
     data_rows = [
-        [name, used, fable, paint(reset, "dim", on=color)]
-        for name, used, fable, reset in rows
+        [name, used, fable, banked, paint(reset, "dim", on=color)]
+        for name, used, fable, banked, reset in rows
     ]
-    return "\n".join([""] + banner_table("Weekly status", ["Account", "Weekly", "Fable", "Next reset at"],
-                                         data_rows, color=color))
+    return "\n".join([""] + banner_table(
+        "Weekly status", ["Account", "Weekly", "Fable", "Banked resets", "Next reset at"], data_rows, color=color))
 
 
 def render_harness_spend(summary: dict[str, Any] | None, now: dt.datetime, *, color: bool = False) -> str:
@@ -3726,34 +3844,61 @@ def _render_subscription_table(rows: list[dict[str, Any]], *, color: bool = Fals
     return lines
 
 
-def render_codex_resets(accounts: list[dict[str, Any]], now: dt.datetime, *, color: bool = False) -> str:
-    """Codex reset banks: one row per banked full-reset credit, soonest-expiring first.
+def render_reset_banks(accounts: list[dict[str, Any]], now: dt.datetime, *, color: bool = False) -> str:
+    """Reset banks: one row per banked reset, every provider in one table.
 
-    Each credit instantly clears the weekly meter, so however hot the Codex weekly
-    row reads, that cap is effectively higher on demand — but the credits expire
-    (~30 days from grant), so the expiry and time-left are the point of the table.
+    A banked reset clears a meter on demand, so however hot a weekly row reads,
+    that cap is effectively higher by what is banked here. Banks lapse, so the
+    expiry and time left are the point. Accounts whose bank is unknown are named
+    under the table rather than shown as empty.
     """
-    codex = next((account for account in accounts if account.get("provider") == "Codex"), None)
-    banked = codex.get("banked_resets") if codex else None
-    credits = (banked or {}).get("credits") or []
-    if not credits:
-        return ""
-
     def when(value: Any) -> str:
         return value.astimezone(LOCAL_TZ).strftime("%a %b %-d") if isinstance(value, dt.datetime) else "—"
 
-    rows: list[list[str]] = []
-    for index, credit in enumerate(credits, start=1):
-        expires = credit.get("expires_at")
-        if isinstance(expires, dt.datetime):
-            days = (expires - now).total_seconds() / 86400
-            left = f"{days:.1f}d" if days >= 0 else "expired"
-        else:
-            left = "—"
-        rows.append([str(index), credit.get("title") or "Full reset", when(credit.get("granted_at")),
-                     when(expires), left])
-    headers = ["#", "Credit", "Granted", "Expires", "Time left"]
-    return "\n".join([""] + banner_table("Codex reset banks", headers, rows, color=color))
+    far_future = dt.datetime.max.replace(tzinfo=dt.timezone.utc)
+    entries: list[tuple[dt.datetime, int, list[str]]] = []
+    unread: list[str] = []
+    notes: list[str] = []
+    for order, account in enumerate(accounts):
+        if "banked_resets" not in account or account.get("dormant"):
+            continue
+        name = f"Claude · {account['display']}" if account["provider"] == "Claude" else account["display"]
+        bank = account["banked_resets"]
+        if bank is None:
+            unread.append(account["display"])
+            continue
+        if bank.get("cooldown_until") and bank["cooldown_until"] > now:
+            notes.append(f"{name}: next reset usable after "
+                         f"{bank['cooldown_until'].astimezone(LOCAL_TZ).strftime('%a %b %-d, %-I:%M %p %Z')}")
+        several = len(bank["credits"]) > 1
+        for credit in bank["credits"]:
+            expires = credit.get("expires_at")
+            if isinstance(expires, dt.datetime):
+                days = (expires - now).total_seconds() / 86400
+                left = f"{days:.1f}d" if days >= 0 else "expired"
+            else:
+                left = "—"
+            title = credit.get("title") or "Full reset"
+            if several and credit.get("next"):
+                title += " · used next"
+            if not credit.get("usable", True):
+                title += " · paused"
+            count = str(credit.get("left", 1)) + (" " + paint("stale", "dim", on=color) if bank.get("stale") else "")
+            entries.append((expires if isinstance(expires, dt.datetime) else far_future, order, [
+                name, title, count, ", ".join(credit.get("clears") or []) or "—", when(expires), left]))
+    if not entries and not unread:
+        return ""
+    entries.sort(key=lambda e: (e[1], e[0]))
+    rows = [cells for _, _, cells in entries]
+    headers = ["Account", "Reset", "Left", "Clears", "Expires", "Time left"]
+    lines = [""] + (banner_table("Reset banks", headers, rows, color=color) if rows else [paint("**Reset banks**", "bold", on=color)])
+    if unread:
+        lines.append("")
+        lines.append(paint(f"unread: {', '.join(unread)}. A bank is read only through a live login "
+                           "(a meter token cannot see it).", "dim", on=color))
+    for note in notes:
+        lines.append(paint(note, "dim", on=color))
+    return "\n".join(lines)
 
 
 def _login_state(path: Path) -> dict[str, Any]:
@@ -4469,6 +4614,9 @@ def render_report(
     notes = render_account_notes(color=color)
     if notes:
         output += "\n\n" + notes
+    resets = render_reset_banks(accounts, now, color=color)
+    if resets:
+        output += "\n" + resets
     output += "\n\n" + render_markdown(accounts, now, warnings, color=color)
     harness = render_harness_spend(harness_spend, now, color=color)
     if harness:
@@ -4476,9 +4624,6 @@ def render_report(
     api_equivalent = render_api_equivalent(now, color=color)
     if api_equivalent:
         output += "\n" + api_equivalent
-    resets = render_codex_resets(accounts, now, color=color)
-    if resets:
-        output += "\n" + resets
     if switches:
         output += "\n" + render_switches(switches, color=color)
     return output

@@ -87,6 +87,7 @@ from pathlib import Path
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 UA = "claude-cli/2.1.208 (external, cli)"  # the usage endpoint is read as the CLI reads it (PROVIDERS.md)
+RESET_BANK_QUERY = "cedar_ember=1"  # the reset bank rides on the usage read (PROVIDERS.md, Reset banks)
 
 CLAUDE_JSON = Path.home() / ".claude.json"
 DEFAULT_HOME_DIR = Path.home() / ".claude"
@@ -775,7 +776,8 @@ def resolve_launch_home(requested: str | None) -> Home:
 # still has last-known numbers. No secrets — percentages and reset times only.
 
 def cache_put(alias: str, email: str, rows: list[tuple[str, float, str]],
-              extra_usage: dict | None = None, org_uuid: str | None = None) -> None:
+              extra_usage: dict | None = None, org_uuid: str | None = None,
+              reset_bank: dict | None = None) -> None:
     try:
         USAGE_CACHE.mkdir(parents=True, exist_ok=True)
         os.chmod(USAGE_CACHE, 0o700)
@@ -792,6 +794,15 @@ def cache_put(alias: str, email: str, rows: list[tuple[str, float, str]],
         # with fresh percents from a different source.
         if extra_usage is not None:
             payload["extra_usage"] = extra_usage
+        # Unlike the counter, a bank is carried forward when this read cannot see
+        # it (a meter token): it is dated by its own `read_at`, never by this write,
+        # and only while the organization is the same.
+        if reset_bank is None:
+            previous = cache_get(alias) or {}
+            if not org_uuid or str(previous.get("org_uuid") or "").lower() == str(org_uuid).lower():
+                reset_bank = valid_reset_bank(previous.get("reset_bank"))
+        if reset_bank is not None:
+            payload["reset_bank"] = reset_bank
         tmp.write_text(json.dumps(payload, indent=2))
         os.chmod(tmp, 0o600)
         os.replace(tmp, p)
@@ -866,10 +877,14 @@ def fetch_usage(token: str) -> tuple[dict, str | None]:
     the server's word on whose meters these are, which a home's login record is not
     (see `read_owner`). None when the response names no organization.
     """
-    req = urllib.request.Request(USAGE_URL, headers={
+    # `cedar_ember=1` asks for the account's reset bank, as Claude Code's own read
+    # does. The server answers it only for a current client identity: under the
+    # pinned UA it says `ineligible_reason: "cli_version"`, so the installed
+    # version is sent (it falls back to the pin when no CLI is found).
+    req = urllib.request.Request(f"{USAGE_URL}?{RESET_BANK_QUERY}", headers={
         "Authorization": f"Bearer {token}",
         "anthropic-beta": "oauth-2025-04-20",
-        "User-Agent": UA,
+        "User-Agent": f"claude-cli/{cli_version()} (external, cli)",
     })
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -1030,6 +1045,79 @@ def parse_extra_usage(usage: dict) -> dict | None:
         "currency": extra.get("currency"),
         "exponent": _exponent(extra.get("decimal_places")),
     })
+
+
+# ---------------------------------------------------------------- reset banks
+# Anthropic grants an account whole-meter resets (the first, 2026-11-09: one Fable
+# reset per Max account, one more at 6 months' tenure, one more at 12). The usage
+# read carries them under the codename `cedar_ember` when asked. Only a login's
+# token can see them: a meter token lacks the user:profile scope.
+
+def _text(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def parse_reset_bank(usage: dict, read_at: str | None = None) -> dict | None:
+    """The account's reset bank on one usage payload, or None when it was not read.
+
+    None means unknown, never zero: the block absent (an older read) or refused for
+    the client identity. Ineligible for any other reason is a real reading of an
+    empty bank. Each grant keeps what a person needs to decide whether to spend
+    it: how many are left, which meters it clears, when it lapses, and whether it
+    is usable right now.
+    """
+    block = usage.get("cedar_ember") if isinstance(usage, dict) else None
+    if not isinstance(block, dict):
+        return None
+    reason = _text(block.get("ineligible_reason"))
+    if block.get("eligible") is not True and reason == "cli_version":
+        return None
+    grants = []
+    for raw in block.get("grants") or []:
+        if not isinstance(raw, dict):
+            continue
+        left = _count(raw.get("resets_left"))
+        if left is None:
+            continue
+        grants.append({
+            "id": _text(raw.get("id")),
+            "label": _text(raw.get("label")),
+            "left": left,
+            "total": _count(raw.get("resets_total")),
+            "clears": [c for c in raw.get("clears") or [] if isinstance(c, str)],
+            "starts_at": _text(raw.get("starts_at")),
+            "ends_at": _text(raw.get("ends_at")),
+            "usable_now": raw.get("usable_now") is True,
+            "paused": raw.get("paused") is True,
+            "unavailable_reason": _text(raw.get("unavailable_reason")),
+        })
+    props = block.get("event_props") if isinstance(block.get("event_props"), dict) else {}
+    exhausted = [e.get("id") if isinstance(e, dict) else e for e in block.get("exhausted") or []]
+    return {
+        "read_at": read_at or now_iso(),
+        "eligible": block.get("eligible") is True,
+        "ineligible_reason": reason,
+        "grants": grants,
+        "exhausted": [e for e in exhausted if isinstance(e, str)],
+        "next_grant_id": _text(block.get("next_grant_id")),
+        "cooldown_until": _text(block.get("cooldown_until")),
+        "tenure": _text(props.get("tenure_bucket")),
+    }
+
+
+def valid_reset_bank(value: object) -> dict | None:
+    """A journaled reset bank, or None when the shape is not one."""
+    if not isinstance(value, dict) or not isinstance(value.get("grants"), list):
+        return None
+    if not _text(value.get("read_at")):
+        return None
+    return value
 
 
 # ---------------------------------------------------------------- meter tokens
@@ -1627,9 +1715,14 @@ def cmd_status(args: list[str]) -> None:
         base, email = bases[owner], bases[owner]["email"]
         rows = limit_rows(usage)
         extra = parse_extra_usage(usage)
-        cache_put(owner, email, rows, extra, org_uuid=read_org or base["org_uuid"])
+        bank = parse_reset_bank(usage)
+        cache_put(owner, email, rows, extra, org_uuid=read_org or base["org_uuid"], reset_bank=bank)
         limits = [{"label": l, "percent": p, "resets_at": r} for l, p, r in rows]
         report[owner] = {**base, "limits": limits, "fetched_at": now_iso(), "read_org_uuid": read_org}
+        if bank is None:
+            bank = valid_reset_bank((cache_get(owner) or {}).get("reset_bank"))
+        if bank is not None:
+            report[owner]["reset_bank"] = bank
         if held.get(owner) is not home:
             report[owner]["read_via"] = f"home {home.name}"
         if extra is not None:
@@ -1637,6 +1730,10 @@ def cmd_status(args: list[str]) -> None:
         tag = f"{C['green']}▶ new sessions{C['off']}" if base["active"] else f"{C['green']}● live{C['off']}"
         blocks[owner] = [f"\n{C['bold']}{owner}{C['off']}  {C['cyan']}{email}{C['off']}  {tag}  "
                          f"{C['dim']}home {home.name}{C['off']}"] + lines(limits)
+        if bank is not None:
+            left = sum(g["left"] for g in bank["grants"])
+            blocks[owner].append(f"  {'banked resets':<21} {left}   "
+                                 f"{C['dim']}tenure {bank.get('tenure') or '?'}{C['off']}")
 
     for alias, home in held.items():
         base, email = bases[alias], bases[alias]["email"]
@@ -1692,6 +1789,9 @@ def cmd_status(args: list[str]) -> None:
             report[alias] = {**base, "limits": meter["rows"], "fetched_at": meter["fetched_at"],
                              "source": "meter-token", "read_via": meter["read_via"],
                              "org_uuid": meter["org_uuid"]}
+            bank = valid_reset_bank((cache_get(alias) or {}).get("reset_bank"))
+            if bank is not None:
+                report[alias]["reset_bank"] = bank
             tag = f"{C['green']}▶ new sessions{C['off']}" if base["active"] else f"{C['green']}◆ meter token{C['off']}"
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {C['cyan']}{email}{C['off']}  {tag}  "
                              f"{C['dim']}{meter['read_via']}{C['off']}"] + lines(meter["rows"])
@@ -1707,6 +1807,9 @@ def cmd_status(args: list[str]) -> None:
             extra = valid_extra_usage(cached.get("extra_usage"))
             if extra is not None:
                 report[alias]["extra_usage"] = extra
+            bank = valid_reset_bank(cached.get("reset_bank"))
+            if bank is not None:
+                report[alias]["reset_bank"] = bank
             blocks[alias] = [f"\n{C['bold']}{alias}{C['off']}  {C['cyan']}{email}{C['off']}  "
                              f"{C['dim']}○ last known ({age_str(cached.get('fetched_at'))} ago){C['off']}"
                              ] + lines(cached["limits"])

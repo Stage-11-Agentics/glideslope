@@ -213,6 +213,41 @@ windows would just be noise.
 
 ---
 
+## Reset banks — Claude and Codex (added 2026-11-09)
+
+A banked reset clears a meter on demand, so a weekly cap is effectively higher by what is
+banked. Both providers keep a bank per account; every account lands with `banked_resets`
+in one shape (`count`, soonest `expires_at`, one `credits[]` entry per grant with `title`,
+`left`, `clears`, `expires_at`, `usable`), and **Weekly status** gives it a column and
+**Reset banks** a table, one row per grant, every provider together.
+
+| | Claude | Codex |
+|---|---|---|
+| Read | the usage GET with `?cedar_ember=1` (Claude Code's own codename for the bank) | `rateLimitResetCredits` on the app-server's rate-limit read |
+| Gate | answered only for a current client identity: under an old `User-Agent` it says `eligible: false, ineligible_reason: "cli_version"`, so the read sends the installed CLI's version | none |
+| Credential | a login's token. A meter token is refused (`user:profile` scope), so a bank is never read through one | the app-server's login |
+| Grant | `grants[]`: `id`, `label`, `resets_left`/`resets_total`, `clears` (meter keys: `seven_day`, `seven_day_overage_included` = Fable, `five_hour`), `starts_at`, `ends_at`, `usable_now`, `paused`; plus `next_grant_id` (spent first), `cooldown_until`, `event_props.tenure_bucket` | `credits[]` with `status`, `grantedAt`, `expiresAt`; each clears the weekly meter |
+| Absent | **unread**, never 0: an older read, a refused identity, or no login since the bank existed | **none**: the protocol marks the field optional and nullable on every read |
+
+The first Claude grants (2026-11-09, ending 2027-03-09) were tenure-based: one Fable reset
+per Max account, one more at 6 months' tenure, one more at 12. The server, not this program,
+applies the tenure rule; `tenure` is shown so a count can be checked against it.
+
+- **Journal.** `claude-account` stores the bank beside the usage numbers, dated by its own
+  `read_at`, and a read that cannot see it (a meter token) carries the last one forward for
+  the same organization. A satellite's bank wins when its `read_at` is newer.
+- **Honesty.** A bank read over an hour ago, or on a stale account, is `stale`: a ceiling,
+  since a reset may have been spent since. A pooled cell sums the read banks and says
+  `floor` when any account's bank is unread. Expired grants drop out by `ends_at`.
+- **Spending one is not this program's job.** Both providers expose a redeem call
+  (Claude: `POST /api/organizations/{org}/reset_rate_limits` with
+  `{"program": "cedar_ember", "grant_id", "request_id"}`; Codex: JSON-RPC
+  `account/rateLimitResetCredit/consume` with `{"idempotencyKey", "creditId"}`, both found
+  in the clients, never called here). Glideslope reads and never redeems; spend a reset from
+  Claude Code's rate-limit menu or the Codex client.
+
+---
+
 ## Satellites — one live account per machine (added 2026-08-15)
 
 | | |
@@ -444,7 +479,7 @@ $200 weight. Plan labels do not scale usage: percentages come from the live mete
 Two Codex-specific subtleties: `usedPercent: 0` is ambiguous between *not started* and
 *just started*, so the live reader probes the reset clock to decide whether the window is
 anchored; and banked **full-reset credits** (`rateLimitResetCredits`) mean the weekly cap is
-effectively higher on demand, so they get their own table with expiry dates.
+effectively higher on demand (see **Reset banks**).
 
 ---
 
