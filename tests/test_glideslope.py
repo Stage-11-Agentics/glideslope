@@ -2015,3 +2015,9 @@ class OpenViewTests(unittest.TestCase):
         parser_args = glideslope.main.__globals__  # the parser is built inside main
         self.assertIn("VIEW_FILES", parser_args)
         self.assertEqual(set(glideslope.VIEW_FILES), {"deck", "popup", "history", "spend"})
+
+
+def test_account_notes_render_one_line_each():
+    assert glideslope.render_account_notes({}) == ""
+    text = glideslope.render_account_notes({"Charlie": "Reserved for security work."})
+    assert text == "ⓘ **Charlie**: Reserved for security work."
