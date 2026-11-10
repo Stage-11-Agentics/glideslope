@@ -188,6 +188,31 @@ def credit_view(limit: dict) -> dict:
     }
 
 
+def resets_view(account: dict) -> dict | None:
+    """The account's reset bank for the page: a count and one line per grant, or `unread`.
+
+    None means the provider keeps no bank (Kimi, Grok), so the page draws no cell.
+    """
+    if "banked_resets" not in account:
+        return None
+    bank = account["banked_resets"]
+    if bank is None:
+        return {"unread": True, "count": None, "stale": False, "credits": []}
+    return {
+        "unread": False,
+        "count": int(bank.get("count") or 0),
+        "stale": bool(bank.get("stale") or account.get("stale")),
+        "expires_at": bank.get("expires_at"),
+        "credits": [{
+            "title": str(c.get("title") or "Reset"),
+            "left": int(c.get("left") or 1),
+            "clears": [str(x) for x in c.get("clears") or []],
+            "expires_at": c.get("expires_at"),
+            "usable": bool(c.get("usable", True)),
+        } for c in bank.get("credits") or []],
+    }
+
+
 def build_snapshot(pos: dict) -> dict:
     alias_to_display = {a["account"]: a["display"] for a in pos.get("accounts", [])}
     # The configured zone by IANA name; None lets the page use the viewer's own.
@@ -206,6 +231,8 @@ def build_snapshot(pos: dict) -> dict:
         "switch": a.get("switch"),
         # The suggested next account (glideslope.mark_next_up): numbers only, or None.
         "next_up": a.get("next_up"),
+        # Banked resets (PROVIDERS.md, Reset banks): None where the provider keeps no bank.
+        "resets": resets_view(a),
         "meter_on": [str(name) for name in (a.get("meter_on") or [])],
         "meter_silent": [str(name) for name in (a.get("meter_silent") or [])],
         "plan": a.get("plan") or "",
