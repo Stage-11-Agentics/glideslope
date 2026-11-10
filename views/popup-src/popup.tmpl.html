@@ -45,6 +45,7 @@
     --window-week:    #a78bfa;   /* violet — the 7 DAY budget  */
     --window-session: #f5b74e;   /* amber  — the 5 HOUR throttle */
     --window-fable:   #2dd4bf;   /* teal   — the Fable weekly, the budget that binds (2026-09-11) */
+    --cleared: #fbbf24;      /* amber: an account cleared for restricted work */
     --reset-bank: #7dd3fc;   /* sky: a banked reset, capacity on demand */
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans: "SF Pro Display", Inter, ui-sans-serif, -apple-system, sans-serif;
@@ -383,13 +384,13 @@
      windows cost five rows of the card's height instead of nine, and the plot
      keeps the difference. Anthropic's column is the wider one: its accounts are
      where the decisions are, and each carries a reset bank; Codex, Kimi and Grok
-     need their numbers, not the room (operator, 2026-11-09). 1.2 : 1 is as far as it
-     leans at the host's 1000 px cap: past it the providers column clips Codex's
-     name and countdown (measured: 3 px at 1.3, 63 px at 1.7). */
+     need their numbers, not the room (operator, 2026-11-09). 1.3 : 1 is as far as it
+     leans at the host's 1000 px cap, with the providers column's gaps and $ cell
+     tightened: past it Codex's name and countdown clip. */
   .plot-register {
     flex: 0 0 auto;
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
     gap: 12px;
     align-items: start;
     padding: 8px 4px 2px;
@@ -631,6 +632,14 @@
   /* exactly what the longest name ("Charlie", "Foxtrot") and a chip plus its colon
      need: the state column at the head of the row spends the rest */
   .reg-account { width: 7.2ch; }
+  /* Anthropic rows get air: wider gaps and a name cell with room for a mark. */
+  .register-column-anthropic .reg-row { gap: 9px; padding: 0 8px 0 6px; }
+  .register-column-anthropic .reg-account { width: 9.4ch; white-space: nowrap; }
+  /* The providers column gives its slack to Anthropic: tighter gaps, a narrower $ cell. */
+  .register-column-providers .reg-row { gap: 3px; }
+  .register-column-providers .reg-spend { width: 44px; }
+  .acct-mark { display: inline-block; margin-left: 5px; vertical-align: -1px; line-height: 0; }
+  .acct-mark.mark-shield { color: var(--cleared); }
   .reg-window { width: 5ch; }
   /* The register is the one list in the popup where a 7 DAY budget and a 5 HOUR
      throttle sit line after line, and two characters of text is not enough to
@@ -700,16 +709,20 @@
     width: 30px; flex: 0 0 auto; text-align: right; white-space: nowrap;
     color: var(--reset-bank); font: 720 11.5px/1 var(--mono); font-variant-numeric: tabular-nums;
   }
-  .reg-resets .glyph { font-size: 10px; opacity: .8; margin-right: 1px; }
+  .reg-resets .unit { font-size: 9.5px; opacity: .8; margin-left: 1px; }
   .reg-resets.none { color: var(--muted-2); }
   .reg-resets.unread { color: var(--muted-2); font-weight: 600; }
   .reg-resets.stale { opacity: .7; }
   .reg-row.spent .reg-resets:not(.none):not(.unread) { color: var(--reset-bank); }
+  /* Which accounts hold resets, on a line of its own under the family label: one
+     line, never wrapping, so the header never changes height. */
   .family-resets {
-    margin-left: 10px; color: var(--reset-bank); font: 700 10px/1.1 var(--mono);
-    letter-spacing: .04em; text-transform: none; font-variant-numeric: tabular-nums;
+    display: block; height: 14px; margin: 0 4px 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    color: var(--reset-bank); font: 700 10.5px/14px var(--mono);
+    letter-spacing: .03em; font-variant-numeric: tabular-nums;
   }
-  .family-resets small { color: var(--muted); font-size: 8.5px; letter-spacing: .1em; margin-left: 3px; }
+  .family-resets small { color: var(--muted); font-size: 8.5px; letter-spacing: .1em; margin-right: 5px; }
+  .family-resets .unread { color: var(--muted-2); }
   .reg-used { width: 46px; flex: 0 0 auto; text-align: right; color: var(--ink); font: 720 13.2px/1 var(--mono); }
   .reg-dev {
     /* wide enough for the longest deviation the frame can produce — "−100%",
@@ -1785,11 +1798,21 @@ const resetCountdown = window => {
    whose window has no resets_at reads "Alpha 7D —", never "Alpha 7D: —", because
    the colon is the promise of a time and there is no time to promise. The dash
    goes in the countdown column, where the value is the thing that is missing. */
+/* The operator's mark for an account ([claude] marks): a shield for a cleared
+   account, its standing note as the tooltip. An unknown mark name draws nothing. */
+const ACCOUNT_MARKS = {
+  shield: `<svg viewBox="0 0 12 14" width="10" height="12" aria-hidden="true"><path d="M6 .8 11 2.8v4c0 3.1-2.1 5.4-5 6.4C3.1 12.2 1 9.9 1 6.8v-4z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
+};
+const accountMarkHTML = account => {
+  const svg = account.mark && ACCOUNT_MARKS[account.mark];
+  if (!svg) return "";
+  return `<span class="acct-mark mark-${escapeHTML(account.mark)}" title="${escapeHTML(account.note || account.mark)}">${svg}</span>`;
+};
 const registerNameHTML = (account, window, session = window.window_minutes === 300) => {
   const countdown = resetCountdown(window);
   const cls = isFable(window) ? "fable" : session ? "session" : "weekly";
   const word = isFable(window) ? "F" : session ? "5H" : "7D";
-  return `<span class="reg-account">${escapeHTML(account.display)}</span> ` +
+  return `<span class="reg-account">${escapeHTML(account.display)}${accountMarkHTML(account)}</span> ` +
     `<span class="reg-window">` +
       `<span class="window-chip ${cls}">${word}</span>` +
       `${window.resets_at ? ":" : ""}</span> ` +
@@ -2376,7 +2399,7 @@ function fillRegister(register, entries) {
     if (r.unread) return `${account.display}: reset bank unread. Only a live login on a current Claude Code reads it; a meter token cannot.`;
     if (!r.credits.length) return `${account.display}: no banked resets`;
     return `${account.display}: ${r.count} banked reset${r.count === 1 ? "" : "s"}${r.stale ? " (stale: one may have been spent since)" : ""}\n`
-      + r.credits.map(c => `↺ ${c.left} · ${c.title} · clears ${c.clears.join(", ") || "—"} · until ${localDay(c.expires_at)}${c.usable ? "" : " · not usable yet"}`).join("\n");
+      + r.credits.map(c => `${c.left}R · ${c.title} · clears ${c.clears.join(", ") || "—"} · until ${localDay(c.expires_at)}${c.usable ? "" : " · not usable yet"}`).join("\n");
   };
   const resetsCell = (entry) => {
     const account = entry.account;
@@ -2384,15 +2407,8 @@ function fillRegister(register, entries) {
     if (!account.resets || !weeklyRow || resetsShown.has(account.display)) return `<span class="reg-resets none"></span>`;
     resetsShown.add(account.display);
     const r = account.resets;
-    if (r.unread) return `<span class="reg-resets unread" title="${escapeHTML(resetsTitle(account))}"><span class="glyph">↺</span>?</span>`;
-    return `<span class="reg-resets${r.count ? "" : " none"}${r.stale ? " stale" : ""}" title="${escapeHTML(resetsTitle(account))}"><span class="glyph">↺</span>${r.count}</span>`;
-  };
-  const resetsTotal = (list) => {
-    const keeping = list.filter(a => a.resets && !a.dormant);
-    if (!keeping.length) return null;
-    const read = keeping.filter(a => !a.resets.unread);
-    return { count: read.reduce((n, a) => n + a.resets.count, 0), floor: read.length < keeping.length,
-             unread: keeping.filter(a => a.resets.unread).map(a => a.display) };
+    if (r.unread) return `<span class="reg-resets unread" title="${escapeHTML(resetsTitle(account))}">?<span class="unit">R</span></span>`;
+    return `<span class="reg-resets${r.count ? "" : " none"}${r.stale ? " stale" : ""}" title="${escapeHTML(resetsTitle(account))}">${r.count}<span class="unit">R</span></span>`;
   };
   const anthropicColumn = document.createElement("div");
   anthropicColumn.className = "register-column register-column-anthropic";
@@ -2409,12 +2425,17 @@ function fillRegister(register, entries) {
       : "";
     const hint = family === "Anthropic"
       ? `<span class="switch-hint" data-live="">${escapeHTML(idleHint())}</span>` : "";
-    const banked = family === "Anthropic"
-      ? resetsTotal((SNAP.accounts || []).filter(a => a.provider === "Claude")) : null;
-    const bankedHTML = banked
-      ? `<span class="family-resets num" title="${escapeHTML(`Banked resets across Anthropic accounts${banked.floor
-          ? `; unread: ${banked.unread.join(", ")}, so the true total is this or higher` : ""}`)}">↺ ${banked.count}${banked.floor ? "+" : ""}<small>BANKED</small></span>` : "";
-    box.innerHTML = `<div class="family-label"><span>${escapeHTML(family)}${hint}</span><span>${famTotal}${bankedHTML}</span></div>`;
+    // Which accounts hold resets, by name: a bare total says nothing about where to
+    // spend one (operator, 2026-11-09). Unread accounts are named once, dimmed.
+    const familyAccounts = (SNAP.accounts || []).filter(a => familyFor(a.provider) === family && a.resets && !a.dormant);
+    const holding = familyAccounts.filter(a => !a.resets.unread && a.resets.count > 0);
+    const unreadBanks = familyAccounts.filter(a => a.resets.unread);
+    const bankedHTML = family === "Anthropic" && familyAccounts.length
+      ? `<div class="family-resets num" title="${escapeHTML(unreadBanks.length
+          ? `Reset bank unread: ${unreadBanks.map(a => a.display).join(", ")}` : "Every Anthropic reset bank read")}"><small>BANKED</small>${
+          holding.length ? holding.map(a => `${escapeHTML(a.display)} ${a.resets.count}R`).join(" · ") : "none"}${
+          unreadBanks.length ? ` <span class="unread">· ${unreadBanks.length} unread</span>` : ""}</div>` : "";
+    box.innerHTML = `<div class="family-label"><span>${escapeHTML(family)}${hint}</span>${famTotal}</div>${bankedHTML}`;
     const rows = document.createElement("div");
     rows.className = "family-rows";
     for (const entry of familyEntries) {
@@ -2533,10 +2554,7 @@ function fillRegister(register, entries) {
       const deviation = pool.used_percent - pool.pace_percent;
       const tone = pool.verdict === "ahead" ? "ahead" : pool.verdict === "trailing" ? "trailing" : "";
       const resetIn = Date.parse(pool.next_reset_at || "") - Date.now();
-      const bank = resetsTotal((SNAP.accounts || []).filter(a => provider === "Total" || a.provider === "Claude"));
-      const bankCell = bank
-        ? `<span class="reg-resets" title="${escapeHTML(`Banked resets, ${name === "Total" ? "every provider" : "every Claude account"}${bank.floor ? `; unread: ${bank.unread.join(", ")}` : ""}`)}"><span class="glyph">↺</span>${bank.count}${bank.floor ? "+" : ""}</span>`
-        : `<span class="reg-resets none"></span>`;
+      const bankCell = `<span class="reg-resets none"></span>`;  // a pooled count names no account to spend from
       row.innerHTML = `
         <span class="reg-key">${glyph}</span>
         <span class="reg-name"><span class="reg-account">${escapeHTML(name)}</span> <span class="reg-window"><span class="window-chip weekly">7D</span>${Number.isFinite(resetIn) ? ":" : ""}</span> <span class="reg-clock${Number.isFinite(resetIn) ? "" : " missing"}">${Number.isFinite(resetIn) ? escapeHTML(fmtDur(resetIn)) : "—"}</span></span>

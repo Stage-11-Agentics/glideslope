@@ -233,6 +233,9 @@ def build_snapshot(pos: dict) -> dict:
         "next_up": a.get("next_up"),
         # Banked resets (PROVIDERS.md, Reset banks): None where the provider keeps no bank.
         "resets": resets_view(a),
+        # The operator's mark and standing note for the account ([claude] marks, notes).
+        "mark": glideslope.CLAUDE_MARKS.get(a["display"]) if a["provider"] == "Claude" else None,
+        "note": glideslope.CLAUDE_NOTES.get(a["display"]) if a["provider"] == "Claude" else None,
         "meter_on": [str(name) for name in (a.get("meter_on") or [])],
         "meter_silent": [str(name) for name in (a.get("meter_silent") or [])],
         "plan": a.get("plan") or "",

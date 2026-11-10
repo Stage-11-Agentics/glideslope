@@ -227,6 +227,10 @@ CLAUDE_PLAN = str(_config_table("claude").get("plan") or "Ultra")
 # or agent choosing an account sees what sets it apart.
 CLAUDE_NOTES: dict[str, str] = {
     str(name): str(text) for name, text in (_config_table("claude").get("notes") or {}).items() if text}
+# A mark drawn beside an account's name on the visual surfaces, keyed by display
+# name: [claude] marks = { Charlie = "shield" }. Its note, if any, is its tooltip.
+CLAUDE_MARKS: dict[str, str] = {
+    str(name): str(mark) for name, mark in (_config_table("claude").get("marks") or {}).items() if mark}
 # The surface manifest that runs one-click account switches, if one does (the
 # popup sends "Use <Account>"; a host runs only labels its manifest declares).
 # Unset, nothing is known about it and no switch is reported as undeclared.
