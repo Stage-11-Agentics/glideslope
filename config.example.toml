@@ -45,6 +45,9 @@ call_signs = { work = "Alpha", personal = "Bravo" }
 # Standing notes about an account, keyed by display name, printed under Weekly
 # status: what sets an account apart when choosing one. Default: none.
 # notes = { Alpha = "Holds the team workspace; keep it for team work." }
+# A mark drawn beside an account's name in the popup and Detail view, keyed by
+# display name; its note is the tooltip. Known marks: "shield". Default: none.
+# marks = { Alpha = "shield" }
 
 # The manifest of the surface that runs one-click switches, if one does. The
 # popup sends "Use <Account>", "Log in <Account>" and "Move all <Account>"; a host
