@@ -724,7 +724,13 @@ carries that label. Claude Code marks the row that opens a turn with `turnOrigin
 A marked row opens a turn and is labelled by its `turnOrigin`; an unmarked meta row is a system
 insert and opens nothing. A notification, prompt or mail that arrives while the agent is working is
 a `queued_command` attachment folded into the running turn, so it wakes nothing. Transcripts too
-old to carry the marks are labelled from the row's text. `spend.json` `triggers` lists dollars, turns and requests per label for
+old to carry the marks are labelled from the row's text.
+
+Two more rules. A Stop hook that hands the agent context (a `hook_additional_context` attachment
+with `hookEvent` Stop) keeps it from stopping, so it opens a turn: `mailbox doorbell` when it
+carries c11 mail (`<c11-msg>`), else `stop hook`. A row that repeats the current turn's
+`turnPosition` (a compaction mid-turn re-writes the opening row) opens nothing, because that turn
+is still running. `spend.json` `triggers` lists dollars, turns and requests per label for
 `d1`, `d7`, `d30` and `all`, heaviest first, with each label's five costliest sessions.
 
 | Label | Row |
@@ -733,7 +739,7 @@ old to carry the marks are labelled from the row's text. `spend.json` `triggers`
 | `c11 send` | A typed prompt whose text matches a `panel.input_sent` event. c11 keeps those events about 14 days, so an older send reads `typed prompt`. |
 | `c11 launch` | A launch prompt file. |
 | `background shell`, `agent finished`, `monitor event` | A task notification, by its summary. |
-| `mailbox doorbell`, `peer message` | A c11 mail doorbell, or another session's message. |
+| `mailbox doorbell`, `peer message` | A c11 mail doorbell, mail handed over by c11's Stop hook, or another session's message. |
 | `scripted prompt` | A `claude -p` or SDK prompt. |
 | `compaction`, `slash command`, `stop hook`, `scheduled wakeup` | The row of that kind. |
 | `inside subagent` | Any request in a subagent transcript. Its cost is not rolled up to the wake that spawned it. |

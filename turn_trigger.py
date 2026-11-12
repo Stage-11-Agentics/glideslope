@@ -35,6 +35,7 @@ SESSION_START = "session start"
 SUBAGENT = "inside subagent"
 
 MAIL_PHRASES = ("c11 mail waiting", "You have mail: run c11 mailbox")
+STOP_MAIL_MARK = "<c11-msg"  # how c11's Stop hook hands drained mail to the agent
 _ORIGIN_LABELS = {"scheduled": SCHEDULED, "sdk": SCRIPTED}
 _PASTE_RE = re.compile(r"^\s*<pasted_content\b[^>]*>(.*)</pasted_content>\s*$", re.DOTALL)
 _SUMMARY_RE = re.compile(r"<summary>\s*([^<]*)")
@@ -98,6 +99,29 @@ def _from_text(text: str, origin: str | None) -> str | None:
     return None
 
 
+def _stop_hook(attachment) -> tuple[str, str | None] | None:
+    """A Stop hook that hands the agent context keeps it from stopping: a new turn, after end_turn.
+
+    c11's Stop hook drains the mailbox this way, so its context carries the mail itself.
+    """
+    if not isinstance(attachment, dict) or attachment.get("type") != "hook_additional_context":
+        return None
+    if attachment.get("hookEvent") != "Stop":
+        return None
+    content = attachment.get("content")
+    parts = content if isinstance(content, list) else [content]
+    text = " ".join(part for part in parts if isinstance(part, str))
+    return (DOORBELL if STOP_MAIL_MARK in text else STOP_HOOK), None
+
+
+def turn_position(row: dict) -> tuple | None:
+    """The (promptIndex, turnIndex) Claude Code stamps on a turn's opening row, if any."""
+    position = row.get("turnPosition")
+    if not isinstance(position, dict):
+        return None
+    return position.get("promptIndex"), position.get("turnIndex")
+
+
 def row_trigger(row: dict) -> tuple[str, str | None] | None:
     """(label, digest) when ROW opens a turn, else None. Digest is set on typed prompts only.
 
@@ -109,9 +133,13 @@ def row_trigger(row: dict) -> tuple[str, str | None] | None:
 
     Whatever arrives while the agent is working (a task notification, a prompt typed mid-turn,
     mail) is a queued_command attachment folded into the turn already running, so it opens
-    nothing.
+    nothing. A Stop hook that hands the agent context (c11's mail drain) does open one.
     """
-    if row.get("type") != "user" or row.get("isSidechain"):
+    if row.get("isSidechain"):
+        return None
+    if row.get("type") == "attachment":
+        return _stop_hook(row.get("attachment"))
+    if row.get("type") != "user":
         return None
     if row.get("isCompactSummary"):
         return COMPACTION, None

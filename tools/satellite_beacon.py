@@ -288,7 +288,8 @@ def record_token_sessions(sightings: list[dict], now: str, path: Path | None = N
 
     {"schema": 1, "tokens": {fp: org},
      "sessions": {id: [{fp, process, start, first_seen, last_seen}]}}.
-    A session gets a new span when its token or its process changes. `process` is the process
+    A session gets a new span for a token and process it has not been seen with; a sighting of one
+    it has is credited to that span, even if another span came between. `process` is the process
     start, or its pid when the session file gives no start. Spans are only ever extended or
     merged, never dropped, so the file is the whole history of what this machine saw. A file
     that cannot be read raises rather than being replaced: history is not rebuilt from one tick.
@@ -312,8 +313,12 @@ def record_token_sessions(sightings: list[dict], now: str, path: Path | None = N
         spans = sessions.setdefault(sighting["session"], [])
         counts[sighting["fp"]] = counts.get(sighting["fp"], 0) + 1
         process = _process_key(sighting)
-        if spans and spans[-1].get("fp") == sighting["fp"] and _span_process(spans[-1]) == process:
-            spans[-1]["last_seen"] = now
+        # Any earlier span of this token and process: a session that moved between tokens and
+        # came back to one still running is the same process, not a new span.
+        match = next((span for span in reversed(spans) if span.get("fp") == sighting["fp"]
+                      and _span_process(span) == process), None)
+        if match is not None:
+            match["last_seen"] = now
         else:
             spans.append({"fp": sighting["fp"], "process": process, "start": sighting["start"] or now,
                           "first_seen": now, "last_seen": now})

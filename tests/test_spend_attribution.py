@@ -569,3 +569,44 @@ def test_a_typed_prompt_c11_sent_is_labelled_a_c11_send(tmp_path):
     assert records["sent"]["trigger"] == turn_trigger.C11_SEND
     assert (records["sent-too"]["trigger"], records["sent-too"]["turn"]) == (turn_trigger.C11_SEND, 0)
     assert records["typed"]["trigger"] == turn_trigger.TYPED
+
+
+def test_stop_hook_mail_opens_a_turn_and_a_mid_turn_compaction_does_not(tmp_path):
+    """Rows shaped from Claude Code 2.1.31x transcripts (values are fake)."""
+    home = tmp_path / "home"
+    target = home / ".claude" / "projects" / "p" / "00000000-0000-4000-8000-00000000bbbb.jsonl"
+    target.parent.mkdir(parents=True)
+    target.write_text((Path(__file__).parent / "fixtures" / "claude-turns.jsonl").read_text())
+    records = {key.split("_", 1)[1]: record for key, record in _collect(tmp_path, home).items()}
+    assert {name: (record["trigger"], record["turn"]) for name, record in records.items()} == {
+        "work_1": (turn_trigger.TYPED, 1),
+        "work_2": (turn_trigger.TYPED, 0),
+        "mail": (turn_trigger.DOORBELL, 1),
+        "hook": (turn_trigger.STOP_HOOK, 1),
+        "next": (turn_trigger.TYPED, 1),
+    }
+
+
+@pytest.mark.parametrize("attachment", [
+    {"type": "hook_additional_context", "hookEvent": "SessionStart", "content": ["<c11-msg>x</c11-msg>"]},
+    {"type": "hook_additional_context", "hookEvent": "PostToolUse", "content": ["note"]},
+    {"type": "hook_success", "hookEvent": "Stop"},
+    "not a mapping",
+])
+def test_other_hook_rows_open_no_turn(attachment):
+    assert turn_trigger.row_trigger({"type": "attachment", "attachment": attachment}) is None
+
+
+def test_a_session_back_on_an_earlier_token_extends_that_span(tmp_path):
+    evidence = tmp_path / "session-tokens.json"
+    orgs = tmp_path / "orgs.json"
+    first = {"session": "sess", "fp": "abc", "pid": 7, "start": "2026-10-01T10:00:00Z"}
+    other = {"session": "sess", "fp": "def", "pid": 8, "start": "2026-10-01T10:20:00Z"}
+    beacon.record_token_sessions([first], "2026-10-01T10:05:00Z", path=evidence, orgs_path=orgs)
+    beacon.record_token_sessions([other], "2026-10-01T10:25:00Z", path=evidence, orgs_path=orgs)
+    beacon.record_token_sessions([first], "2026-10-01T10:30:00Z", path=evidence, orgs_path=orgs)
+    spans = json.loads(evidence.read_text())["sessions"]["sess"]
+    assert [(span["fp"], span["first_seen"], span["last_seen"]) for span in spans] == [
+        ("abc", "2026-10-01T10:05:00Z", "2026-10-01T10:30:00Z"),
+        ("def", "2026-10-01T10:25:00Z", "2026-10-01T10:25:00Z"),
+    ]
